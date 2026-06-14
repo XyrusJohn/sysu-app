@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SYSU | Queue Command Center</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --red: #c8102e;
+        --red-dim: rgba(200, 16, 46, 0.08);
+        --red-mid: rgba(200, 16, 46, 0.18);
+        --bg: #06060a;
+        --surface: #0c0c12;
+        --surface2: #111118;
+        --border: rgba(255, 255, 255, 0.06);
+        --border-strong: rgba(255, 255, 255, 0.12);
+        --text: #eeeef2;
+        --text-muted: #52526a;
+        --text-sub: #8888a0;
+      }
+      [data-theme="light"] {
+        --bg: #f0f0f5;
+        --surface: #ffffff;
+        --surface2: #f5f5fa;
+        --border: rgba(0, 0, 0, 0.08);
+        --border-strong: rgba(0, 0, 0, 0.14);
+        --text: #111118;
+        --text-muted: #8888a0;
+        --text-sub: #52526a;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Syne", sans-serif;
+        transition: background 0.3s, color 0.3s;
+      }
+
+      /* ── Layout ─────────────────────────────────────────────────── */
+      .root {
+        display: grid;
+        grid-template-columns: 440px 1px 1fr;
+        grid-template-rows: 52px 1fr;
+        height: 100vh;
+        gap: 0;
+      }
+
+      /* ── Top bar ─────────────────────────────────────────────────── */
+      .topbar {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        transition: background 0.3s;
+      }
+      .topbar-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .logo-mark {
+        width: 28px;
+        height: 28px;
+        background: var(--red);
+        border-radius: 7px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .logo-mark svg { width: 14px; height: 14px; }
+      .brand {
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .brand span { color: var(--red); }
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      /* ── Icon buttons ────────────────────────────────────────────── */
+      .icon-btn {
+        width: 34px;
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        cursor: pointer;
+        color: var(--text-muted);
+        transition: color 0.15s, border-color 0.15s, background 0.15s;
+        padding: 0;
+        flex-shrink: 0;
+      }
+      .icon-btn:hover {
+        color: var(--text);
+        border-color: var(--red);
+        background: var(--red-dim);
+      }
+      .icon-btn--logout:hover {
+        border-color: rgba(245, 166, 35, 0.5) !important;
+        background: rgba(245, 166, 35, 0.08) !important;
+      }
+      .icon-btn svg { width: 16px; height: 16px; }
+
+      /* ── Live badge + clock ──────────────────────────────────────── */
+      .live-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        color: var(--text-sub);
+        letter-spacing: 0.06em;
+      }
+      .live-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--red);
+        animation: blink 1.6s ease-in-out infinite;
+      }
+      @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+      #clock {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+        letter-spacing: 0.06em;
+        transition: color 0.3s;
+      }
+
+      /* ── Vertical divider ────────────────────────────────────────── */
+      .v-div { grid-row: 2; background: var(--border); }
+
+      /* ── QR Panel ────────────────────────────────────────────────── */
+      .qr-panel {
+        grid-column: 1;
+        grid-row: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 24px 20px;
+        background: var(--surface);
+        position: relative;
+        overflow: hidden;
+        transition: background 0.3s;
+      }
+      .qr-panel::before {
+        content: "";
+        position: absolute;
+        bottom: -80px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 260px;
+        height: 260px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(200, 16, 46, 0.07) 0%, transparent 70%);
+        pointer-events: none;
+      }
+      .qr-label {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        transition: color 0.3s;
+      }
+      .qr-frame {
+        position: relative;
+        padding: 14px;
+        max-width: 100%;
+        border-radius: 16px;
+        animation: pulseRed 2s infinite;
+        background: #ffffff;
+        border-radius: 12px;
+      }
+      .qr-frame::before,
+      .qr-frame::after {
+        content: "";
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        border-color: var(--red);
+        border-style: solid;
+      }
+      .qr-frame::before { top: -6px; left: -6px; border-width: 2px 0 0 2px; border-radius: 4px 0 0 0; }
+      .qr-frame::after { bottom: -6px; right: -6px; border-width: 0 2px 2px 0; border-radius: 0 0 4px 0; }
+      .qr-corner-tr { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-top: 2px solid var(--red); border-right: 2px solid var(--red); border-radius: 0 4px 0 0; }
+      .qr-corner-bl { position: absolute; bottom: -6px; left: -6px; width: 22px; height: 22px; border-bottom: 2px solid var(--red); border-left: 2px solid var(--red); border-radius: 0 0 0 4px; }
+      #qr-box { width: 100%; height: auto; border-radius: 6px; overflow: hidden; background: #ffffff; padding: 8px; display: inline-block; }
+      #qr-box img, #qr-box canvas { width: 100%; height: auto; display: block; }
+      .qr-token {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        color: var(--text-muted);
+        text-align: center;
+        margin-top: 6px;
+        padding: 4px 10px;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        transition: color 0.3s;
+        text-transform: uppercase;
+      }
+      .qr-token.is-live { color: #4cd478; border-color: rgba(76, 212, 120, 0.3); }
+      .qr-token.is-offline { color: var(--red); border-color: rgba(200, 16, 46, 0.2); }
+      .qr-token-label {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        text-align: center;
+        margin-top: 2px;
+      }
+
+      /* ── Queue section ───────────────────────────────────────────── */
+      .queue-section {
+        grid-column: 3;
+        grid-row: 2;
+        display: grid;
+        grid-template-columns: repeat(6, minmax(80px, 1fr));
+        overflow: hidden;
+      }
+
+      .q-col {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+        overflow: hidden;
+        transition: border-color 0.3s;
+      }
+      .q-col:last-child { border-right: none; }
+
+      .q-col-head {
+        padding: 0 14px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface2);
+        flex-shrink: 0;
+        transition: background 0.3s, border-color 0.3s;
+      }
+      .q-col-name {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--text);
+        transition: color 0.3s;
+      }
+      .q-col-count {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        color: var(--text-muted);
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 5px;
+        padding: 2px 7px;
+        transition: color 0.3s;
+      }
+
+      .q-col-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        background: var(--surface);
+        transition: background 0.3s;
+      }
+      .q-col-body::-webkit-scrollbar { width: 3px; }
+      .q-col-body::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+      .no-drivers {
+        font-size: 11px;
+        color: var(--text-muted);
+        text-align: center;
+        margin-top: 24px;
+        letter-spacing: 0.04em;
+        transition: color 0.3s;
+      }
+
+      /* Queue card */
+      .q-card {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 9px 11px;
+        transition: border-color 0.2s, background 0.2s;
+      }
+      .q-card.active {
+        background: rgba(200, 16, 46, 0.08);
+        border-color: rgba(200, 16, 46, 0.35);
+      }
+      .q-card-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+      }
+      .q-num {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 9px;
+        font-weight: 600;
+        color: var(--red);
+        letter-spacing: 0.06em;
+      }
+      .q-status {
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+      .q-status.loading { color: var(--red); }
+      .q-name { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+      .q-plate {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 9px;
+        color: var(--text-sub);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .q-col.has-active .q-col-head { border-bottom-color: rgba(200, 16, 46, 0.2); }
+      .q-col.has-active .q-col-name { color: #f4667a; }
+
+      @keyframes pulseRed {
+        0% { box-shadow: 0 0 0 0 rgba(200, 16, 46, 0.5); }
+        70% { box-shadow: 0 0 0 10px rgba(200, 16, 46, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(200, 16, 46, 0); }
+      }
+
+      /* ── Driver Joined Toast ────────────────────────────────────────── */
+      .toast-container {
+        position: fixed;
+        top: 68px;
+        right: 16px;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        pointer-events: none;
+      }
+      .toast {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        background: var(--surface2);
+        border: 1px solid rgba(76, 212, 120, 0.4);
+        border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(76,212,120,0.1);
+        animation: toastIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+        min-width: 220px;
+        max-width: 300px;
+      }
+      .toast.removing {
+        animation: toastOut 0.3s ease-in forwards;
+      }
+      @keyframes toastIn {
+        from { opacity: 0; transform: translateX(100%) scale(0.9); }
+        to   { opacity: 1; transform: translateX(0) scale(1); }
+      }
+      @keyframes toastOut {
+        from { opacity: 1; transform: translateX(0) scale(1); }
+        to   { opacity: 0; transform: translateX(110%) scale(0.95); }
+      }
+      .toast-icon {
+        width: 36px; height: 36px;
+        background: rgba(76, 212, 120, 0.15);
+        border: 1px solid rgba(76, 212, 120, 0.3);
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+      }
+      .toast-icon svg { width: 18px; height: 18px; }
+      .toast-body { flex: 1; min-width: 0; }
+      .toast-label {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #4cd478;
+        line-height: 1;
+        margin-bottom: 3px;
+      }
+      .toast-name {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.2;
+      }
+      .toast-tag {
+        font-size: 10px;
+        color: var(--text-sub);
+        font-family: "JetBrains Mono", monospace;
+        margin-top: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toast-container" class="toast-container"></div>
+    <div class="root">
+      <!-- TOP BAR -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="logo-mark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+            </svg>
+          </div>
+          <div class="brand">SYSU <span style="color: var(--red)">Queue</span> Command Center</div>
+        </div>
+        <div class="topbar-right">
+          <!-- Theme toggle -->
+          <button id="themeToggle" class="icon-btn" title="Toggle light/dark mode">
+            <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </button>
+          <!-- Logout -->
+          <button id="logoutBtn" class="icon-btn icon-btn--logout" title="Sign out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+          </button>
+          <div class="live-badge">
+            <span class="live-dot"></span>
+            LIVE
+          </div>
+          <div id="clock">--:--:-- --</div>
+        </div>
+      </header>
+
+      <!-- QR PANEL -->
+      <aside class="qr-panel">
+        <div class="qr-label" id="qr-label">Scan me</div>
+        <div class="qr-frame">
+          <div class="qr-corner-tr"></div>
+          <div class="qr-corner-bl"></div>
+          <div id="qr-box"></div>
+        </div>
+        <div id="qr-token-display">
+          <div id="qr-token" class="qr-token">————</div>
+          <div class="qr-token-label">AUTH TOKEN</div>
+        </div>
+      </aside>
+
+      <!-- VERTICAL DIVIDER -->
+      <div class="v-div"></div>
+
+      <!-- QUEUE COLUMNS -->
+      <main class="queue-section">
+        <div class="q-col" id="qcol-AUV">
+          <div class="q-col-head">
+            <span class="q-col-name">AUV</span>
+            <span class="q-col-count" id="cnt-AUV">0</span>
+          </div>
+          <div class="q-col-body" id="body-AUV">
+            <div class="no-drivers">No drivers</div>
+          </div>
+        </div>
+        <div class="q-col" id="qcol-4W">
+          <div class="q-col-head">
+            <span class="q-col-name">4W</span>
+            <span class="q-col-count" id="cnt-4W">0</span>
+          </div>
+          <div class="q-col-body" id="body-4W">
+            <div class="no-drivers">No drivers</div>
+          </div>
+        </div>
+        <div class="q-col" id="qcol-6W">
+          <div class="q-col-head">
+            <span class="q-col-name">6W</span>
+            <span class="q-col-count" id="cnt-6W">0</span>
+          </div>
+          <div class="q-col-body" id="body-6W">
+            <div class="no-drivers">No drivers</div>
+          </div>
+        </div>
+        <div class="q-col" id="qcol-10W">
+          <div class="q-col-head">
+            <span class="q-col-name">10W</span>
+            <span class="q-col-count" id="cnt-10W">0</span>
+          </div>
+          <div class="q-col-body" id="body-10W">
+            <div class="no-drivers">No drivers</div>
+          </div>
+        </div>
+        <div class="q-col" id="qcol-20F">
+          <div class="q-col-head">
+            <span class="q-col-name">20F</span>
+            <span class="q-col-count" id="cnt-20F">0</span>
+          </div>
+          <div class="q-col-body" id="body-20F">
+            <div class="no-drivers">No drivers</div>
+          </div>
+        </div>
+        <div class="q-col" id="qcol-40F">
+          <div class="q-col-head">
+            <span class="q-col-name">40F</span>
+            <span class="q-col-count" id="cnt-40F">0</span>
+          </div>
+          <div class="q-col-body" id="body-40F">
+            <div class="no-drivers">No drivers</div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+    <script>
+      // ── Theme ─────────────────────────────────────────────────────────
+      function applyTheme(theme) {
+        const doc = document.documentElement;
+        const sun = document.getElementById('icon-sun');
+        const moon = document.getElementById('icon-moon');
+        if (theme === 'light') {
+          doc.setAttribute('data-theme', 'light');
+          sun.style.display = 'none';
+          moon.style.display = 'block';
+        } else {
+          doc.removeAttribute('data-theme');
+          sun.style.display = 'block';
+          moon.style.display = 'none';
+        }
+        localStorage.setItem('qr-theme', theme);
+      }
+      (function () {
+        const saved = localStorage.getItem('qr-theme') || 'dark';
+        applyTheme(saved);
+      })();
+      document.getElementById('themeToggle').addEventListener('click', function () {
+        const current = localStorage.getItem('qr-theme') || 'dark';
+        applyTheme(current === 'dark' ? 'light' : 'dark');
+      });
+
+      // ── Logout — exact same pattern as dashboard (AuthService.logout) ──
+      document.getElementById('logoutBtn').addEventListener('click', async function () {
+        if (!confirm('Sign out from Queue Command Center?')) return;
+
+        var logoutBtn = document.getElementById('logoutBtn');
+        logoutBtn.disabled = true;
+        logoutBtn.style.opacity = '0.5';
+        logoutBtn.style.pointerEvents = 'none';
+
+        try {
+          // 1. Get the named auth app for sysu-web-5a25d (same project as index.html)
+          // Safe to call even if the named app doesn't exist yet — initializeApp returns existing app
+          var mainApp = firebase.initializeApp(MAIN_FIREBASE_CONFIG, 'mainApp');
+          var mainAuth = firebase.auth(mainApp);
+
+          // 2. signOut() — MUST complete before we clear anything or redirect
+          // This is the single source of truth. Dashboard pattern: await signOut first.
+          await mainAuth.signOut();
+
+          // 3. NOW safe to clear local session (after Firebase confirmed logout)
+          localStorage.removeItem('userData');
+          sessionStorage.clear();
+
+          // 4. Redirect to login page
+          // window.location.replace = no back-button history entry (same as dashboard
+          // which does window.location.href = '/')
+          window.location.replace('index.html');
+        } catch (e) {
+          // If signOut fails for any reason, still try to redirect cleanly
+          console.warn('Logout signOut error (proceeding anyway):', e);
+          localStorage.removeItem('userData');
+          window.location.replace('index.html');
+        }
+      });
+
+      // ── Auth Guard — same pattern as dashboard (onAuthStateChanged) ──────
+      // Dashboard uses AuthService.subscribe() which wraps onAuthStateChanged.
+      // We do the same here: wait for Firebase to tell us the session state
+      // before deciding to redirect. This eliminates the bounce-loop because
+      // Firebase's onAuthStateChanged only fires AFTER signOut() has propagated.
+      var _authReady = false;
+      var _bootResolve = null;
+
+      function waitForAuth() {
+        return new Promise(function (resolve) {
+          _bootResolve = resolve;
+          // Poll until firebase global is loaded (same pattern as initFirebase)
+          var pollTimer = setInterval(function () {
+            if (window.firebase && window.firebase.auth) {
+              clearInterval(pollTimer);
+              var mainApp = firebase.initializeApp(MAIN_FIREBASE_CONFIG, 'mainApp');
+              var mainAuth = firebase.auth(mainApp);
+              // This is the real-time observer — same pattern as AuthService.subscribe()
+              // It only fires when Firebase has definitively resolved the auth state.
+              // This prevents the "localStorage says no session but Firebase hasn't
+              // caught up yet" race that caused the bounce loop.
+              mainAuth.onAuthStateChanged(function (user) {
+                if (_authReady) return; // Already resolved this boot
+                _authReady = true;
+                if (user) {
+                  // Firebase says a session exists — check localStorage role as backup
+                  var raw = localStorage.getItem('userData');
+                  if (raw) {
+                    try {
+                      var profile = JSON.parse(raw);
+                      if (profile.role === 'qr_generator') {
+                        _bootResolve(true); // ✓ Authorized — show page
+                      } else {
+                        alert('Unauthorized: QR Generator role required.');
+                        _bootResolve(false);
+                        window.location.replace('index.html');
+                      }
+                    } catch (e) {
+                      _bootResolve(false);
+                      window.location.replace('index.html');
+                    }
+                  } else {
+                    // Firebase has a session but no userData — invalid state, send to login
+                    _bootResolve(false);
+                    window.location.replace('index.html');
+                  }
+                } else {
+                  // Firebase confirms: no active session → go to login
+                  _bootResolve(false);
+                  window.location.replace('index.html');
+                }
+              });
+            }
+          }, 50);
+        });
+      }
+
+      // ── Clock ─────────────────────────────────────────────────────────
+      function updateClock() {
+        const now = new Date();
+        const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        document.getElementById('clock').textContent =
+          String(h12).padStart(2, '0') + ':' +
+          String(m).padStart(2, '0') + ':' +
+          String(s).padStart(2, '0') + ' ' + ampm;
+      }
+      updateClock();
+      setInterval(updateClock, 1000);
+
+      // ── QR Code ───────────────────────────────────────────────────────
+      var BACKEND_URL = 'https://sysu-app-production.up.railway.app/api/qr';
+      var lastToken = null;
+
+      function renderTokenQR(token) {
+        var qrBox = document.getElementById('qr-box');
+        qrBox.innerHTML = '';
+        new QRCode(qrBox, {
+          text: 'https://sysu-web-5a25d.web.app?token=' + token,
+          width: 400,
+          height: 400,
+          colorDark: '#000000',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.H,
+        });
+        // Display readable token (token already has SYS- prefix — no need to add)
+        var tokenEl = document.getElementById('qr-token');
+        tokenEl.textContent = token;
+        tokenEl.className = 'qr-token is-live';
+        document.getElementById('qr-label').textContent = 'Scan me';
+      }
+
+      function renderOfflineQR() {
+        var qrBox = document.getElementById('qr-box');
+        if (qrBox && !qrBox.querySelector('canvas') && !qrBox.querySelector('img')) {
+          qrBox.innerHTML = '';
+          new QRCode(qrBox, {
+            text: 'https://sysu-web-5a25d.web.app/qr-generator.html',
+            width: 300,
+            height: 300,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M,
+          });
+          var tokenEl = document.getElementById('qr-token');
+          tokenEl.textContent = 'OFFLINE';
+          tokenEl.className = 'qr-token is-offline';
+          document.getElementById('qr-label').textContent = 'Offline mode';
+        }
+      }
+
+      function refreshQR() {
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var opts = controller ? { signal: controller.signal } : {};
+        var timeout = setTimeout(function () { if (controller) controller.abort(); }, 5000);
+
+        fetch(BACKEND_URL + '/generate', opts)
+          .then(function (res) {
+            clearTimeout(timeout);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then(function (data) {
+            if (data.success && data.token && data.token !== lastToken) {
+              lastToken = data.token;
+              renderTokenQR(data.token);
+            }
+          })
+          .catch(function (e) {
+            clearTimeout(timeout);
+            console.warn('QR API unreachable:', e.message);
+            renderOfflineQR();
+          });
+      }
+
+      // ── Queue Renderer ─────────────────────────────────────────────────
+      var COLS = ['AUV', '4W', '6W', '10W', '20F', '40F'];
+
+      function clearColumns() {
+        COLS.forEach(function (k) {
+          document.getElementById('body-' + k).innerHTML = '<div class="no-drivers">No drivers</div>';
+          document.getElementById('cnt-' + k).textContent = '0';
+          document.getElementById('qcol-' + k).classList.remove('has-active');
+        });
+      }
+
+      function getColKey(truckType) {
+        var t = (truckType || '').toUpperCase();
+        if (t.includes('AUV')) return 'AUV';
+        if (t.includes('4W')) return '4W';
+        if (t.includes('6W')) return '6W';
+        if (t.includes('10W')) return '10W';
+        if (t.includes('20F')) return '20F';
+        if (t.includes('40F')) return '40F';
+        return null;
+      }
+
+      function renderQueue(docs) {
+        clearColumns();
+        var counts = {}, bodies = {};
+        COLS.forEach(function (k) { counts[k] = 0; bodies[k] = []; });
+
+        docs.forEach(function (doc, i) {
+          var q = doc.data();
+          var user = q.user || {};
+          var key = getColKey(q.truckType);
+          if (!key) return;
+          var isActive = q.status === 'loading';
+          counts[key]++;
+          bodies[key].push({ q: q, user: user, index: i, isActive: isActive });
+          if (isActive) document.getElementById('qcol-' + key).classList.add('has-active');
+        });
+
+        COLS.forEach(function (k) {
+          var bodyEl = document.getElementById('body-' + k);
+          document.getElementById('cnt-' + k).textContent = counts[k];
+          if (bodies[k].length === 0) {
+            bodyEl.innerHTML = '<div class="no-drivers">No drivers</div>';
+            return;
+          }
+          bodyEl.innerHTML = '';
+          bodies[k].forEach(function (item) {
+            var card = document.createElement('div');
+            card.className = 'q-card' + (item.isActive ? ' active' : '');
+            card.innerHTML =
+              '<div class="q-card-top">' +
+                '<span class="q-num">#' + String(item.index + 1).padStart(3, '0') + '</span>' +
+                '<span class="q-status' + (item.isActive ? ' loading' : '') + '">' + (item.q.status || 'waiting') + '</span>' +
+              '</div>' +
+              '<div class="q-name">' + (item.q.driverName || item.user.name || 'Unknown Driver') + '</div>' +
+              '<div class="q-plate">' +
+                '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+                  '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/>' +
+                '</svg>' +
+                (item.user.plateNumber || '—') +
+              '</div>';
+            bodyEl.appendChild(card);
+          });
+        });
+      }
+
+      // ── Firebase (Unified Config) ──────────────────
+      var FIREBASE_CONFIG = {
+        apiKey: 'AIzaSyBo_UpqlWRf6KwhEz2MPAkdBkdHb1WMK8Y',
+        authDomain: 'sysu-web-5a25d.firebaseapp.com',
+        projectId: 'sysu-web-5a25d',
+        storageBucket: 'sysu-web-5a25d.firebasestorage.app',
+        messagingSenderId: '713214426806',
+        appId: '1:713214426806:web:70428be9a76dd1714d7017',
+        measurementId: 'G-MPR01JFYKJ'
+      };
+
+      // ── Main app Firebase (sysu-web-5a25d — for auth logout) ────────────
+      // This is the SAME Firebase project that index.html/dashboard use
+      var MAIN_FIREBASE_CONFIG = {
+        apiKey: 'AIzaSyBo_UpqlWRf6KwhEz2MPAkdBkdHb1WMK8Y',
+        authDomain: 'sysu-web-5a25d.firebaseapp.com',
+        projectId: 'sysu-web-5a25d',
+        storageBucket: 'sysu-web-5a25d.firebasestorage.app',
+        messagingSenderId: '713214426806',
+        appId: '1:713214426806:web:70428be9a76dd1714d7017',
+      };
+
+      function showDriverToast(driverName, token) {
+        var container = document.getElementById('toast-container');
+        var id = 'toast-' + Date.now();
+        var toast = document.createElement('div');
+        toast.id = id;
+        toast.className = 'toast';
+        toast.innerHTML =
+          '<div class="toast-icon">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="#4cd478" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+              '<polyline points="20 6 9 17 4 12"></polyline>' +
+            '</svg>' +
+          '</div>' +
+          '<div class="toast-body">' +
+            '<div class="toast-label">New Driver Joined</div>' +
+            '<div class="toast-name">' + (driverName || 'Unknown Driver') + '</div>' +
+            (token ? '<div class="toast-tag">' + token + '</div>' : '') +
+          '</div>';
+        container.appendChild(toast);
+        setTimeout(function () {
+          toast.classList.add('removing');
+          setTimeout(function () { var el = document.getElementById(id); if (el) el.remove(); }, 350);
+        }, 4000);
+      }
+
+      var _lastQueueCount = null;
+      function initFirebase() {
+        if (!window.firebase || !FIREBASE_CONFIG.projectId) return;
+        try {
+          firebase.initializeApp(FIREBASE_CONFIG);
+          var qColl = firebase.firestore().collection('queue').orderBy('entryTime', 'desc').limit(50);
+          qColl.onSnapshot(
+            function (snap) {
+              renderQueue(snap.docs);
+              var total = snap.size;
+              if (_lastQueueCount !== null && total > _lastQueueCount) {
+                var newest = snap.docs[0];
+                var d = newest.data ? newest.data() : newest;
+                showDriverToast(d.driverName || d.driverId || 'New Driver', d.token || null);
+              }
+              _lastQueueCount = total;
+            },
+            function (err) {
+              console.warn('Queue listen suppressed:', err.message);
+            }
+          );
+        } catch (e) {
+          console.warn('Firebase init error:', e.message);
+        }
+      }
+
+      // ── Boot ───────────────────────────────────────────────────────────
+      // Same pattern as dashboard: async auth wait, no synchronous redirect.
+      // onAuthStateChanged in waitForAuth() only fires when Firebase has a
+      // definitive answer — no race against signOut() propagation.
+      waitForAuth().then(function (authorized) {
+        if (!authorized) return; // Redirect already queued in waitForAuth
+        // User confirmed authorized — show page content and start data
+        renderOfflineQR();
+        initFirebase();
+        refreshQR();
+        setInterval(refreshQR, 30000);
+      });
+    </script>
+  </body>
+</html>

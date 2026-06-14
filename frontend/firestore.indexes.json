@@ -1,0 +1,74 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "role_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "entryTime", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "driverId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sap_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "driverId", "order": "ASCENDING"},
+        {"fieldPath": "assignedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sap_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "assignedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "drivers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "updatedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "qr_tokens",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "used", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "joinedAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "incidents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+frontend/node_modules
+backend/node_modules
+frontend/dist
+.git
+.env
+*.json.bak
+service-account.json

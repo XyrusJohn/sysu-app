@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Signing out…</title>
+  <!-- Load Firebase Auth for sysu-web-5a25d (Vite env: main app Firebase) -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script>
+    // Initialize Firebase with sysu-web-5a25d config (same as main app)
+    firebase.initializeApp({
+      apiKey: 'AIzaSyBo_UpqlWRf6KwhEz2MPAkdBkdHb1WMK8Y',
+      authDomain: 'sysu-web-5a25d.firebaseapp.com',
+      projectId: 'sysu-web-5a25d',
+    });
+
+    // CRITICAL: Force auth state to NONE to prevent any cached session from
+    // being restored. This ensures Firebase starts fresh with no user.
+    firebase.auth().setPersistence(firebase.auth.Auth.Persistence.NONE);
+
+    // Then sign out and clear everything
+    firebase.auth().signOut().then(function() {
+      sessionStorage.clear();
+      localStorage.removeItem('userData');
+      var target = './index.html';
+      window.location.replace(target);
+    }).catch(function(error) {
+      // Even if signOut fails, still clear and redirect
+      sessionStorage.clear();
+      localStorage.removeItem('userData');
+      window.location.replace('./index.html');
+    });
+  </script>
+</head>
+<body></body>
+</html>
