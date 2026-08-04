@@ -1406,29 +1406,28 @@ class Dashboard {
                 if (!hay.includes(q.toLowerCase())) return false;
             }
 
-            const fwdAgent = (g.rec.ForwardingAgent || "").trim();
-            const status = (g.rec.PgiStatus || g.rec.CheckStatus || "").toUpperCase();
-            const isUnsignedFA = fwdAgent === "0000001102" || fwdAgent === "0000000000";
+            const asgn = this.state.sapAssignments[g.key];
+            const tripStatus = asgn?.tripStatus;
 
-            if (this.state.sapFilter === "unassigned") {
-                if (!isUnsignedFA || !g.isUnassignable) return false;
-            } else if (this.state.sapFilter === "delivered") {
-                if (status !== "DELIVERED") return false;
-            } else if (this.state.sapFilter === "transit") {
-                if (status !== "IN TRANSIT") return false;
-            } else if (this.state.sapFilter === "planned") {
-                if (status === "DELIVERED") return false;
+            if (this.state.sapFilter === "delivered") {
+                // Only show rows that have an assignment entry with tripStatus === "completed"
+                // from our local sap_assignments database, NOT from SAP ODATA.
+                if (!asgn || asgn.tripStatus !== "completed") return false;
+            } else if (this.state.sapFilter === "in_transit") {
+                if (tripStatus !== "in_transit") return false;
+            } else if (this.state.sapFilter === "fully_loaded") {
+                if (tripStatus !== "fully_loaded") return false;
+            } else if (this.state.sapFilter === "loading") {
+                if (tripStatus !== "loading") return false;
+            } else if (this.state.sapFilter === "assigned") {
+                if (tripStatus !== null) return false;
             } else if (this.state.sapFilter === "forAssignment") {
                 // Exclude already DELIVERED — no point assigning something already delivered
                 if ((g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
                 if (!g.isUnassignable) return false;
                 if (this.state.sapAssignments[g.key]) return false;
-            } else if (this.state.sapFilter === "assigned") {
-                // Exclude DELIVERED — remove from Confirmed Assignments once fulfilled
-                if ((g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
-                if (!this.state.sapAssignments[g.key]) return false;
             }
-
+            // For any other filter (including undefined or 'all'), show all
             return true;
         });
 
@@ -2137,14 +2136,25 @@ class Dashboard {
     filterSap(type) {
         this.state.sapFilter = type;
 
+        // Map type to tab ID
+        const tabIdMap = {
+            delivered: 'sapTabDelivered',
+            in_transit: 'sapTabTransit',
+            fully_loaded: 'sapTabFullyLoaded',
+            loading: 'sapTabLoading',
+            assigned: 'sapTabAssigned',
+            forAssignment: 'sapTabForAssignment',
+        };
+
+        // Remove active classes from all tabs
         document.querySelectorAll('[id^="sapTab"]').forEach((tab) => {
             tab.classList.remove("bg-db-item-active", "text-db-text", "active");
             tab.classList.add("bg-db-panel/40", "text-db-text3");
         });
 
-        const activeTab = document.getElementById(
-            `sapTab${type.charAt(0).toUpperCase() + type.slice(1)}`,
-        );
+        // Add active class to the selected tab
+        const activeTabId = tabIdMap[type];
+        const activeTab = document.getElementById(activeTabId);
         if (activeTab) {
             activeTab.classList.remove("bg-db-panel/40", "text-db-text3");
             activeTab.classList.add("bg-db-item-active", "text-db-text", "active");
