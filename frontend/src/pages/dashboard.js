@@ -1457,7 +1457,7 @@ class Dashboard {
         });
 
         // Stats from valid (non-planning) entries only
-        const del = validKeys.filter((k) => (groups[k][0].PgiStatus || groups[k][0].CheckStatus || "").toUpperCase() === "DELIVERED").length;
+        const del = validKeys.filter((k) => this.state.sapAssignments[k]?.tripStatus === "completed").length;
         const tra = validKeys.filter((k) => (groups[k][0].PgiStatus || groups[k][0].CheckStatus || "").toUpperCase() === "IN TRANSIT").length;
 
         const e = (id, v) => {
