@@ -1494,7 +1494,7 @@ class Dashboard {
                 const shipmentDisplay = stripZeros(key);
                 const asgn = this.state.sapAssignments[key];
                 const status = rec.PgiStatus || rec.CheckStatus || "Pending";
-                const isDelivered = status.toUpperCase() === "DELIVERED";
+                const isDelivered = status.toUpperCase() === "DELIVERED" || asgn?.tripStatus === "completed";
 
                 return `
         <tr class="hover:bg-db-item-hover transition-colors border-b border-db-border">
