@@ -99,7 +99,7 @@ class Dashboard {
                 if (error.message === "NOT_REGISTERED") {
                     window.location.href = "index.html";
                 }
-                // Don't redirect on permission errors â€" let the dashboard render
+                // Don't redirect on permission errors —" let the dashboard render
                 // with restricted features (drivers/queue will just show empty)
                 return;
             }
@@ -323,7 +323,7 @@ class Dashboard {
         const initial = name[0].toUpperCase();
         const roleText = user.role ? user.role.replace(/_/g, " ").toUpperCase() : "USER";
 
-        // Header user pill â€" simple text and photo
+        // Header user pill —" simple text and photo
         if (nameEl) nameEl.textContent = name;
         if (uRoleEl) uRoleEl.textContent = roleText;
         if (avEl) {
@@ -339,7 +339,7 @@ class Dashboard {
             }
         }
 
-        // Fly-out panel â€" photo and role
+        // Fly-out panel —" photo and role
         const pTopName = document.getElementById("pTopName");
         const pTopRole = document.getElementById("pTopRole");
         const pTopAv = document.getElementById("pTopAv");
@@ -536,7 +536,7 @@ class Dashboard {
                 this._updateUserUI(updated);
                 this._showToast("Role change request sent for approval");
             } else {
-                // No role change â€" update name and photo only
+                // No role change —" update name and photo only
                 await updateDoc(userRef, {
                     displayName: newName,
                     photoURL: newPhoto || null,
@@ -600,7 +600,7 @@ class Dashboard {
                 this._renderRoleRequestsInAdminPortal(requests);
             },
             (err) => {
-                // Permission-denied by rule is silent â€" don't break the app
+                // Permission-denied by rule is silent —" don't break the app
                 if (err?.code === "permission-denied") return;
                 console.warn("Role requests listener error:", err?.message);
             }
@@ -983,7 +983,7 @@ class Dashboard {
     _setupSocket() {
         // â"€â"€ update_admin_map â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         // Forwarded from every driver_moving. Turns driver GREEN immediately
-        // even if they were previously RED (offline) â€" handles reconnect race.
+        // even if they were previously RED (offline) —" handles reconnect race.
         socket.on(EVENTS.DRIVER_MOVING, (data) => {
             const existing = this.state.liveTracking[data.driverId];
             const wasOffline = existing?.status === "offline";
@@ -991,7 +991,7 @@ class Dashboard {
             // Only set "online" if the driver's last known status was NOT "offline".
             // Prevents late/queued driver_moving (from before disconnect) from
             // incorrectly resurrecting a RED marker to GREEN. Reconnect is still
-            // handled â€" wasOffline + new driver_moving → turn GREEN.
+            // handled —" wasOffline + new driver_moving → turn GREEN.
             const isCurrentlyOffline = existing?.status === "offline";
             this.state.liveTracking[data.driverId] = {
                 ...existing,
@@ -1025,7 +1025,7 @@ class Dashboard {
                 // Driver reconnected → turn GREEN immediately.
                 const existing = this.state.liveTracking[driverId];
                 // Fallback to Manila center if no prior position (brand new driver
-                // with no SharedPreferences trip history â€" first open, no driver_moving yet).
+                // with no SharedPreferences trip history —" first open, no driver_moving yet).
                 // Treat lat/lng = 0 same as null: FusedLocationProviderClient never sends
                 // real 0.0, 0.0 coords inside the Philippines (~4.5Â°N–21Â°N, 116Â°E–127Â°E).
                 const FALLBACK_LAT = 14.5995;
@@ -1057,7 +1057,7 @@ class Dashboard {
                 } else {
                     // Edge case: driver disconnected before sending any driver_moving
                     // (e.g. opened app, immediately force-closed before GPS got a fix)
-                    // → Remove marker entirely â€" no position known to display.
+                    // → Remove marker entirely —" no position known to display.
                     if (this.state.liveTracking[driverId]) {
                         removeMarker(driverId);
                         delete this.state.liveTracking[driverId];
@@ -1097,7 +1097,7 @@ class Dashboard {
             };
 
             // â˜… Show the driver's truck on the overview #map immediately when location is received.
-            // This is the counterpart to MapTrackingPanel's _upsertMarker() â€" that panel handles the
+            // This is the counterpart to MapTrackingPanel's _upsertMarker() —" that panel handles the
             // #trackingMap; this handler ensures the Overview map also shows the driver marker.
             updateMarker({ driverId, lat, lng, status: status === "offline" ? "offline" : "online", name: name || "Unknown Driver", sapDocId }, "map");
 
@@ -1116,7 +1116,7 @@ class Dashboard {
                             }
                             this.state.sapDocCache[sapDocId] = {
                                 shipmentNumber: sapDocId,
-                                truckPlate: d.truckPlate || "â€"",
+                                truckPlate: d.truckPlate || "—",
                                 tripStatus: d.tripStatus || "in_transit",
                             };
                         }
@@ -1185,7 +1185,7 @@ class Dashboard {
     }
 
     _formatCoord(val, digits = 5) {
-        if (val == null) return "â€"";
+        if (val == null) return "—"";
         return Number(val).toFixed(digits);
     }
 
@@ -1231,13 +1231,13 @@ class Dashboard {
                 : `<span class="text-db-text3 italic text-[11px]">No shipment</span>`;
             const plate = d.truckPlate
                 ? `<span class="font-mono text-[11px] text-db-text2">${esc(d.truckPlate)}</span>`
-                : `<span class="text-db-text3 text-[11px]">â€"</span>`;
+                : `<span class="text-db-text3 text-[11px]">—"</span>`;
             const latLng = d.lat != null && d.lng != null
                 ? `<span class="font-mono text-[10.5px] text-db-text3">${this._formatCoord(d.lat)}</span>
                    <span class="text-db-text3/40 mx-0.5">Â·</span>
                    <span class="font-mono text-[10.5px] text-db-text3">${this._formatCoord(d.lng)}</span>`
-                : `<span class="text-db-text3 text-[11px]">â€"</span>`;
-            const lastSeen = d.lastSeen ? fmtElapsed(d.lastSeen) : "â€"";
+                : `<span class="text-db-text3 text-[11px]">—"</span>`;
+            const lastSeen = d.lastSeen ? fmtElapsed(d.lastSeen) : "—"";
 
             return `
             <tr class="border-b border-db-border/50 hover:bg-db-item-hover/50 transition-colors">
@@ -1417,7 +1417,7 @@ class Dashboard {
             };
         }).filter((g) => g); // remove nulls (still-planning / LCL entries)
 
-        // Stats from flat list â€" only from valid, non-planning entries
+        // Stats from flat list —" only from valid, non-planning entries
         const validKeys = groupedList.filter((g) => g).map((g) => g.key);
         const total = validKeys.length;
 
@@ -1455,7 +1455,7 @@ class Dashboard {
             return true;
         });
 
-        // Sort â€" "planned" filter overrides to sort by PlanningDate ascending
+        // Sort —" "planned" filter overrides to sort by PlanningDate ascending
         let key = this.state.sapSortKey;
         let dir = this.state.sapSortDir;
         if (this.state.sapFilter === "planned") {
@@ -1528,7 +1528,7 @@ class Dashboard {
               #${shipmentDisplay}
               ${count > 1 ? `<span class="ml-1 text-[12px] bg-db-item-hover px-1.5 py-0.5 rounded font-bold">${count}</span>` : ""}
           </td>
-          <td class="px-6 py-4 text-db-text2 font-semibold uppercase">${escapeHtml(rec.TruckType || "â€"")}</td>
+          <td class="px-6 py-4 text-db-text2 font-semibold uppercase">${escapeHtml(rec.TruckType || "—"")}</td>
           <td class="px-6 py-4 text-db-text2">${escapeHtml(g.routeDisplay)}</td>
           <td class="px-6 py-4 text-db-text2 font-mono text-[11px]">${SAPService.parseDate(rec.PlanningDate || rec.Planning_Date)}</td>
           <td class="px-6 py-4 text-db-text2 font-mono text-[11px] font-bold text-sysu-red">${SAPService.parseDate(rec.ActualDelDate)}</td>
@@ -1657,12 +1657,12 @@ class Dashboard {
                 return div;
             };
 
-            gridSection.appendChild(createField("Phone", d.phone || "â€""));
-            gridSection.appendChild(createField("Plate", d.plateNumber || "â€""));
+            gridSection.appendChild(createField("Phone", d.phone || "—""));
+            gridSection.appendChild(createField("Plate", d.plateNumber || "—""));
             gridSection.appendChild(
-                createField("Company", d.truckingCompany || d.company || "â€""),
+                createField("Company", d.truckingCompany || d.company || "—""),
             );
-            gridSection.appendChild(createField("Truck Type", d.truckType || "â€""));
+            gridSection.appendChild(createField("Truck Type", d.truckType || "—""));
 
             const footer = document.createElement("div");
             footer.className = "mt-6 pt-6 border-t border-db-border flex gap-3";
@@ -1759,7 +1759,7 @@ class Dashboard {
             groups[t].push(d);
         });
 
-        // Canonical truck types â€" always render all columns (empty if no drivers)
+        // Canonical truck types —" always render all columns (empty if no drivers)
         const FLEET_TYPES = [
             { key: "AUV",        label: "AUV"        },
             { key: "4W",         label: "4W"          },
@@ -1799,7 +1799,7 @@ class Dashboard {
             ? d.toDate().toLocaleTimeString("en-PH", {hour: "2-digit", minute: "2-digit", hour12: true})
             : d?.seconds
                 ? new Date(d.seconds * 1000).toLocaleTimeString("en-PH", {hour: "2-digit", minute: "2-digit", hour12: true})
-                : "â€"";
+                : "—"";
 
         const fmtElapsed = (d) => {
             const ms = d?.toDate ? d.toDate() : d?.seconds ? new Date(d.seconds * 1000) : new Date(0);
@@ -1836,10 +1836,10 @@ class Dashboard {
                             || "";
                         const viberHref = phone ? `viber://contact?number=${phone.replace(/^0/, "63")}` : "#";
                         const hasPhone = !!phone;
-                        const assignedLabel = d.entryTime?.toDate ? d.entryTime.toDate().toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "â€"";
-                        const elapsedLabel = d.entryTime ? fmtElapsed(d.entryTime) : "â€"";
+                        const assignedLabel = d.entryTime?.toDate ? d.entryTime.toDate().toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"";
+                        const elapsedLabel = d.entryTime ? fmtElapsed(d.entryTime) : "—"";
                         const statusDisplay = (() => {
-                            if (d.status === 'loading' || d.status === 'called') return { badge: 'Loadingâ€¦', dot: 'text-sysu-red' };
+                            if (d.status === 'loading' || d.status === 'called') return { badge: 'Loading—¦', dot: 'text-sysu-red' };
                             if (d.status === 'complete') return { badge: 'Tapos na', dot: 'text-green-400' };
                             return { badge: 'Naghihintay', dot: 'text-db-text3' };
                         })();
@@ -1851,7 +1851,7 @@ class Dashboard {
                                     <span class="text-[17px] font-bold font-mono text-db-text leading-none ${rank === 1 ? 'text-sysu-red' : rank === 2 ? 'text-yellow-400' : ''}">#${rank}</span>
                                 </div>
                                 <div class="flex-1 min-w-0 pt-0.5">
-                                    <div class="text-[11px] font-semibold text-db-text2 mb-1 truncate leading-tight">${escapeHtml(d.driverName || "â€"")}</div>
+                                    <div class="text-[11px] font-semibold text-db-text2 mb-1 truncate leading-tight">${escapeHtml(d.driverName || "—"")}</div>
                                     <span class="inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${statusDisplay.dot === 'text-sysu-red' ? 'bg-sysu-red/10 text-sysu-red border-sysu-red/30' : statusDisplay.dot === 'text-green-400' ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'text-db-text3 bg-db-text3/10 border-db-text3/20'}">${statusDisplay.badge}</span>
                                 </div>
                                 <div class="flex flex-col items-end gap-0.5 shrink-0">
@@ -1864,14 +1864,14 @@ class Dashboard {
                                 <div class="flex items-center gap-2.5 rounded-lg px-3 py-2 flex-1 min-w-0" style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);">
                                     <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0" style="background:rgba(200,16,46,0.15);color:#f87171;">${escapeHtml((d.driverName || "?").charAt(0).toUpperCase())}</div>
                                     <div class="min-w-0">
-                                        <div class="text-[12px] font-bold text-db-text truncate">${escapeHtml(d.driverName || "â€"")}</div>
-                                        <div class="text-[9px] font-mono text-db-text3 opacity-60">${escapeHtml(d.plateNumber || "â€"")}</div>
+                                        <div class="text-[12px] font-bold text-db-text truncate">${escapeHtml(d.driverName || "—"")}</div>
+                                        <div class="text-[9px] font-mono text-db-text3 opacity-60">${escapeHtml(d.plateNumber || "—"")}</div>
                                         ${d.truckCompany ? `<div class="text-[9px] font-medium mt-0.5 truncate" style="color:#d4a017cc;">${escapeHtml(d.truckCompany)}</div>` : ""}
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-1.5 text-[9px] text-db-text3 shrink-0 opacity-50">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-                                    ${escapeHtml(d.truckType || "â€"")}
+                                    ${escapeHtml(d.truckType || "—"")}
                                 </div>
                                 <a
                                         href="${viberHref}"
@@ -1944,7 +1944,7 @@ class Dashboard {
         }
 
         const driverName = driver.driverName || "Unknown Driver";
-        const plateNum = driver.plateNumber || "â€"";
+        const plateNum = driver.plateNumber || "—"";
 
         // Build list of unassigned SAP dispatches matching this truck type
         const unassignedKeys = Object.entries(this.state.sapGroupedByDispatch).filter(([key, records]) => {
@@ -1953,7 +1953,7 @@ class Dashboard {
             // Skip if already assigned in our local state
             if (this.state.sapAssignments[key]) return false;
 
-            // Skip if already DELIVERED â€" nothing to assign
+            // Skip if already DELIVERED —" nothing to assign
             if ((records[0].Delivery || "").toUpperCase() === "DELIVERED") return false;
 
             // Skip if already has a driver assigned (based on SAP data)
@@ -1985,10 +1985,10 @@ class Dashboard {
         // Build dispatch rows HTML
         const dispatchRows = unassignedKeys.slice(0, 25).map(([key, records]) => {
             const rec = records[0];
-            const routeDisplay = ((rec.Route || "").split("-->").pop()?.trim() || "â€"");
+            const routeDisplay = ((rec.Route || "").split("-->").pop()?.trim() || "—"");
             const plannedDate = SAPService.parseDate(rec.PlanningDate || rec.Planning_Date);
             const dispatchNum = key.replace(/^0+/, "") || key;
-            const truckTypeDisplay = rec.TruckType || "â€"";
+            const truckTypeDisplay = rec.TruckType || "—"";
 
             return `<div
             class="driver-row flex items-center justify-between px-4 py-3 border-b border-db-border cursor-pointer hover:bg-db-item-hover transition-colors"
@@ -2023,7 +2023,7 @@ class Dashboard {
         // Footer prompt
         const footerHint = document.createElement("div");
         footerHint.className = "px-4 py-3 border-t border-db-border text-[11px] text-db-text3 bg-db-bg/50 text-center";
-        footerHint.textContent = `Showing ${Math.min(unassignedKeys.length, 25)} dispatches â€" click one to select "${driverName}" for that shipment`;
+        footerHint.textContent = `Showing ${Math.min(unassignedKeys.length, 25)} dispatches —" click one to select "${driverName}" for that shipment`;
         listEl.appendChild(footerHint);
 
         // Disable Confirm button until a dispatch is selected
@@ -2089,7 +2089,7 @@ class Dashboard {
         }
 
         const driverName = driver.driverName || "Unknown Driver";
-        const truckPlate = driver.plateNumber || "â€"";
+        const truckPlate = driver.plateNumber || "—"";
 
         // Derive OBD line items from the receiving records grouped by dispatch
         const receivingRecords = this.state.sapGroupedByDispatch[dispatchKey] || [];
@@ -2120,7 +2120,7 @@ class Dashboard {
                     driverId,
                     driverName,
                     truckPlate,
-                    truckCompany: driver.truckCompany || driver.company || "â€"",
+                    truckCompany: driver.truckCompany || driver.company || "—"",
                     assignedAt: ts(),
                     lineItems,
                 }),
@@ -2231,7 +2231,7 @@ class Dashboard {
             el.classList.add("w-full", "flex-1");
         };
 
-        // Hide ALL content views first â€" then caller shows what it needs
+        // Hide ALL content views first —" then caller shows what it needs
         document.querySelectorAll("#mainContent, #fleetContent, #ordersContent, #usersContent, #sapContent, #trackingContent")
             .forEach((el) => el?.classList.add("hidden"));
 
@@ -2391,7 +2391,7 @@ class Dashboard {
     }
 
     async saveDriver() {
-        console.log("[saveDriver] CALLED â€" queue snapshot:", this.state.queue.map(q => ({id: q.id, driverName: q.driverName, registrationComplete: q.registrationComplete})));
+        console.log("[saveDriver] CALLED —" queue snapshot:", this.state.queue.map(q => ({id: q.id, driverName: q.driverName, registrationComplete: q.registrationComplete})));
         const fn = document.getElementById("drvFName").value.trim();
         const ln = document.getElementById("drvLName").value.trim();
         const nm = `${fn} ${ln}`.trim();
@@ -2449,7 +2449,7 @@ class Dashboard {
                 }
             });
             if (updates.length === 0) {
-                console.log("[saveDriver] No queue entries with registrationComplete === false â€" nothing to update");
+                console.log("[saveDriver] No queue entries with registrationComplete === false —" nothing to update");
             }
             console.log("[saveDriver] Queued Firestore updates:", updates.length);
             if (updates.length > 0) await Promise.all(updates);
@@ -2575,7 +2575,7 @@ class Dashboard {
             <div class="font-semibold text-db-text">${escapeHtml(u.name || "User")}</div>
             <div class="text-[11px] text-db-text3">${escapeHtml(u.email || "")}</div>
           </td>
-          <td class="px-6 py-4 border-b border-db-border text-db-text2 text-sm">${escapeHtml(u.position || "â€"")}</td>
+          <td class="px-6 py-4 border-b border-db-border text-db-text2 text-sm">${escapeHtml(u.position || "—"")}</td>
           <td class="px-6 py-4 border-b border-db-border">${roleSelectHtml}</td>
           <td class="px-6 py-4 border-b border-db-border">
             <span class="px-2 py-1 rounded-full text-[11px] font-bold flex items-center w-max gap-1.5" style="background:${statusBg};color:${statusColor};">
@@ -2659,19 +2659,19 @@ class Dashboard {
         };
 
         set("sapDtlDispatchNum", rec.SAPDispatchNumber || dispatchNumber);
-        set("sapDtlStatus", rec.PgiStatus || rec.CheckStatus || "â€"");
-        set("sapDtlDelivery", rec.Delivery || "â€"");
+        set("sapDtlStatus", rec.PgiStatus || rec.CheckStatus || "—"");
+        set("sapDtlDelivery", rec.Delivery || "—"");
         set("sapDtlPlanDate", SAPService.parseDate(rec.PlanningDate));
         set("sapDtlActualDate", this._formatDelDateDisplay(rec.ActualDelDate));
-        set("sapDtlSONum", rec.SONumber || "â€"");
-        set("sapDtlPONum", rec.PONumber || "â€"");
-        set("sapDtlDocNum", rec.DocumentNumber || "â€"");
-        set("sapDtlTruckType", rec.TruckType || "â€"");
-        set("sapDtlRoute", rec.Route || "â€"");
-        set("sapDtlPlate", rec.PlateNumber || "â€"");
-        set("sapDtlDriver", rec.Driver || "â€"");
+        set("sapDtlSONum", rec.SONumber || "—"");
+        set("sapDtlPONum", rec.PONumber || "—"");
+        set("sapDtlDocNum", rec.DocumentNumber || "—"");
+        set("sapDtlTruckType", rec.TruckType || "—"");
+        set("sapDtlRoute", rec.Route || "—"");
+        set("sapDtlPlate", rec.PlateNumber || "—"");
+        set("sapDtlDriver", rec.Driver || "—"");
         set("sapDtlShipStart", this._parseSAPTime(rec.ShipmentStart));
-        set("sapDtlRemarks", rec.PlanningRemarks || "â€"");
+        set("sapDtlRemarks", rec.PlanningRemarks || "—"");
 
         // Build OBD line items table
         let totalAmount = 0, totalVolume = 0, totalWeight = 0, totalQty = 0;
@@ -2692,16 +2692,16 @@ class Dashboard {
 
                 return `
                     <tr class="border-b border-db-border/50 hover:bg-db-item-hover/30 transition-colors">
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "â€"")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${amt > 0 ? `PHP ${amt.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "â€""}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${vol > 0 ? vol.toFixed(3) : "â€""}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${wgt > 0 ? wgt.toFixed(3) : "â€""}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${qty > 0 ? qty.toFixed(3) : "â€""}</td>
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "â€"")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "â€"")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "â€"")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "â€""}</td>
-                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "â€""}</td>
+                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "—"")}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${amt > 0 ? `PHP ${amt.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—""}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${vol > 0 ? vol.toFixed(3) : "—""}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${wgt > 0 ? wgt.toFixed(3) : "—""}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${qty > 0 ? qty.toFixed(3) : "—""}</td>
+                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "—"")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "—"")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "—"")}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—""}</td>
+                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—""}</td>
                         <td class="py-2 text-center">
                           ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && podMatch?.podImageUrl && podMatch?.podCapturedAt ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
                         </td>
@@ -2709,16 +2709,16 @@ class Dashboard {
             }).join("");
         }
 
-        set("sapDtlTotalAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "â€"");
-        set("sapDtlTotalVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "â€"");
-        set("sapDtlTotalWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "â€"");
-        set("sapDtlTotalQty", totalQty > 0 ? totalQty.toFixed(3) : "â€"");
+        set("sapDtlTotalAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—"");
+        set("sapDtlTotalVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "—"");
+        set("sapDtlTotalWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "—"");
+        set("sapDtlTotalQty", totalQty > 0 ? totalQty.toFixed(3) : "—"");
 
         // Cargo totals (alias to same fields)
-        set("sapDtlAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "â€"");
-        set("sapDtlVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "â€"");
-        set("sapDtlWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "â€"");
-        set("sapDtlQty", totalQty > 0 ? totalQty.toFixed(3) : "â€"");
+        set("sapDtlAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—"");
+        set("sapDtlVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "—"");
+        set("sapDtlWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "—"");
+        set("sapDtlQty", totalQty > 0 ? totalQty.toFixed(3) : "—"");
 
         const statusEl = document.getElementById("sapDtlStatus");
         if (statusEl) {
@@ -2786,10 +2786,10 @@ class Dashboard {
     }
 
     _parseSAPTime(pt) {
-        if (!pt || !pt.startsWith("PT")) return "â€"";
+        if (!pt || !pt.startsWith("PT")) return "—"";
         const h = parseInt(pt.match(/(\d+)H/)?.[1] || 0);
         const m = parseInt(pt.match(/(\d+)M/)?.[1] || 0);
-        if (!h && !m) return "â€"";
+        if (!h && !m) return "—"";
         const ampm = h >= 12 ? "PM" : "AM";
         const hour = h % 12 || 12;
         return `${hour}:${String(m).padStart(2, "0")} ${ampm}`;
@@ -2815,30 +2815,30 @@ class Dashboard {
 
     // â"€â"€ Format SAP delivery date string into human-readable display â"€â"€
     // Handles TWO SAP OData formats:
-    //   /Date(1781481600000)/  â€" SAP OData milliseconds format
-    //   2026-05-18T00:00:00    â€" ISO 8601 date+time string
-    // Output: "Jul 10, 2026 12:00 AM"   â€" always shows time (even 00:00:00 → 12:00 AM)
+    //   /Date(1781481600000)/  —" SAP OData milliseconds format
+    //   2026-05-18T00:00:00    —" ISO 8601 date+time string
+    // Output: "Jul 10, 2026 12:00 AM"   —" always shows time (even 00:00:00 → 12:00 AM)
     // Uses local PH time (en-PH locale = Asia/Manila UTC+8).
     _formatDelDateDisplay(sapDate) {
-        if (!sapDate) return "â€"";
+        if (!sapDate) return "—"";
         const s = sapDate + "";
 
         let d;
         if (s.includes("/Date(")) {
-            // /Date(1781481600000)/ â€" SAP OData milliseconds, always UTC
+            // /Date(1781481600000)/ —" SAP OData milliseconds, always UTC
             const msStr = s.replace("/Date(", "").replace(")/", "");
             const ms = parseInt(msStr);
-            if (isNaN(ms)) return "â€"";
+            if (isNaN(ms)) return "—"";
             d = new Date(ms);
         } else if (s.includes("T")) {
-            // 2026-05-18T00:00:00 â€" SAP OData ISO 8601 string.
+            // 2026-05-18T00:00:00 —" SAP OData ISO 8601 string.
             // new Date() parses T00:00:00 as UTC midnight.
             // toLocaleString("en-PH") then converts to PH local time (UTC+8) = 08:00 AM.
             // This is correct: SAP UTC midnight → 8:00 AM PH displayed.
             d = new Date(s);
-            if (isNaN(d.getTime())) return "â€"";
+            if (isNaN(d.getTime())) return "—"";
         } else {
-            return "â€"";
+            return "—"";
         }
 
         const dateStr = d.toLocaleDateString("en-PH", {
@@ -2851,20 +2851,20 @@ class Dashboard {
     }
 
     // â"€â"€ Normalize any SAP delivery date value to /Date(MS)/ format for Firestore storage â"€â"€
-    // Handles:  /Date(1781481600000)/  â€" already in milliseconds format, passes through
-    //           2026-05-18T00:00:00     â€" ISO 8601, converted to milliseconds
+    // Handles:  /Date(1781481600000)/  —" already in milliseconds format, passes through
+    //           2026-05-18T00:00:00     —" ISO 8601, converted to milliseconds
     // Returns null if value is null, undefined, or unparseable.
     _normalizeDelDate(sapDate) {
         if (!sapDate) return null;
         const s = sapDate + "";
         if (s.includes("/Date(")) {
-            // Already /Date(MS)/ format â€" validate and return as-is
+            // Already /Date(MS)/ format —" validate and return as-is
             const msStr = s.replace("/Date(", "").replace(")/", "");
             const ms = parseInt(msStr);
             return isNaN(ms) ? null : s;
         }
         if (s.includes("T")) {
-            // ISO 8601 string â€" parse and convert to milliseconds
+            // ISO 8601 string —" parse and convert to milliseconds
             const d = new Date(s);
             if (isNaN(d.getTime())) return null;
             return `/Date(${d.getTime()})/`;
@@ -2889,11 +2889,11 @@ class Dashboard {
             (d) => !d.isAssigned && d.status !== "complete" && truckMatch(d)
         );
 
-        // â"€â"€ 2. Build assigned-driver records from sap_assignments â€"â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // One record per driverId â€" merges multiple assignments for the same driver.
+        // â"€â"€ 2. Build assigned-driver records from sap_assignments —"â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+        // One record per driverId —" merges multiple assignments for the same driver.
         // FIFO rule:
-        //   â€¢ Prefers queueEntry.entryTime (exact check-in time) whenever available.
-        //   â€¢ For drivers no longer in queue (e.g. queue status = complete): uses the
+        //   —¢ Prefers queueEntry.entryTime (exact check-in time) whenever available.
+        //   —¢ For drivers no longer in queue (e.g. queue status = complete): uses the
         //     EARLIEST assignedAt across ALL their dispatches as proxy for check-in order.
         // Fullness: a driver with driverDeclaredFull: true in ANY assignment is flagged full.
         const assignments = this.state.sapAssignments;
@@ -2907,20 +2907,20 @@ class Dashboard {
             const driverTruckType = queueEntry?.truckType || driver?.truckType || "";
 
             if (!driverAssignments[dId]) {
-                // First time â€" initialise with queue check-in time (primary FIFO key)
+                // First time —" initialise with queue check-in time (primary FIFO key)
                 driverAssignments[dId] = {
                     id: dId,
-                    driverName: asgn.driverName || queueEntry?.driverName || driver?.name || "â€"",
-                    plateNumber: asgn.truckPlate || queueEntry?.plateNumber || driver?.plateNumber || "â€"",
+                    driverName: asgn.driverName || queueEntry?.driverName || driver?.name || "—"",
+                    plateNumber: asgn.truckPlate || queueEntry?.plateNumber || driver?.plateNumber || "—"",
                     truckType: driverTruckType,
-                    truckCompany: asgn.truckCompany || queueEntry?.truckCompany || driver?.truckingCompany || driver?.company || "â€"",
+                    truckCompany: asgn.truckCompany || queueEntry?.truckCompany || driver?.truckingCompany || driver?.company || "—"",
                     entryTime: queueEntry?.entryTime || asgn.assignedAt || null,
                     _fromAssignment: true,
                     _latestAssignment: dispatchKey,
                     _driverDeclaredFull: !!asgn.driverDeclaredFull,
                 };
             } else {
-                // Already seen â€" update FIFO key to whichever is earlier
+                // Already seen —" update FIFO key to whichever is earlier
                 if (!queueEntry?.entryTime && asgn.assignedAt) {
                     const existingTime = driverAssignments[dId].entryTime;
                     const existingDate = existingTime?.toDate ? existingTime.toDate() : existingTime;
@@ -2948,12 +2948,12 @@ class Dashboard {
                 return true; // not in queue → available (eligible for re-entry)
             });
 
-        // â"€â"€ 3. Merge â€" queue first, then assigned-only drivers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+        // â"€â"€ 3. Merge —" queue first, then assigned-only drivers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         const queuedIds = new Set(queueDrivers.map((d) => d.id));
         const extraAssigned = assignedDrivers.filter((d) => !queuedIds.has(d.id));
         const allDrivers = [...queueDrivers, ...extraAssigned];
 
-        // â"€â"€ 4. FIFO sort â€" earliest check-in first â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+        // â"€â"€ 4. FIFO sort —" earliest check-in first â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         allDrivers.sort((a, b) => {
             const ta = this._getDriverEntryTime(a);
             const tb = this._getDriverEntryTime(b);
@@ -2969,7 +2969,7 @@ class Dashboard {
                 );
                 if (match) phone = match.phone || "";
             }
-            // Look up isFull from driver doc â€" queue entries don't have it directly
+            // Look up isFull from driver doc —" queue entries don't have it directly
             const drv = this.state.drivers.find((x) =>
                 (x.name || "").toLowerCase().trim() === (d.driverName || "").toLowerCase().trim()
             );
@@ -3134,7 +3134,7 @@ class Dashboard {
         if (isLocked) {
             if (confirmBtn) {
                 confirmBtn.disabled = true;
-                confirmBtn.textContent = "ðŸš« Driver Full â€" Cannot Assign";
+                confirmBtn.textContent = "ðŸš« Driver Full —" Cannot Assign";
                 confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
             }
         } else {
@@ -3192,7 +3192,7 @@ class Dashboard {
                 driverId,
                 driverName,
                 truckPlate,
-                truckCompany: driver.truckCompany || driver.company || "â€"",
+                truckCompany: driver.truckCompany || driver.company || "—"",
                 assignedAt: serverTimestamp(),
                 lineItems,
             });
@@ -3255,7 +3255,7 @@ class Dashboard {
     async _safeUpdateQueueAssignment(driverId, dispatchKey) {
         const driver = this.state.queue.find(q => q.id === driverId);
         if (driver?.status === "loading") {
-            console.log(`[_safeUpdateQueue] Driver ${driverId} is already loading â€" not overwriting queue status`);
+            console.log(`[_safeUpdateQueue] Driver ${driverId} is already loading —" not overwriting queue status`);
             return;
         }
         // Not active → update queue entry normally (first assignment)
@@ -3282,14 +3282,14 @@ class Dashboard {
             return {
                 dispatchKey: key,
                 dispatchNum: key.replace(/^0+/, "") || key,
-                driverName: asgn.driverName || "â€"",
-                truckPlate: asgn.truckPlate || "â€"",
+                driverName: asgn.driverName || "—"",
+                truckPlate: asgn.truckPlate || "—"",
                 assignedAt: asgn.assignedAt?.toDate?.() || (asgn.assignedAt?.seconds ? new Date(asgn.assignedAt.seconds * 1000) : null),
-                truckType: rec.TruckType || "â€"",
-                route: ((rec.Route || "").split("-->").pop()?.trim() || "â€""),
+                truckType: rec.TruckType || "—"",
+                route: ((rec.Route || "").split("-->").pop()?.trim() || "—""),
                 planningDate: SAPService.parseDate(rec.PlanningDate || rec.Planning_Date),
                 status: rec.PgiStatus || rec.CheckStatus || "Pending",
-                delivery: rec.Delivery || "â€"",
+                delivery: rec.Delivery || "—"",
                 obdCount: records.length,
             };
         }).sort((a, b) => {
@@ -3327,7 +3327,7 @@ class Dashboard {
               )
             : orders;
 
-        // Exclude DELIVERED â€" already fulfilled, no longer needs tracking in orders panel
+        // Exclude DELIVERED —" already fulfilled, no longer needs tracking in orders panel
         const withoutDelivered = searched.filter(
             (o) => (o.delivery || "").toUpperCase() !== "DELIVERED",
         );
@@ -3354,7 +3354,7 @@ class Dashboard {
           :                                      "text-sysu-gold bg-sysu-gold/10 border-sysu-gold/20";
 
         const gc = (t) => {
-            const u = (t || "â€"").toUpperCase();
+            const u = (t || "—"").toUpperCase();
             if (u.includes("AUV"))   return "text-amber-400  bg-amber-500/10  border-amber-500/25";
             if (u.includes("TRUCK")) return "text-blue-400   bg-blue-500/10   border-blue-500/25";
             if (u.includes("WING") || u.includes("VAN"))
@@ -3365,7 +3365,7 @@ class Dashboard {
         };
 
         const gl = (t) => {
-            if (!t || t === "â€"") return "Others";
+            if (!t || t === "—"") return "Others";
             const u = t.toUpperCase();
             if (u.includes("AUV"))   return "AUV";
             if (u.includes("TRUCK")) return "Truck";
@@ -3377,7 +3377,7 @@ class Dashboard {
 
         const ordersByType = {};
         filtered.forEach((o) => {
-            const k = o.truckType || "â€"";
+            const k = o.truckType || "—"";
             if (!ordersByType[k]) ordersByType[k] = [];
             ordersByType[k].push(o);
         });
@@ -3436,8 +3436,8 @@ class Dashboard {
                 html += '</div>';
             } else {
                 cards.forEach((o) => {
-                    const assignedLabel = o.assignedAt ? o.assignedAt.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "â€"";
-                    const elapsedLabel = o.assignedAt ? this._formatElapsed(o.assignedAt) : "â€"";
+                    const assignedLabel = o.assignedAt ? o.assignedAt.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"";
+                    const elapsedLabel = o.assignedAt ? this._formatElapsed(o.assignedAt) : "—"";
                     const badge = o.obdCount > 1 ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:rgba(59,130,246,0.15);color:#60a5fa;">' + o.obdCount + ' OBDs</span>' : '';
                     html += '<div class="order-card rounded-xl border cursor-pointer overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-lg" style="background:#13161b;border-color:rgba(255,255,255,0.08);" onclick="window.dashboard._openOrderDetail(\'' + encodeURIComponent(o.dispatchKey) + '\')">';
                     html += '<div class="flex items-start gap-4 px-5 pt-4 pb-3">';
@@ -3485,7 +3485,7 @@ class Dashboard {
         const active = this.state.ordersTruckTypeFilter;
 
         const typeColor = (t) => {
-            if (!t || t === "â€"") return "bg-db-text3/10 text-db-text3 border-db-text3/20";
+            if (!t || t === "—"") return "bg-db-text3/10 text-db-text3 border-db-text3/20";
             const u = t.toUpperCase();
             if (u.includes("AUV"))   return "bg-amber-500/15 text-amber-400 border-amber-500/30";
             if (u.includes("TRUCK")) return "bg-blue-500/15 text-blue-400 border-blue-500/30";
@@ -3531,7 +3531,7 @@ class Dashboard {
     }
 
     _openOrderDetail(dispatchKey) {
-        // Reuse SAP dispatch detail modal for now â€" shows OBD line items + route info
+        // Reuse SAP dispatch detail modal for now —" shows OBD line items + route info
         if (window.dashboard.openSapDispatchDetail) {
             window.dashboard.openSapDispatchDetail(decodeURIComponent(dispatchKey));
         }
@@ -3543,7 +3543,7 @@ class Dashboard {
 
         // DISPATCHER NAME = the account owner who is exporting
         const profile = AuthService.getUserProfile();
-        const dispatcherName = profile?.displayName || "â€"";
+        const dispatcherName = profile?.displayName || "—"";
 
         // â"€â"€ Build data rows from ASSIGNED dispatches only â"€â"€
         const rows = [];
@@ -3551,14 +3551,14 @@ class Dashboard {
             const records = grouped[key] || [];
 
             if (records.length === 0) {
-                // Has assignment but no SAP record â€" still export with driver data, SAP fields blank
+                // Has assignment but no SAP record —" still export with driver data, SAP fields blank
                 rows.push({
                     "DISPATCHER NAME": dispatcherName,
                     "DISPATCH #": key,
-                    "DRIVER NAME": asgn.driverName || "â€"",
-                    "TRUCK TYPE": "â€"",
-                    "PLATE #": asgn.truckPlate || "â€"",
-                    "TRUCK COMPANY NAME": asgn.truckCompany || "â€"",
+                    "DRIVER NAME": asgn.driverName || "—"",
+                    "TRUCK TYPE": "—"",
+                    "PLATE #": asgn.truckPlate || "—"",
+                    "TRUCK COMPANY NAME": asgn.truckCompany || "—"",
                 });
                 return;
             }
@@ -3573,10 +3573,10 @@ class Dashboard {
                 const row = {
                     "DISPATCHER NAME": dispatcherName,
                     "DISPATCH #": key,
-                    "DRIVER NAME": asgn.driverName || "â€"",
-                    "TRUCK TYPE": rec.TruckType || "â€"",
-                    "PLATE #": asgn.truckPlate || "â€"",
-                    "TRUCK COMPANY NAME": asgn.truckCompany || "â€"",
+                    "DRIVER NAME": asgn.driverName || "—"",
+                    "TRUCK TYPE": rec.TruckType || "—"",
+                    "PLATE #": asgn.truckPlate || "—"",
+                    "TRUCK COMPANY NAME": asgn.truckCompany || "—"",
                     "QUANTITY": parseFloat(rec.Quantity) || 0,
                     "VOLUME (mÂ³)": parseFloat(rec.Volume) || 0,
                 };
@@ -3594,9 +3594,9 @@ class Dashboard {
             "TRUCK TYPE", "PLATE #", "TRUCK COMPANY NAME",
             "QUANTITY", "VOLUME (mÂ³)",
         ];
-        const EMPTY_CELL = "â€"";
+        const EMPTY_CELL = "—"";
         const sheetData = [
-            ["SYSU Logistics â€" Confirmed Assignments"],
+            ["SYSU Logistics —" Confirmed Assignments"],
             COL_KEYS,
             ...rows.map(r => COL_KEYS.map(k => {
                 const v = r[k];
@@ -3626,7 +3626,7 @@ class Dashboard {
 
             // â"€â"€ Title row (row 1) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             const titleCell = ws["A1"] ||= {};
-            titleCell.v = "SYSU Logistics â€" Confirmed Assignments";
+            titleCell.v = "SYSU Logistics —" Confirmed Assignments";
             titleCell.t = "s";
             titleCell.s = {
                 font:   { bold: true, color: HEADER_FONT, sz: 14 },
@@ -3669,7 +3669,7 @@ class Dashboard {
                     const cell = ws[ref] || {};
 
                     // Set value
-                    if (val !== "â€"" && val !== "" && val !== null && val !== undefined) {
+                    if (val !== "—"" && val !== "" && val !== null && val !== undefined) {
                         if (typeof val === "number") {
                             cell.v = val;
                             cell.t = "n";
@@ -3690,7 +3690,7 @@ class Dashboard {
                             }
                         }
                     } else {
-                        cell.v = "â€"";
+                        cell.v = "—"";
                         cell.t = "s";
                     }
 
@@ -3751,9 +3751,9 @@ class Dashboard {
     }
 
     _formatAssignedAt(ts) {
-        if (!ts) return "â€"";
+        if (!ts) return "—"";
         const date = ts.toDate ? ts.toDate() : ts.seconds ? new Date(ts.seconds * 1000) : null;
-        if (!date) return "â€"";
+        if (!date) return "—"";
         return date.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
     }
 
