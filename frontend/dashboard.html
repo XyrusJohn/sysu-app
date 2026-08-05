@@ -1346,6 +1346,7 @@
                             <col class="w-[20%]">
                             <col class="w-[8%]">
                             <col class="w-[8%]">
+                            <col class="w-[8%]">
                         </colgroup>
                         <thead>
                         <tr class="border-b border-db-border">
@@ -1358,7 +1359,8 @@
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Customer Name</th>
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Delivery Address</th>
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Latitude</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 text-center whitespace-nowrap">Longitude</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Longitude</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-4 text-center whitespace-nowrap w-[80px]">POD Preview</th>
                         </tr>
                         </thead>
                         <tbody id="sapDtlOBDLines">
@@ -1375,9 +1377,21 @@
                             <td class="pt-3 pr-3"></td>
                             <td class="pt-3 pr-3"></td>
                             <td class="pt-3"></td>
+                            <td class="pt-3"></td>
                         </tr>
                         </tfoot>
                     </table>
+                    <!-- POD Preview Modal -->
+                    <div id="podPreviewModal" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-50">
+                      <div class="bg-white dark:bg-gray-800 rounded-lg p-4 max-w-lg w-full shadow-lg">
+                        <div class="flex justify-between items-center mb-2">
+                          <h2 class="text-lg font-bold text-gray-800 dark:text-gray-200">POD Preview</h2>
+                          <button onclick="window.dashboard.closePodPreview()" class="text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white">&times;</button>
+                        </div>
+                        <img id="podPreviewImg" src="" alt="POD image" class="w-full h-auto mb-2 rounded cursor-zoom-in" onclick="window.dashboard.togglePodZoom()"/>
+                        <div class="text-sm text-gray-600 dark:text-gray-300">Captured at: <span id="podTimestamp">&mdash;</span></div>
+                      </div>
+                    </div>
                 </div>
             </div>
             <div class="bg-db-bg/60 border border-db-border rounded-xl p-5">
