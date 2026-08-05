@@ -166,10 +166,26 @@ describe('filterSap', () => {
     expect(dashboard._renderSapTable).toHaveBeenCalledTimes(2);
   });
 
-  test('sets filter to completed and calls _renderSapTable', () => {
-    dashboard.filterSap('completed');
-    expect(dashboard.state.sapFilter).toBe('completed');
+  test('delivered filter sets sapFilter to "delivered" and renders', () => {
+    // Populate sapAssignments with mixed tripStatus values to mirror realistic state.
+    // (The actual filter dispatch happens in _renderSapTable, which is mocked here,
+    // so this test primarily verifies state side-effects and tab activation.)
+    dashboard.state.sapAssignments = {
+      'DISP-001': { driverName: 'Juan', truckPlate: 'ABC123', tripStatus: 'completed' },
+      'DISP-002': { driverName: 'Pedro', truckPlate: 'DEF456', tripStatus: 'in_transit' },
+      'DISP-003': { driverName: 'Maria', truckPlate: 'GHI789', tripStatus: null },
+    };
+
+    // Activate the delivered filter — this sets state.sapFilter and triggers _renderSapTable.
+    dashboard.filterSap('delivered');
+
+    // Assert state was set correctly and render was invoked.
+    expect(dashboard.state.sapFilter).toBe('delivered');
     expect(dashboard._renderSapTable).toHaveBeenCalled();
+
+    // Assert the delivered tab became active (verifies tab mapping is 'delivered' → sapTabDelivered).
+    const deliveredTab = document.getElementById('sapTabDelivered');
+    expect(deliveredTab.classList.contains('active')).toBe(true);
   });
 
 });
