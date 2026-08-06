@@ -306,7 +306,7 @@ a {
   transform: translate(-50%, 0) !important;
 }
 
-/* POD Zoom Controls - Enterprise/Industrial Standard */
+/* POD Zoom Controls */
 #podPreviewModal .relative {
   position: relative;
 }
@@ -314,54 +314,35 @@ a {
 #podPreviewModal input[type="range"] {
   -webkit-appearance: none;
   width: 100%;
-  height: 3px;
-  border-radius: 9999px;
-  background: #e2e8f0;
+  height: 4px;
+  border-radius: 2px;
+  background: #ddd;
   outline: none;
-  opacity: 0.8;
-  transition: background 0.2s ease, opacity 0.2s;
-}
-
-#podPreviewModal input[type="range"]:hover {
-  background: #cbd5e0;
-  opacity: 1;
+  opacity: 0.7;
+  transition: opacity 0.2s;
 }
 
 #podPreviewModal input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 20px;
-  height: 20px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: #1e293b;
+  background: #c8102e;
   cursor: pointer;
-  border: 3px solid #ffffff;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-  transition: transform 0.1s ease;
-}
-
-#podPreviewModal input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.1);
 }
 
 #podPreviewModal input[type="range"]::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: #1e293b;
+  background: #c8102e;
   cursor: pointer;
-  border: 3px solid #ffffff;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-  transition: transform 0.1s ease;
-}
-
-#podPreviewModal input[type="range"]::-moz-range-thumb:hover {
-  transform: scale(1.1);
 }
 
 /* POD Zoom */
 #podPreviewImg {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.2s ease;
   cursor: zoom-in;
 }
 
@@ -371,30 +352,4 @@ a {
 
 #podPreviewImg.grab {
   cursor: grab;
-}
-
-/* Professional modal enhancements */
-#podPreviewModal {
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-}
-
-#podPreviewModal > div {
-  border-radius: 24px;
-  overflow: hidden;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-#podPreviewModal > div > *:last-child {
-  margin-bottom: 0;
-}
-
-/* Additional enterprise refinements */
-#podPreviewModal h3 {
-  letter-spacing: -0.5px;
-}
-
-#podPreviewModal p {
-  letter-spacing: -0.25px;
 }
