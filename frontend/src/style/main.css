@@ -305,3 +305,10 @@ a {
   opacity: 1 !important;
   transform: translate(-50%, 0) !important;
 }
+
+/* POD Zoom */
+#podPreviewImg.zoom-enabled {
+  transform: scale(1.5);
+  transition: transform 0.2s ease;
+  cursor: zoom-out;
+}
