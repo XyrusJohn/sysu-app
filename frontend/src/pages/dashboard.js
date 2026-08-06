@@ -2727,7 +2727,6 @@ class Dashboard {
                         <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center">
                           ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && podMatch?.podImageUrl && podMatch?.podCapturedAt ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
-                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && (podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) && (podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64).length > 50 ? `<button onclick="window.dashboard.openGuardSigPreview('${encodeURIComponent(r.OBDNumber)}')" class="ml-1 border border-sysu-red/20 hover:border-sysu-red/50 bg-sysu-red/10 hover:bg-sysu-red/20 text-sysu-red px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Guard Signature Preview">Signature</button>` : ''}
                         </td>
                     </tr>`;
             }).join("");
@@ -2777,12 +2776,30 @@ class Dashboard {
         if (!modal) return;
         const imgEl = modal.querySelector('#podPreviewImg');
         const tsEl = modal.querySelector('#podTimestamp');
+        const signatureContainer = modal.querySelector('#podPreviewSignature');
         if (imgEl) imgEl.src = match.podImageUrl;
         if (tsEl) {
             const captureDate = match.podCapturedAt?.toDate
                 ? match.podCapturedAt.toDate()
                 : new Date(match.podCapturedAt.seconds * 1000);
             tsEl.textContent = captureDate.toLocaleString();
+        }
+        // Handle signature button
+        if (signatureContainer) {
+            const guardSignatureBase64 = match?.guardSignatureBase64 || asgn?.guardSignatureBase64;
+            if (guardSignatureBase64 && guardSignatureBase64.length > 50) {
+                // Show signature button
+                signatureContainer.innerHTML = `
+                    <button onclick="window.dashboard.openGuardSigPreview('${encodeURIComponent(obdNumber)}')"
+                            class="mt-2 block w-full px-3 py-2 bg-sysu-red/10 hover:bg-sysu-red/20 border border-sysu-red/20 text-sysu-red font-bold text-sm rounded"
+                            title="Guard Signature Preview">
+                        View Guard Signature
+                    </button>
+                `;
+            } else {
+                // Hide signature button
+                signatureContainer.innerHTML = '';
+            }
         }
         modal.classList.remove('hidden');
         modal.classList.add('flex');
