@@ -269,6 +269,34 @@ a {
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* ── SAP Filter Pill Tabs ────── */
+
+[id^="sapTab"] {
+  border-color: transparent;
+  transition: border-color 200ms ease, box-shadow 200ms ease, color 200ms ease;
+}
+
+[id^="sapTab"].active {
+  border-color: var(--st-color) !important;
+  box-shadow: 0 0 14px var(--st-soft);
+}
+
+[id^="sapTab"] .st-dot {
+  background-color: var(--st-color);
+  opacity: 0.35;
+  transition: opacity 200ms ease, box-shadow 200ms ease;
+}
+
+[id^="sapTab"].active .st-dot {
+  opacity: 1;
+  box-shadow: 0 0 6px var(--st-glow);
+}
+
+/* Light-mode: active-pill backgrounds */
+[data-theme="light"] [id^="sapTab"].active {
+  box-shadow: 0 0 10px var(--st-soft);
+}
+
 /* Toast show state */
 #toast {
   transition: opacity 0.3s ease, transform 0.3s ease;

@@ -915,6 +915,8 @@ class Dashboard {
         window.dashboard.clearOfflineMarkers = this.clearOfflineMarkers.bind(this);
         window.dashboard.openObdPodPreview = this.openObdPodPreview.bind(this);
         window.dashboard.closePodPreview = this.closePodPreview.bind(this);
+        window.dashboard.openGuardSigPreview = this.openGuardSigPreview.bind(this);
+        window.dashboard.closeGuardSigPreview = this.closeGuardSigPreview.bind(this);
 
         [
             "Overview",
@@ -1185,7 +1187,7 @@ class Dashboard {
     }
 
     _formatCoord(val, digits = 5) {
-        if (val == null) return "—"";
+        if (val == null) return "—";
         return Number(val).toFixed(digits);
     }
 
@@ -1237,7 +1239,7 @@ class Dashboard {
                    <span class="text-db-text3/40 mx-0.5">Â·</span>
                    <span class="font-mono text-[10.5px] text-db-text3">${this._formatCoord(d.lng)}</span>`
                 : `<span class="text-db-text3 text-[11px]">—"</span>`;
-            const lastSeen = d.lastSeen ? fmtElapsed(d.lastSeen) : "—"";
+            const lastSeen = d.lastSeen ? fmtElapsed(d.lastSeen) : "—";
 
             return `
             <tr class="border-b border-db-border/50 hover:bg-db-item-hover/50 transition-colors">
@@ -1528,7 +1530,7 @@ class Dashboard {
               #${shipmentDisplay}
               ${count > 1 ? `<span class="ml-1 text-[12px] bg-db-item-hover px-1.5 py-0.5 rounded font-bold">${count}</span>` : ""}
           </td>
-          <td class="px-6 py-4 text-db-text2 font-semibold uppercase">${escapeHtml(rec.TruckType || "—"")}</td>
+          <td class="px-6 py-4 text-db-text2 font-semibold uppercase">${escapeHtml(rec.TruckType || "—")}</td>
           <td class="px-6 py-4 text-db-text2">${escapeHtml(g.routeDisplay)}</td>
           <td class="px-6 py-4 text-db-text2 font-mono text-[11px]">${SAPService.parseDate(rec.PlanningDate || rec.Planning_Date)}</td>
           <td class="px-6 py-4 text-db-text2 font-mono text-[11px] font-bold text-sysu-red">${SAPService.parseDate(rec.ActualDelDate)}</td>
@@ -1657,12 +1659,12 @@ class Dashboard {
                 return div;
             };
 
-            gridSection.appendChild(createField("Phone", d.phone || "—""));
-            gridSection.appendChild(createField("Plate", d.plateNumber || "—""));
+            gridSection.appendChild(createField("Phone", d.phone || "—"));
+            gridSection.appendChild(createField("Plate", d.plateNumber || "—"));
             gridSection.appendChild(
-                createField("Company", d.truckingCompany || d.company || "—""),
+                createField("Company", d.truckingCompany || d.company || "—"),
             );
-            gridSection.appendChild(createField("Truck Type", d.truckType || "—""));
+            gridSection.appendChild(createField("Truck Type", d.truckType || "—"));
 
             const footer = document.createElement("div");
             footer.className = "mt-6 pt-6 border-t border-db-border flex gap-3";
@@ -1799,7 +1801,7 @@ class Dashboard {
             ? d.toDate().toLocaleTimeString("en-PH", {hour: "2-digit", minute: "2-digit", hour12: true})
             : d?.seconds
                 ? new Date(d.seconds * 1000).toLocaleTimeString("en-PH", {hour: "2-digit", minute: "2-digit", hour12: true})
-                : "—"";
+                : "—";
 
         const fmtElapsed = (d) => {
             const ms = d?.toDate ? d.toDate() : d?.seconds ? new Date(d.seconds * 1000) : new Date(0);
@@ -1836,8 +1838,8 @@ class Dashboard {
                             || "";
                         const viberHref = phone ? `viber://contact?number=${phone.replace(/^0/, "63")}` : "#";
                         const hasPhone = !!phone;
-                        const assignedLabel = d.entryTime?.toDate ? d.entryTime.toDate().toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"";
-                        const elapsedLabel = d.entryTime ? fmtElapsed(d.entryTime) : "—"";
+                        const assignedLabel = d.entryTime?.toDate ? d.entryTime.toDate().toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—";
+                        const elapsedLabel = d.entryTime ? fmtElapsed(d.entryTime) : "—";
                         const statusDisplay = (() => {
                             if (d.status === 'loading' || d.status === 'called') return { badge: 'Loading—¦', dot: 'text-sysu-red' };
                             if (d.status === 'complete') return { badge: 'Tapos na', dot: 'text-green-400' };
@@ -1851,7 +1853,7 @@ class Dashboard {
                                     <span class="text-[17px] font-bold font-mono text-db-text leading-none ${rank === 1 ? 'text-sysu-red' : rank === 2 ? 'text-yellow-400' : ''}">#${rank}</span>
                                 </div>
                                 <div class="flex-1 min-w-0 pt-0.5">
-                                    <div class="text-[11px] font-semibold text-db-text2 mb-1 truncate leading-tight">${escapeHtml(d.driverName || "—"")}</div>
+                                    <div class="text-[11px] font-semibold text-db-text2 mb-1 truncate leading-tight">${escapeHtml(d.driverName || "—")}</div>
                                     <span class="inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${statusDisplay.dot === 'text-sysu-red' ? 'bg-sysu-red/10 text-sysu-red border-sysu-red/30' : statusDisplay.dot === 'text-green-400' ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'text-db-text3 bg-db-text3/10 border-db-text3/20'}">${statusDisplay.badge}</span>
                                 </div>
                                 <div class="flex flex-col items-end gap-0.5 shrink-0">
@@ -1864,14 +1866,14 @@ class Dashboard {
                                 <div class="flex items-center gap-2.5 rounded-lg px-3 py-2 flex-1 min-w-0" style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);">
                                     <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0" style="background:rgba(200,16,46,0.15);color:#f87171;">${escapeHtml((d.driverName || "?").charAt(0).toUpperCase())}</div>
                                     <div class="min-w-0">
-                                        <div class="text-[12px] font-bold text-db-text truncate">${escapeHtml(d.driverName || "—"")}</div>
-                                        <div class="text-[9px] font-mono text-db-text3 opacity-60">${escapeHtml(d.plateNumber || "—"")}</div>
+                                        <div class="text-[12px] font-bold text-db-text truncate">${escapeHtml(d.driverName || "—")}</div>
+                                        <div class="text-[9px] font-mono text-db-text3 opacity-60">${escapeHtml(d.plateNumber || "—")}</div>
                                         ${d.truckCompany ? `<div class="text-[9px] font-medium mt-0.5 truncate" style="color:#d4a017cc;">${escapeHtml(d.truckCompany)}</div>` : ""}
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-1.5 text-[9px] text-db-text3 shrink-0 opacity-50">
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-                                    ${escapeHtml(d.truckType || "—"")}
+                                    ${escapeHtml(d.truckType || "—")}
                                 </div>
                                 <a
                                         href="${viberHref}"
@@ -1944,7 +1946,7 @@ class Dashboard {
         }
 
         const driverName = driver.driverName || "Unknown Driver";
-        const plateNum = driver.plateNumber || "—"";
+        const plateNum = driver.plateNumber || "—";
 
         // Build list of unassigned SAP dispatches matching this truck type
         const unassignedKeys = Object.entries(this.state.sapGroupedByDispatch).filter(([key, records]) => {
@@ -1985,10 +1987,10 @@ class Dashboard {
         // Build dispatch rows HTML
         const dispatchRows = unassignedKeys.slice(0, 25).map(([key, records]) => {
             const rec = records[0];
-            const routeDisplay = ((rec.Route || "").split("-->").pop()?.trim() || "—"");
+            const routeDisplay = ((rec.Route || "").split("-->").pop()?.trim() || "—");
             const plannedDate = SAPService.parseDate(rec.PlanningDate || rec.Planning_Date);
             const dispatchNum = key.replace(/^0+/, "") || key;
-            const truckTypeDisplay = rec.TruckType || "—"";
+            const truckTypeDisplay = rec.TruckType || "—";
 
             return `<div
             class="driver-row flex items-center justify-between px-4 py-3 border-b border-db-border cursor-pointer hover:bg-db-item-hover transition-colors"
@@ -2089,7 +2091,7 @@ class Dashboard {
         }
 
         const driverName = driver.driverName || "Unknown Driver";
-        const truckPlate = driver.plateNumber || "—"";
+        const truckPlate = driver.plateNumber || "—";
 
         // Derive OBD line items from the receiving records grouped by dispatch
         const receivingRecords = this.state.sapGroupedByDispatch[dispatchKey] || [];
@@ -2120,7 +2122,7 @@ class Dashboard {
                     driverId,
                     driverName,
                     truckPlate,
-                    truckCompany: driver.truckCompany || driver.company || "—"",
+                    truckCompany: driver.truckCompany || driver.company || "—",
                     assignedAt: ts(),
                     lineItems,
                 }),
@@ -2184,7 +2186,20 @@ class Dashboard {
             activeTab.classList.add("bg-db-item-active", "text-db-text", "active");
         }
 
-        this._renderSapTable();
+        // Show loading spinner and refresh data
+        const spinner = document.getElementById('sapFilterSpinner');
+        if (spinner) {
+            spinner.classList.remove('hidden');
+        }
+
+        // Refresh data and render
+        this._syncSAP().finally(() => {
+            // Hide spinner when data is loaded
+            if (spinner) {
+                spinner.classList.add('hidden');
+            }
+            this._renderSapTable();
+        });
     }
 
     async handleNavClick(viewName) {
@@ -2391,7 +2406,7 @@ class Dashboard {
     }
 
     async saveDriver() {
-        console.log("[saveDriver] CALLED —" queue snapshot:", this.state.queue.map(q => ({id: q.id, driverName: q.driverName, registrationComplete: q.registrationComplete})));
+        console.log("[saveDriver] CALLED — queue snapshot:", this.state.queue.map(q => ({id: q.id, driverName: q.driverName, registrationComplete: q.registrationComplete})));
         const fn = document.getElementById("drvFName").value.trim();
         const ln = document.getElementById("drvLName").value.trim();
         const nm = `${fn} ${ln}`.trim();
@@ -2449,7 +2464,7 @@ class Dashboard {
                 }
             });
             if (updates.length === 0) {
-                console.log("[saveDriver] No queue entries with registrationComplete === false —" nothing to update");
+                console.log("[saveDriver] No queue entries with registrationComplete === false — nothing to update");
             }
             console.log("[saveDriver] Queued Firestore updates:", updates.length);
             if (updates.length > 0) await Promise.all(updates);
@@ -2575,7 +2590,7 @@ class Dashboard {
             <div class="font-semibold text-db-text">${escapeHtml(u.name || "User")}</div>
             <div class="text-[11px] text-db-text3">${escapeHtml(u.email || "")}</div>
           </td>
-          <td class="px-6 py-4 border-b border-db-border text-db-text2 text-sm">${escapeHtml(u.position || "—"")}</td>
+          <td class="px-6 py-4 border-b border-db-border text-db-text2 text-sm">${escapeHtml(u.position || "—")}</td>
           <td class="px-6 py-4 border-b border-db-border">${roleSelectHtml}</td>
           <td class="px-6 py-4 border-b border-db-border">
             <span class="px-2 py-1 rounded-full text-[11px] font-bold flex items-center w-max gap-1.5" style="background:${statusBg};color:${statusColor};">
@@ -2659,19 +2674,19 @@ class Dashboard {
         };
 
         set("sapDtlDispatchNum", rec.SAPDispatchNumber || dispatchNumber);
-        set("sapDtlStatus", rec.PgiStatus || rec.CheckStatus || "—"");
-        set("sapDtlDelivery", rec.Delivery || "—"");
+        set("sapDtlStatus", rec.PgiStatus || rec.CheckStatus || "—");
+        set("sapDtlDelivery", rec.Delivery || "—");
         set("sapDtlPlanDate", SAPService.parseDate(rec.PlanningDate));
         set("sapDtlActualDate", this._formatDelDateDisplay(rec.ActualDelDate));
-        set("sapDtlSONum", rec.SONumber || "—"");
-        set("sapDtlPONum", rec.PONumber || "—"");
-        set("sapDtlDocNum", rec.DocumentNumber || "—"");
-        set("sapDtlTruckType", rec.TruckType || "—"");
-        set("sapDtlRoute", rec.Route || "—"");
-        set("sapDtlPlate", rec.PlateNumber || "—"");
-        set("sapDtlDriver", rec.Driver || "—"");
+        set("sapDtlSONum", rec.SONumber || "—");
+        set("sapDtlPONum", rec.PONumber || "—");
+        set("sapDtlDocNum", rec.DocumentNumber || "—");
+        set("sapDtlTruckType", rec.TruckType || "—");
+        set("sapDtlRoute", rec.Route || "—");
+        set("sapDtlPlate", rec.PlateNumber || "—");
+        set("sapDtlDriver", rec.Driver || "—");
         set("sapDtlShipStart", this._parseSAPTime(rec.ShipmentStart));
-        set("sapDtlRemarks", rec.PlanningRemarks || "—"");
+        set("sapDtlRemarks", rec.PlanningRemarks || "—");
 
         // Build OBD line items table
         let totalAmount = 0, totalVolume = 0, totalWeight = 0, totalQty = 0;
@@ -2689,36 +2704,45 @@ class Dashboard {
 
                 // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
                 const podMatch = asgn?.lineItems?.find(li => li.obdNumber === r.OBDNumber);
+                const asgnGuardSig = asgn?.guardSignatureBase64;
+                const podMatchGuardSig = podMatch?.guardSignatureBase64;
+                const guardSigBase64 = asgnGuardSig || podMatchGuardSig;
+                if (!guardSigBase64) {
+                    console.warn('DEBUG OBD', r.OBDNumber, 'No guard signature found. asgn has guardSignatureBase64:', !!asgnGuardSig, 'podMatch has guardSignatureBase64:', !!podMatchGuardSig, 'asgn keys:', Object.keys(asgn || {}), 'podMatch keys:', Object.keys(podMatch || {}));
+                } else {
+                    console.log('DEBUG OBD', r.OBDNumber, 'Guard signature found, length:', guardSigBase64.length, 'source:', asgnGuardSig ? 'asgn' : 'podMatch');
+                }
 
                 return `
                     <tr class="border-b border-db-border/50 hover:bg-db-item-hover/30 transition-colors">
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "—"")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${amt > 0 ? `PHP ${amt.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—""}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${vol > 0 ? vol.toFixed(3) : "—""}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${wgt > 0 ? wgt.toFixed(3) : "—""}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${qty > 0 ? qty.toFixed(3) : "—""}</td>
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "—"")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "—"")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "—"")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—""}</td>
-                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—""}</td>
+                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "—")}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${amt > 0 ? `PHP ${amt.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—"}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${vol > 0 ? vol.toFixed(3) : "—"}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${wgt > 0 ? wgt.toFixed(3) : "—"}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${qty > 0 ? qty.toFixed(3) : "—"}</td>
+                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "—")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "—")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "—")}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—"}</td>
+                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center">
                           ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && podMatch?.podImageUrl && podMatch?.podCapturedAt ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
+                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && (podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) && (podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64).length > 50 ? `<button onclick="window.dashboard.openGuardSigPreview('${encodeURIComponent(r.OBDNumber)}')" class="ml-1 border border-sysu-red/20 hover:border-sysu-red/50 bg-sysu-red/10 hover:bg-sysu-red/20 text-sysu-red px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Guard Signature Preview">Signature</button>` : ''}
                         </td>
                     </tr>`;
             }).join("");
         }
 
-        set("sapDtlTotalAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—"");
-        set("sapDtlTotalVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "—"");
-        set("sapDtlTotalWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "—"");
-        set("sapDtlTotalQty", totalQty > 0 ? totalQty.toFixed(3) : "—"");
+        set("sapDtlTotalAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—");
+        set("sapDtlTotalVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "—");
+        set("sapDtlTotalWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "—");
+        set("sapDtlTotalQty", totalQty > 0 ? totalQty.toFixed(3) : "—");
 
         // Cargo totals (alias to same fields)
-        set("sapDtlAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—"");
-        set("sapDtlVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "—"");
-        set("sapDtlWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "—"");
-        set("sapDtlQty", totalQty > 0 ? totalQty.toFixed(3) : "—"");
+        set("sapDtlAmount", totalAmount > 0 ? `PHP ${totalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}` : "—");
+        set("sapDtlVolume", totalVolume > 0 ? totalVolume.toFixed(3) : "—");
+        set("sapDtlWeight", totalWeight > 0 ? totalWeight.toFixed(3) : "—");
+        set("sapDtlQty", totalQty > 0 ? totalQty.toFixed(3) : "—");
 
         const statusEl = document.getElementById("sapDtlStatus");
         if (statusEl) {
@@ -2785,11 +2809,77 @@ class Dashboard {
         }
     }
 
+    // Guard Signature Preview
+    openGuardSigPreview(obdNumber) {
+        const key = this._currentDispatchKey;
+        if (!key) {
+            return;
+        }
+        const asgn = this.state.sapAssignments[key];
+        const match = asgn?.lineItems?.find(li => li.obdNumber === obdNumber);
+        const guardSignatureBase64 = match?.guardSignatureBase64 || asgn?.guardSignatureBase64;
+
+        if (!guardSignatureBase64 || guardSignatureBase64.length < 50) {
+            return;
+        }
+
+        let modal = document.getElementById('guardPreviewModal');
+        if (modal) {
+            // Ensure existing modal has correct z-index
+            if (modal.className && !modal.className.includes('z-[99999]')) {
+                modal.className = modal.className.replace(/z-\[[0-9]+\]/, 'z-[99999]');
+                if (!modal.className.includes('z-[99999]')) {
+                    modal.className += ' z-[99999]';
+                }
+            }
+        } else {
+            // Create new modal
+            modal = document.createElement('div');
+            modal.id = 'guardPreviewModal';
+            modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-[99999] hidden';
+            modal.innerHTML = `
+                <div class="bg-gray-900 rounded-xl shadow-2xl w-[90vw] max-w-md mx-4 p-4 relative">
+                    <button onclick="window.dashboard.closeGuardSigPreview()" class="absolute top-2 right-3 text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+                    <h2 class="text-lg font-bold text-white mb-3">Guard Signature <span class="text-xs text-gray-400">(OBD: ${obdNumber})</span></h2>
+                    <div id="guardPreviewContainer" class="bg-white rounded-lg p-2 min-h-[200px] flex items-center justify-center"></div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        const container = document.getElementById('guardPreviewContainer');
+        container.innerHTML = '';
+
+        const img = document.createElement('img');
+        img.src = 'data:image/png;base64,' + guardSignatureBase64;
+        img.className = 'max-w-full max-h-[400px] rounded';
+        img.style.objectFit = 'contain';
+
+        img.onload = () => {
+            container.appendChild(img);
+        };
+
+        img.onerror = (error) => {
+            container.innerHTML = '<div class="text-red-400 p-4">Failed to load guard signature image</div>';
+        };
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    closeGuardSigPreview() {
+        const modal = document.getElementById('guardPreviewModal');
+        if (modal) {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+    }
+
     _parseSAPTime(pt) {
-        if (!pt || !pt.startsWith("PT")) return "—"";
+        if (!pt || !pt.startsWith("PT")) return "—";
         const h = parseInt(pt.match(/(\d+)H/)?.[1] || 0);
         const m = parseInt(pt.match(/(\d+)M/)?.[1] || 0);
-        if (!h && !m) return "—"";
+        if (!h && !m) return "—";
         const ampm = h >= 12 ? "PM" : "AM";
         const hour = h % 12 || 12;
         return `${hour}:${String(m).padStart(2, "0")} ${ampm}`;
@@ -2820,7 +2910,7 @@ class Dashboard {
     // Output: "Jul 10, 2026 12:00 AM"   —" always shows time (even 00:00:00 → 12:00 AM)
     // Uses local PH time (en-PH locale = Asia/Manila UTC+8).
     _formatDelDateDisplay(sapDate) {
-        if (!sapDate) return "—"";
+        if (!sapDate) return "—";
         const s = sapDate + "";
 
         let d;
@@ -2828,7 +2918,7 @@ class Dashboard {
             // /Date(1781481600000)/ —" SAP OData milliseconds, always UTC
             const msStr = s.replace("/Date(", "").replace(")/", "");
             const ms = parseInt(msStr);
-            if (isNaN(ms)) return "—"";
+            if (isNaN(ms)) return "—";
             d = new Date(ms);
         } else if (s.includes("T")) {
             // 2026-05-18T00:00:00 —" SAP OData ISO 8601 string.
@@ -2836,9 +2926,9 @@ class Dashboard {
             // toLocaleString("en-PH") then converts to PH local time (UTC+8) = 08:00 AM.
             // This is correct: SAP UTC midnight → 8:00 AM PH displayed.
             d = new Date(s);
-            if (isNaN(d.getTime())) return "—"";
+            if (isNaN(d.getTime())) return "—";
         } else {
-            return "—"";
+            return "—";
         }
 
         const dateStr = d.toLocaleDateString("en-PH", {
@@ -2910,10 +3000,10 @@ class Dashboard {
                 // First time —" initialise with queue check-in time (primary FIFO key)
                 driverAssignments[dId] = {
                     id: dId,
-                    driverName: asgn.driverName || queueEntry?.driverName || driver?.name || "—"",
-                    plateNumber: asgn.truckPlate || queueEntry?.plateNumber || driver?.plateNumber || "—"",
+                    driverName: asgn.driverName || queueEntry?.driverName || driver?.name || "—",
+                    plateNumber: asgn.truckPlate || queueEntry?.plateNumber || driver?.plateNumber || "—",
                     truckType: driverTruckType,
-                    truckCompany: asgn.truckCompany || queueEntry?.truckCompany || driver?.truckingCompany || driver?.company || "—"",
+                    truckCompany: asgn.truckCompany || queueEntry?.truckCompany || driver?.truckingCompany || driver?.company || "—",
                     entryTime: queueEntry?.entryTime || asgn.assignedAt || null,
                     _fromAssignment: true,
                     _latestAssignment: dispatchKey,
@@ -2996,7 +3086,7 @@ class Dashboard {
         truckTypeEl.textContent = truckType || "ANY";
         if (confirmBtn) {
             confirmBtn.disabled = true;
-            confirmBtn.textContent = "âœ" CONFIRM ASSIGNMENT";
+            confirmBtn.textContent = "✓ CONFIRM ASSIGNMENT";
             confirmBtn.classList.remove("opacity-50", "cursor-not-allowed");
         }
 
@@ -3134,13 +3224,13 @@ class Dashboard {
         if (isLocked) {
             if (confirmBtn) {
                 confirmBtn.disabled = true;
-                confirmBtn.textContent = "ðŸš« Driver Full —" Cannot Assign";
+                confirmBtn.textContent = "🚫 Driver Full — Cannot Assign";
                 confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
             }
         } else {
             if (confirmBtn) {
                 confirmBtn.disabled = false;
-                confirmBtn.textContent = "âœ" CONFIRM ASSIGNMENT";
+                confirmBtn.textContent = "✓ CONFIRM ASSIGNMENT";
                 confirmBtn.classList.remove("opacity-50", "cursor-not-allowed");
             }
         }
@@ -3192,7 +3282,7 @@ class Dashboard {
                 driverId,
                 driverName,
                 truckPlate,
-                truckCompany: driver.truckCompany || driver.company || "—"",
+                truckCompany: driver.truckCompany || driver.company || "—",
                 assignedAt: serverTimestamp(),
                 lineItems,
             });
@@ -3282,14 +3372,14 @@ class Dashboard {
             return {
                 dispatchKey: key,
                 dispatchNum: key.replace(/^0+/, "") || key,
-                driverName: asgn.driverName || "—"",
-                truckPlate: asgn.truckPlate || "—"",
+                driverName: asgn.driverName || "—",
+                truckPlate: asgn.truckPlate || "—",
                 assignedAt: asgn.assignedAt?.toDate?.() || (asgn.assignedAt?.seconds ? new Date(asgn.assignedAt.seconds * 1000) : null),
-                truckType: rec.TruckType || "—"",
-                route: ((rec.Route || "").split("-->").pop()?.trim() || "—""),
+                truckType: rec.TruckType || "—",
+                route: ((rec.Route || "").split("-->").pop()?.trim() || "—"),
                 planningDate: SAPService.parseDate(rec.PlanningDate || rec.Planning_Date),
                 status: rec.PgiStatus || rec.CheckStatus || "Pending",
-                delivery: rec.Delivery || "—"",
+                delivery: rec.Delivery || "—",
                 obdCount: records.length,
             };
         }).sort((a, b) => {
@@ -3354,7 +3444,7 @@ class Dashboard {
           :                                      "text-sysu-gold bg-sysu-gold/10 border-sysu-gold/20";
 
         const gc = (t) => {
-            const u = (t || "—"").toUpperCase();
+            const u = (t || "—").toUpperCase();
             if (u.includes("AUV"))   return "text-amber-400  bg-amber-500/10  border-amber-500/25";
             if (u.includes("TRUCK")) return "text-blue-400   bg-blue-500/10   border-blue-500/25";
             if (u.includes("WING") || u.includes("VAN"))
@@ -3365,7 +3455,7 @@ class Dashboard {
         };
 
         const gl = (t) => {
-            if (!t || t === "—"") return "Others";
+            if (!t || t === "—") return "Others";
             const u = t.toUpperCase();
             if (u.includes("AUV"))   return "AUV";
             if (u.includes("TRUCK")) return "Truck";
@@ -3377,7 +3467,7 @@ class Dashboard {
 
         const ordersByType = {};
         filtered.forEach((o) => {
-            const k = o.truckType || "—"";
+            const k = o.truckType || "—";
             if (!ordersByType[k]) ordersByType[k] = [];
             ordersByType[k].push(o);
         });
@@ -3436,8 +3526,8 @@ class Dashboard {
                 html += '</div>';
             } else {
                 cards.forEach((o) => {
-                    const assignedLabel = o.assignedAt ? o.assignedAt.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—"";
-                    const elapsedLabel = o.assignedAt ? this._formatElapsed(o.assignedAt) : "—"";
+                    const assignedLabel = o.assignedAt ? o.assignedAt.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—";
+                    const elapsedLabel = o.assignedAt ? this._formatElapsed(o.assignedAt) : "—";
                     const badge = o.obdCount > 1 ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:rgba(59,130,246,0.15);color:#60a5fa;">' + o.obdCount + ' OBDs</span>' : '';
                     html += '<div class="order-card rounded-xl border cursor-pointer overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-lg" style="background:#13161b;border-color:rgba(255,255,255,0.08);" onclick="window.dashboard._openOrderDetail(\'' + encodeURIComponent(o.dispatchKey) + '\')">';
                     html += '<div class="flex items-start gap-4 px-5 pt-4 pb-3">';
@@ -3485,7 +3575,7 @@ class Dashboard {
         const active = this.state.ordersTruckTypeFilter;
 
         const typeColor = (t) => {
-            if (!t || t === "—"") return "bg-db-text3/10 text-db-text3 border-db-text3/20";
+            if (!t || t === "—") return "bg-db-text3/10 text-db-text3 border-db-text3/20";
             const u = t.toUpperCase();
             if (u.includes("AUV"))   return "bg-amber-500/15 text-amber-400 border-amber-500/30";
             if (u.includes("TRUCK")) return "bg-blue-500/15 text-blue-400 border-blue-500/30";
@@ -3543,7 +3633,7 @@ class Dashboard {
 
         // DISPATCHER NAME = the account owner who is exporting
         const profile = AuthService.getUserProfile();
-        const dispatcherName = profile?.displayName || "—"";
+        const dispatcherName = profile?.displayName || "—";
 
         // â"€â"€ Build data rows from ASSIGNED dispatches only â"€â"€
         const rows = [];
@@ -3555,10 +3645,10 @@ class Dashboard {
                 rows.push({
                     "DISPATCHER NAME": dispatcherName,
                     "DISPATCH #": key,
-                    "DRIVER NAME": asgn.driverName || "—"",
-                    "TRUCK TYPE": "—"",
-                    "PLATE #": asgn.truckPlate || "—"",
-                    "TRUCK COMPANY NAME": asgn.truckCompany || "—"",
+                    "DRIVER NAME": asgn.driverName || "—",
+                    "TRUCK TYPE": "—",
+                    "PLATE #": asgn.truckPlate || "—",
+                    "TRUCK COMPANY NAME": asgn.truckCompany || "—",
                 });
                 return;
             }
@@ -3573,10 +3663,10 @@ class Dashboard {
                 const row = {
                     "DISPATCHER NAME": dispatcherName,
                     "DISPATCH #": key,
-                    "DRIVER NAME": asgn.driverName || "—"",
-                    "TRUCK TYPE": rec.TruckType || "—"",
-                    "PLATE #": asgn.truckPlate || "—"",
-                    "TRUCK COMPANY NAME": asgn.truckCompany || "—"",
+                    "DRIVER NAME": asgn.driverName || "—",
+                    "TRUCK TYPE": rec.TruckType || "—",
+                    "PLATE #": asgn.truckPlate || "—",
+                    "TRUCK COMPANY NAME": asgn.truckCompany || "—",
                     "QUANTITY": parseFloat(rec.Quantity) || 0,
                     "VOLUME (mÂ³)": parseFloat(rec.Volume) || 0,
                 };
@@ -3594,9 +3684,9 @@ class Dashboard {
             "TRUCK TYPE", "PLATE #", "TRUCK COMPANY NAME",
             "QUANTITY", "VOLUME (mÂ³)",
         ];
-        const EMPTY_CELL = "—"";
+        const EMPTY_CELL = "—";
         const sheetData = [
-            ["SYSU Logistics —" Confirmed Assignments"],
+            ["SYSU Logistics — Confirmed Assignments"],
             COL_KEYS,
             ...rows.map(r => COL_KEYS.map(k => {
                 const v = r[k];
@@ -3626,7 +3716,7 @@ class Dashboard {
 
             // â"€â"€ Title row (row 1) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             const titleCell = ws["A1"] ||= {};
-            titleCell.v = "SYSU Logistics —" Confirmed Assignments";
+            titleCell.v = "SYSU Logistics — Confirmed Assignments";
             titleCell.t = "s";
             titleCell.s = {
                 font:   { bold: true, color: HEADER_FONT, sz: 14 },
@@ -3669,7 +3759,7 @@ class Dashboard {
                     const cell = ws[ref] || {};
 
                     // Set value
-                    if (val !== "—"" && val !== "" && val !== null && val !== undefined) {
+                    if (val !== "—" && val !== "" && val !== null && val !== undefined) {
                         if (typeof val === "number") {
                             cell.v = val;
                             cell.t = "n";
@@ -3690,7 +3780,7 @@ class Dashboard {
                             }
                         }
                     } else {
-                        cell.v = "—"";
+                        cell.v = "—";
                         cell.t = "s";
                     }
 
@@ -3751,9 +3841,9 @@ class Dashboard {
     }
 
     _formatAssignedAt(ts) {
-        if (!ts) return "—"";
+        if (!ts) return "—";
         const date = ts.toDate ? ts.toDate() : ts.seconds ? new Date(ts.seconds * 1000) : null;
-        if (!date) return "—"";
+        if (!date) return "—";
         return date.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
     }
 
