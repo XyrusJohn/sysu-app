@@ -81,9 +81,20 @@ class Dashboard {
             podDragStartY: 0,
             podImageOffsetX: 0,
             podImageOffsetY: 0,
+            podMaxOffsetX: 0,
+            podMaxOffsetY: 0,
+            podVelocityX: 0,
+            podVelocityY: 0,
+            podMomentumAnimationFrame: null,
+            podResetAnimationFrame: null,
+            _lastDragTime: 0,
+            _lastDragX: 0,
+            _lastDragY: 0,
         };
 
         this.renderTimer = null;
+        this._podPreviewEscapeListener = null;
+        this._globalEscapeListener = null;
         this._bindMethods();
     }
 
@@ -2791,6 +2802,22 @@ class Dashboard {
         this.state.podDragStartY = 0;
         this.state.podImageOffsetX = 0;
         this.state.podImageOffsetY = 0;
+        this.state.podMaxOffsetX = 0;
+        this.state.podMaxOffsetY = 0;
+        this.state.podVelocityX = 0;
+        this.state.podVelocityY = 0;
+        // Cancel any existing animations
+        if (this.state.podMomentumAnimationFrame !== null) {
+            cancelAnimationFrame(this.state.podMomentumAnimationFrame);
+        }
+        if (this.state.podResetAnimationFrame !== null) {
+            cancelAnimationFrame(this.state.podResetAnimationFrame);
+        }
+        this.state.podMomentumAnimationFrame = null;
+        this.state.podResetAnimationFrame = null;
+        this.state._lastDragTime = 0;
+        this.state._lastDragX = 0;
+        this.state._lastDragY = 0;
 
         if (imgEl) {
             imgEl.src = match.podImageUrl;
@@ -2799,12 +2826,24 @@ class Dashboard {
             imgEl.style.cursor = 'zoom-in';
             imgEl.style.transformOrigin = 'center center';
             imgEl.style.position = 'relative';
+
+            // Calculate max pan offsets after image loads
+            imgEl.onload = () => {
+                this._calculatePodMaxOffsets(imgEl);
+            };
         }
         if (tsEl) {
             const captureDate = match.podCapturedAt?.toDate
                 ? match.podCapturedAt.toDate()
                 : new Date(match.podCapturedAt.seconds * 1000);
             tsEl.textContent = captureDate.toLocaleString();
+        }
+        const verifiedEl = modal.querySelector('#podVerifiedTimestamp');
+        if (verifiedEl) {
+            const captureDate = match.podCapturedAt?.toDate
+                ? match.podCapturedAt.toDate()
+                : new Date(match.podCapturedAt.seconds * 1000);
+            verifiedEl.textContent = captureDate.toLocaleString();
         }
         // Handle signature button
         if (signatureContainer) {
@@ -2826,6 +2865,27 @@ class Dashboard {
         modal.classList.remove('hidden');
         modal.classList.add('flex');
 
+        // Remove any existing global ESC listener to avoid duplicates
+        if (this._globalEscapeListener) {
+            document.removeEventListener('keydown', this._globalEscapeListener);
+        }
+        // Add global ESC key listener to handle modal stack
+        const handleEscapeKey = (e) => {
+            if (e.key === 'Escape') {
+                const guardModal = document.getElementById('guardPreviewModal');
+                const podModal = document.getElementById('podPreviewModal');
+                if (guardModal && guardModal.classList.contains('flex')) {
+                    // Guard signature modal is open -> close it, keep POD preview
+                    this.closeGuardSigPreview();
+                } else if (podModal && podModal.classList.contains('flex')) {
+                    // POD preview is open -> close it (go back to dispatch)
+                    this.closePodPreview();
+                }
+            }
+        };
+        document.addEventListener('keydown', handleEscapeKey);
+        this._globalEscapeListener = handleEscapeKey;
+
         // Add event listeners for enhanced zoom functionality
         this._addPodPreviewEventListeners(imgEl, modal);
     }
@@ -2833,10 +2893,24 @@ class Dashboard {
     closePodPreview() {
         const modal = document.getElementById('podPreviewModal');
         if (modal) {
+            // Remove global ESC key listener
+            if (this._globalEscapeListener) {
+                document.removeEventListener('keydown', this._globalEscapeListener);
+                this._globalEscapeListener = null;
+            }
             modal.classList.add('hidden');
             modal.classList.remove('flex');
             // Remove event listeners when closing modal
             this._removePodPreviewEventListeners();
+            // Cancel any ongoing animations
+            if (this.state.podMomentumAnimationFrame !== null) {
+                cancelAnimationFrame(this.state.podMomentumAnimationFrame);
+                this.state.podMomentumAnimationFrame = null;
+            }
+            if (this.state.podResetAnimationFrame !== null) {
+                cancelAnimationFrame(this.state.podResetAnimationFrame);
+                this.state.podResetAnimationFrame = null;
+            }
         }
     }
 
@@ -2854,16 +2928,9 @@ class Dashboard {
         // Prevent image drag default behavior
         imgEl.addEventListener('dragstart', (e) => e.preventDefault());
 
-        // Zoom slider
-        const zoomSlider = modal.querySelector('#podZoomSlider');
-        const zoomValueDisplay = modal.querySelector('#podZoomValue');
-        if (zoomSlider && zoomValueDisplay) {
-            // Initialize slider to current zoom level
-            zoomSlider.value = Math.round(this.state.podZoomLevel * 100);
-            zoomValueDisplay.textContent = `${zoomSlider.value}%`;
+        // Double-click to toggle zoom
+        imgEl.addEventListener('dblclick', () => this._handlePodDoubleClick(imgEl));
 
-            zoomSlider.addEventListener('input', (e) => this._handlePodZoomSlider(e, imgEl, zoomValueDisplay));
-        }
     }
 
     // Remove event listeners for POD preview
@@ -2877,15 +2944,8 @@ class Dashboard {
         imgEl.removeEventListener('mouseup', this._handlePodDragEnd);
         imgEl.removeEventListener('mouseleave', this._handlePodDragEnd);
         imgEl.removeEventListener('dragstart', this._handlePodDragStart); // Actually dragstart listener
+        imgEl.removeEventListener('dblclick', this._handlePodDoubleClick);
 
-        // Remove zoom slider event listener
-        const modal = document.getElementById('podPreviewModal');
-        if (modal) {
-            const zoomSlider = modal.querySelector('#podZoomSlider');
-            if (zoomSlider) {
-                zoomSlider.removeEventListener('input', this._handlePodZoomSlider);
-            }
-        }
     }
 
     // Handle mouse wheel zoom with Ctrl key
@@ -2904,8 +2964,19 @@ class Dashboard {
         // Update zoom level state
         this.state.podZoomLevel = newZoomLevel;
 
+        // If zooming out to 1x, reset pan offsets to center the image
+        if (this.state.podZoomLevel === 1) {
+            this.state.podImageOffsetX = 0;
+            this.state.podImageOffsetY = 0;
+        }
+
         // Apply transform with zoom and current offset
         imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
+
+        // Recalculate max offsets after zoom change
+        if (imgEl.complete) {
+            this._calculatePodMaxOffsets(imgEl);
+        }
 
         // Update cursor based on zoom level
         if (this.state.podZoomLevel > 1) {
@@ -2923,6 +2994,22 @@ class Dashboard {
         this.state.podIsDragging = true;
         this.state.podDragStartX = event.clientX - this.state.podImageOffsetX;
         this.state.podDragStartY = event.clientY - this.state.podImageOffsetY;
+        // Reset velocity tracking
+        this.state.podVelocityX = 0;
+        this.state.podVelocityY = 0;
+        this.state._lastDragTime = 0;
+        this.state._lastDragX = 0;
+        this.state._lastDragY = 0;
+        // Cancel any existing reset animation
+        if (this.state.podResetAnimationFrame !== null) {
+            cancelAnimationFrame(this.state.podResetAnimationFrame);
+            this.state.podResetAnimationFrame = null;
+        }
+        // Cancel any momentum animation
+        if (this.state.podMomentumAnimationFrame !== null) {
+            cancelAnimationFrame(this.state.podMomentumAnimationFrame);
+            this.state.podMomentumAnimationFrame = null;
+        }
         imgEl.style.cursor = 'grabbing';
     }
 
@@ -2932,8 +3019,31 @@ class Dashboard {
 
         event.preventDefault();
 
-        this.state.podImageOffsetX = event.clientX - this.state.podDragStartX;
-        this.state.podImageOffsetY = event.clientY - this.state.podDragStartY;
+        // Calculate new offset based on drag movement
+        let newOffsetX = event.clientX - this.state.podDragStartX;
+        let newOffsetY = event.clientY - this.state.podDragStartY;
+
+        // Calculate velocity (pixels per millisecond)
+        const now = performance.now();
+        if (this.state._lastDragTime && this.state._lastDragX !== undefined && this.state._lastDragY !== undefined) {
+            const timeDelta = now - this.state._lastDragTime;
+            if (timeDelta > 0) {
+                this.state.podVelocityX = (event.clientX - this.state._lastDragX) / timeDelta;
+                this.state.podVelocityY = (event.clientY - this.state._lastDragY) / timeDelta;
+            }
+        }
+        this.state._lastDragTime = now;
+        this.state._lastDragX = event.clientX;
+        this.state._lastDragY = event.clientY;
+
+        // Apply boundary constraints if we have calculated them
+        if (this.state.podMaxOffsetX !== undefined && this.state.podMaxOffsetY !== undefined) {
+            newOffsetX = Math.max(-this.state.podMaxOffsetX, Math.min(this.state.podMaxOffsetX, newOffsetX));
+            newOffsetY = Math.max(-this.state.podMaxOffsetY, Math.min(this.state.podMaxOffsetY, newOffsetY));
+        }
+
+        this.state.podImageOffsetX = newOffsetX;
+        this.state.podImageOffsetY = newOffsetY;
 
         // Apply transform with current offset and zoom
         imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
@@ -2949,7 +3059,127 @@ class Dashboard {
             } else {
                 imgEl.style.cursor = 'zoom-in';
             }
+
+            // Start spring-back animation to center
+            this._startPodResetAnimation(imgEl);
         }
+    }
+
+    // Start spring-back animation for POD image
+    _startPodResetAnimation(imgEl) {
+        // Cancel any existing reset animation
+        if (this.state.podResetAnimationFrame !== null) {
+            cancelAnimationFrame(this.state.podResetAnimationFrame);
+        }
+        // Also cancel any momentum animation (if any) - though we removed momentum functions
+        if (this.state.podMomentumAnimationFrame !== null) {
+            cancelAnimationFrame(this.state.podMomentumAnimationFrame);
+            this.state.podMomentumAnimationFrame = null;
+        }
+
+        // Start the reset animation
+        this.state.podResetAnimationFrame = requestAnimationFrame((timestamp) => {
+            this._runPodResetAnimation(timestamp, imgEl);
+        });
+    }
+
+    // Run spring-back animation for POD image dragging
+    _runPodResetAnimation(timestamp, imgEl) {
+        if (!this.state.podIsDragging) {
+            const targetX = 0;
+            const targetY = 0;
+            const currentX = this.state.podImageOffsetX;
+            const currentY = this.state.podImageOffsetY;
+
+            // Spring damping ratio
+            const damping = 0.2; // adjust for feel (0.1-0.3)
+            const stiffness = 0.1; // adjust for speed (0.05-0.2)
+
+            // Calculate spring force
+            const forceX = stiffness * (targetX - currentX);
+            const forceY = stiffness * (targetY - currentY);
+
+            // Apply force to velocity (simple integration)
+            this.state.podVelocityX += forceX;
+            this.state.podVelocityY += forceY;
+
+            // Apply damping
+            this.state.podVelocityX *= damping;
+            this.state.podVelocityY *= damping;
+
+            // Update position
+            let newOffsetX = currentX + this.state.podVelocityX;
+            let newOffsetY = currentY + this.state.podVelocityY;
+
+            // Apply boundary constraints (optional while settling)
+            if (this.state.podMaxOffsetX !== undefined && this.state.podMaxOffsetY !== undefined) {
+                newOffsetX = Math.max(-this.state.podMaxOffsetX, Math.min(this.state.podMaxOffsetX, newOffsetX));
+                newOffsetY = Math.max(-this.state.podMaxOffsetY, Math.min(this.state.podMaxOffsetY, newOffsetY));
+            }
+
+            this.state.podImageOffsetX = newOffsetX;
+            this.state.podImageOffsetY = newOffsetY;
+
+            // Apply transform with current offset and zoom
+            imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
+
+            // Check if settled (small velocity and close to target)
+            const distanceFromTarget = Math.sqrt((newOffsetX - targetX) ** 2 + (newOffsetY - targetY) ** 2);
+            const speed = Math.sqrt(this.state.podVelocityX ** 2 + this.state.podVelocityY ** 2);
+            if (distanceFromTarget < 0.5 && speed < 0.1) {
+                // Snap exactly to target and end animation
+                this.state.podImageOffsetX = targetX;
+                this.state.podImageOffsetY = targetY;
+                imgEl.style.transform = `translate(${targetX}px, ${targetY}px) scale(${this.state.podZoomLevel})`;
+                this.state.podResetAnimationFrame = null;
+            } else {
+                // Continue animation
+                this.state.podResetAnimationFrame = requestAnimationFrame((timestamp) => {
+                    this._runPodResetAnimation(timestamp, imgEl);
+                });
+            }
+        }
+    }
+
+    // Handle double-click to toggle zoom
+    _handlePodDoubleClick(imgEl) {
+        // Toggle between zoom level 1 and 2
+        if (this.state.podZoomLevel === 1) {
+            this.state.podZoomLevel = 2;
+            imgEl.style.cursor = 'grab';
+        } else {
+            this.state.podZoomLevel = 1;
+            this.state.podImageOffsetX = 0;
+            this.state.podImageOffsetY = 0;
+            imgEl.style.cursor = 'zoom-in';
+        }
+
+        // Apply transform with zoom and current offset
+        imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
+
+        // Recalculate max offsets after zoom change
+        if (imgEl.complete) {
+            this._calculatePodMaxOffsets(imgEl);
+        }
+    }
+
+    // Calculate maximum pan offsets for the POD image based on current zoom level
+    _calculatePodMaxOffsets(imgEl) {
+        if (!imgEl || !imgEl.parentElement) return;
+
+        const imgWidth = imgEl.naturalWidth;
+        const imgHeight = imgEl.naturalHeight;
+        const containerWidth = imgEl.parentElement.clientWidth;
+        const containerHeight = imgEl.parentElement.clientHeight;
+
+        // Calculate max offset where image edge aligns with container edge
+        // Formula: maxOffset = (imageSize * zoomLevel - containerSize) / 2
+        const maxOffsetX = ((imgWidth * this.state.podZoomLevel) - containerWidth) / 2;
+        const maxOffsetY = ((imgHeight * this.state.podZoomLevel) - containerHeight) / 2;
+
+        // Ensure we don't have negative offsets (when image is smaller than container)
+        this.state.podMaxOffsetX = Math.max(0, maxOffsetX);
+        this.state.podMaxOffsetY = Math.max(0, maxOffsetY);
     }
 
     // Handle zoom slider input
@@ -2971,6 +3201,11 @@ class Dashboard {
         } else {
             imgEl.style.cursor = 'zoom-in';
         }
+
+        // Recalculate max offsets after zoom change
+        if (imgEl.complete) {
+            this._calculatePodMaxOffsets(imgEl);
+        }
     }
 
     // Toggle zoom on POD image (maintained for backward compatibility)
@@ -2991,6 +3226,11 @@ class Dashboard {
 
         // Apply transform with zoom and current offset
         img.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
+
+        // Recalculate max offsets after zoom change
+        if (img.complete) {
+            this._calculatePodMaxOffsets(img);
+        }
     }
 
     // Guard Signature Preview
@@ -3002,6 +3242,7 @@ class Dashboard {
         const asgn = this.state.sapAssignments[key];
         const match = asgn?.lineItems?.find(li => li.obdNumber === obdNumber);
         const guardSignatureBase64 = match?.guardSignatureBase64 || asgn?.guardSignatureBase64;
+        const guardSignatureTimestamp = match?.guardSignatureTimestamp || asgn?.guardSignatureTimestamp || match?.updatedAt || asgn?.updatedAt;
 
         if (!guardSignatureBase64 || guardSignatureBase64.length < 50) {
             return;
@@ -3022,13 +3263,63 @@ class Dashboard {
             modal.id = 'guardPreviewModal';
             modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-[99999] hidden';
             modal.innerHTML = `
-                <div class="bg-gray-900 rounded-xl shadow-2xl w-[90vw] max-w-md mx-4 p-4 relative">
+                <div class="bg-gray-900 rounded-xl shadow-2xl w-[95vw] max-w-2xl mx-4 p-4 relative">
                     <button onclick="window.dashboard.closeGuardSigPreview()" class="absolute top-2 right-3 text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
                     <h2 class="text-lg font-bold text-white mb-3">Guard Signature <span class="text-xs text-gray-400">(OBD: ${obdNumber})</span></h2>
-                    <div id="guardPreviewContainer" class="bg-white rounded-lg p-2 min-h-[200px] flex items-center justify-center"></div>
+                    <div class="text-sm text-gray-400 mb-2">Captured at: <span id="guardSignatureCapturedTimestamp">&mdash;</span></div>
+                    <div class="text-sm text-gray-400 mb-2">Verified at: <span id="guardSignatureTimestamp">&mdash;</span></div>
+                    <div id="guardPreviewContainer" class="bg-white rounded-lg p-4 min-h-[300px] flex items-center justify-center"></div>
                 </div>
             `;
             document.body.appendChild(modal);
+        }
+        // Hide POD modal when opening guard signature
+        const podModal = document.getElementById('podPreviewModal');
+        if (podModal) {
+            podModal.classList.add('hidden');
+            podModal.classList.remove('flex');
+        }
+
+        // Determine timestamps
+        const capturedTimestamp = match?.podCapturedAt ?? guardSignatureTimestamp;
+        const verifiedTimestamp = guardSignatureTimestamp;
+
+        // Set captured timestamp
+        const capturedSpan = document.getElementById('guardSignatureCapturedTimestamp');
+        if (capturedSpan) {
+            if (capturedTimestamp) {
+                let date;
+                if (capturedTimestamp?.toDate) {
+                    date = capturedTimestamp.toDate();
+                } else if (typeof capturedTimestamp === 'object' && capturedTimestamp !== null && capturedTimestamp.hasOwnProperty('seconds')) {
+                    // Firestore Timestamp
+                    date = new Date(capturedTimestamp.seconds * 1000 + (capturedTimestamp.nanoseconds / 1000000));
+                } else {
+                    date = new Date(capturedTimestamp);
+                }
+                capturedSpan.textContent = date.toLocaleString();
+            } else {
+                capturedSpan.textContent = '—';
+            }
+        }
+
+        // Set guard signature timestamp
+        const timestampSpan = document.getElementById('guardSignatureTimestamp');
+        if (timestampSpan) {
+            if (verifiedTimestamp) {
+                let date;
+                if (verifiedTimestamp?.toDate) {
+                    date = verifiedTimestamp.toDate();
+                } else if (typeof verifiedTimestamp === 'object' && verifiedTimestamp !== null && verifiedTimestamp.hasOwnProperty('seconds')) {
+                    // Firestore Timestamp
+                    date = new Date(verifiedTimestamp.seconds * 1000 + (verifiedTimestamp.nanoseconds / 1000000));
+                } else {
+                    date = new Date(verifiedTimestamp);
+                }
+                timestampSpan.textContent = date.toLocaleString();
+            } else {
+                timestampSpan.textContent = '—';
+            }
         }
 
         const container = document.getElementById('guardPreviewContainer');
@@ -3036,7 +3327,7 @@ class Dashboard {
 
         const img = document.createElement('img');
         img.src = 'data:image/png;base64,' + guardSignatureBase64;
-        img.className = 'max-w-full max-h-[400px] rounded';
+        img.className = 'max-w-full max-h-[500px] rounded';
         img.style.objectFit = 'contain';
 
         img.onload = () => {
@@ -3056,6 +3347,12 @@ class Dashboard {
         if (modal) {
             modal.classList.add('hidden');
             modal.classList.remove('flex');
+        }
+        // Show POD modal after closing guard
+        const podModal = document.getElementById('podPreviewModal');
+        if (podModal) {
+            podModal.classList.remove('hidden');
+            podModal.classList.add('flex');
         }
     }
 

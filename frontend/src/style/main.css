@@ -344,6 +344,10 @@ a {
 #podPreviewImg {
   transition: transform 0.2s ease;
   cursor: zoom-in;
+  max-height: 80vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 
 #podPreviewImg.grabbing {
