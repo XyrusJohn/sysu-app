@@ -75,6 +75,12 @@ class Dashboard {
             assignTarget: null,
             requiredTruckType: null,
             ordersTruckTypeFilter: "all",
+            podZoomLevel: 1,
+            podIsDragging: false,
+            podDragStartX: 0,
+            podDragStartY: 0,
+            podImageOffsetX: 0,
+            podImageOffsetY: 0,
         };
 
         this.renderTimer = null;
@@ -2777,7 +2783,23 @@ class Dashboard {
         const imgEl = modal.querySelector('#podPreviewImg');
         const tsEl = modal.querySelector('#podTimestamp');
         const signatureContainer = modal.querySelector('#podPreviewSignature');
-        if (imgEl) imgEl.src = match.podImageUrl;
+
+        // Reset zoom and drag state when opening new POD
+        this.state.podZoomLevel = 1;
+        this.state.podIsDragging = false;
+        this.state.podDragStartX = 0;
+        this.state.podDragStartY = 0;
+        this.state.podImageOffsetX = 0;
+        this.state.podImageOffsetY = 0;
+
+        if (imgEl) {
+            imgEl.src = match.podImageUrl;
+            // Reset transform and cursor
+            imgEl.style.transform = `scale(${this.state.podZoomLevel})`;
+            imgEl.style.cursor = 'zoom-in';
+            imgEl.style.transformOrigin = 'center center';
+            imgEl.style.position = 'relative';
+        }
         if (tsEl) {
             const captureDate = match.podCapturedAt?.toDate
                 ? match.podCapturedAt.toDate()
@@ -2803,6 +2825,9 @@ class Dashboard {
         }
         modal.classList.remove('hidden');
         modal.classList.add('flex');
+
+        // Add event listeners for enhanced zoom functionality
+        this._addPodPreviewEventListeners(imgEl, modal);
     }
 
     closePodPreview() {
@@ -2810,20 +2835,162 @@ class Dashboard {
         if (modal) {
             modal.classList.add('hidden');
             modal.classList.remove('flex');
+            // Remove event listeners when closing modal
+            this._removePodPreviewEventListeners();
         }
     }
 
-    // Toggle zoom on POD image
+    // Add event listeners for enhanced POD preview functionality
+    _addPodPreviewEventListeners(imgEl, modal) {
+        // Mouse wheel zoom with Ctrl key
+        imgEl.addEventListener('wheel', (e) => this._handlePodWheelZoom(e, imgEl));
+
+        // Drag functionality when zoomed in
+        imgEl.addEventListener('mousedown', (e) => this._handlePodDragStart(e, imgEl));
+        imgEl.addEventListener('mousemove', (e) => this._handlePodDragMove(e, imgEl));
+        imgEl.addEventListener('mouseup', () => this._handlePodDragEnd(imgEl));
+        imgEl.addEventListener('mouseleave', () => this._handlePodDragEnd(imgEl));
+
+        // Prevent image drag default behavior
+        imgEl.addEventListener('dragstart', (e) => e.preventDefault());
+
+        // Zoom slider
+        const zoomSlider = modal.querySelector('#podZoomSlider');
+        const zoomValueDisplay = modal.querySelector('#podZoomValue');
+        if (zoomSlider && zoomValueDisplay) {
+            // Initialize slider to current zoom level
+            zoomSlider.value = Math.round(this.state.podZoomLevel * 100);
+            zoomValueDisplay.textContent = `${zoomSlider.value}%`;
+
+            zoomSlider.addEventListener('input', (e) => this._handlePodZoomSlider(e, imgEl, zoomValueDisplay));
+        }
+    }
+
+    // Remove event listeners for POD preview
+    _removePodPreviewEventListeners() {
+        const imgEl = document.getElementById('podPreviewImg');
+        if (!imgEl) return;
+
+        imgEl.removeEventListener('wheel', this._handlePodWheelZoom);
+        imgEl.removeEventListener('mousedown', this._handlePodDragStart);
+        imgEl.removeEventListener('mousemove', this._handlePodDragMove);
+        imgEl.removeEventListener('mouseup', this._handlePodDragEnd);
+        imgEl.removeEventListener('mouseleave', this._handlePodDragEnd);
+        imgEl.removeEventListener('dragstart', this._handlePodDragStart); // Actually dragstart listener
+
+        // Remove zoom slider event listener
+        const modal = document.getElementById('podPreviewModal');
+        if (modal) {
+            const zoomSlider = modal.querySelector('#podZoomSlider');
+            if (zoomSlider) {
+                zoomSlider.removeEventListener('input', this._handlePodZoomSlider);
+            }
+        }
+    }
+
+    // Handle mouse wheel zoom with Ctrl key
+    _handlePodWheelZoom(event, imgEl) {
+        // Only zoom when Ctrl key is pressed
+        if (!event.ctrlKey) return;
+
+        event.preventDefault(); // Prevent page scroll
+
+        const zoomDelta = event.deltaY < 0 ? 0.1 : -0.1; // Zoom in/out based on scroll direction
+        let newZoomLevel = this.state.podZoomLevel + zoomDelta;
+
+        // Clamp zoom level between 1 (original) and 3 (300%)
+        newZoomLevel = Math.max(1, Math.min(3, newZoomLevel));
+
+        // Update zoom level state
+        this.state.podZoomLevel = newZoomLevel;
+
+        // Apply transform with zoom and current offset
+        imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
+
+        // Update cursor based on zoom level
+        if (this.state.podZoomLevel > 1) {
+            imgEl.style.cursor = 'grabbing'; // Will change to grab when not dragging
+        } else {
+            imgEl.style.cursor = 'zoom-in';
+        }
+    }
+
+    // Handle drag start
+    _handlePodDragStart(event, imgEl) {
+        // Only allow dragging when zoomed in
+        if (this.state.podZoomLevel <= 1) return;
+
+        this.state.podIsDragging = true;
+        this.state.podDragStartX = event.clientX - this.state.podImageOffsetX;
+        this.state.podDragStartY = event.clientY - this.state.podImageOffsetY;
+        imgEl.style.cursor = 'grabbing';
+    }
+
+    // Handle drag move
+    _handlePodDragMove(event, imgEl) {
+        if (!this.state.podIsDragging) return;
+
+        event.preventDefault();
+
+        this.state.podImageOffsetX = event.clientX - this.state.podDragStartX;
+        this.state.podImageOffsetY = event.clientY - this.state.podDragStartY;
+
+        // Apply transform with current offset and zoom
+        imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
+    }
+
+    // Handle drag end
+    _handlePodDragEnd(imgEl) {
+        if (this.state.podIsDragging) {
+            this.state.podIsDragging = false;
+            // Update cursor based on zoom level when not dragging
+            if (this.state.podZoomLevel > 1) {
+                imgEl.style.cursor = 'grab';
+            } else {
+                imgEl.style.cursor = 'zoom-in';
+            }
+        }
+    }
+
+    // Handle zoom slider input
+    _handlePodZoomSlider(event, imgEl, zoomValueDisplay) {
+        const zoomLevel = parseInt(event.target.value) / 100; // Convert percentage to decimal (1.0 = 100%)
+        this.state.podZoomLevel = zoomLevel;
+
+        // Update zoom value display
+        if (zoomValueDisplay) {
+            zoomValueDisplay.textContent = `${event.target.value}%`;
+        }
+
+        // Apply transform with zoom and current offset
+        imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
+
+        // Update cursor based on zoom level
+        if (this.state.podZoomLevel > 1) {
+            imgEl.style.cursor = 'grab';
+        } else {
+            imgEl.style.cursor = 'zoom-in';
+        }
+    }
+
+    // Toggle zoom on POD image (maintained for backward compatibility)
     togglePodZoom() {
         const img = document.getElementById('podPreviewImg');
         if (!img) return;
-        img.classList.toggle('zoom-enabled');
-        // Change cursor icon to indicate zoom state
-        if (img.classList.contains('zoom-enabled')) {
-            img.style.cursor = 'zoom-out';
+
+        // Toggle between zoom level 1 and 2
+        if (this.state.podZoomLevel === 1) {
+            this.state.podZoomLevel = 2;
+            img.style.cursor = 'grab';
         } else {
+            this.state.podZoomLevel = 1;
+            this.state.podImageOffsetX = 0;
+            this.state.podImageOffsetY = 0;
             img.style.cursor = 'zoom-in';
         }
+
+        // Apply transform with zoom and current offset
+        img.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
     }
 
     // Guard Signature Preview
