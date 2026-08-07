@@ -3182,32 +3182,7 @@ class Dashboard {
         this.state.podMaxOffsetY = Math.max(0, maxOffsetY);
     }
 
-    // Handle zoom slider input
-    _handlePodZoomSlider(event, imgEl, zoomValueDisplay) {
-        const zoomLevel = parseInt(event.target.value) / 100; // Convert percentage to decimal (1.0 = 100%)
-        this.state.podZoomLevel = zoomLevel;
-
-        // Update zoom value display
-        if (zoomValueDisplay) {
-            zoomValueDisplay.textContent = `${event.target.value}%`;
-        }
-
-        // Apply transform with zoom and current offset
-        imgEl.style.transform = `translate(${this.state.podImageOffsetX}px, ${this.state.podImageOffsetY}px) scale(${this.state.podZoomLevel})`;
-
-        // Update cursor based on zoom level
-        if (this.state.podZoomLevel > 1) {
-            imgEl.style.cursor = 'grab';
-        } else {
-            imgEl.style.cursor = 'zoom-in';
-        }
-
-        // Recalculate max offsets after zoom change
-        if (imgEl.complete) {
-            this._calculatePodMaxOffsets(imgEl);
-        }
-    }
-
+    
     // Toggle zoom on POD image (maintained for backward compatibility)
     togglePodZoom() {
         const img = document.getElementById('podPreviewImg');
@@ -3263,7 +3238,7 @@ class Dashboard {
             modal.id = 'guardPreviewModal';
             modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-[99999] hidden';
             modal.innerHTML = `
-                <div class="bg-gray-900 rounded-xl shadow-2xl w-[95vw] max-w-2xl mx-4 p-4 relative">
+                <div class="bg-gray-900 rounded-xl shadow-2xl w-[95vw] sm:w-[90vw] max-w-2xl mx-4 p-4 relative">
                     <button onclick="window.dashboard.closeGuardSigPreview()" class="absolute top-2 right-3 text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
                     <h2 class="text-lg font-bold text-white mb-3">Guard Signature <span class="text-xs text-gray-400">(OBD: ${obdNumber})</span></h2>
                     <div class="text-sm text-gray-400 mb-2">Captured at: <span id="guardSignatureCapturedTimestamp">&mdash;</span></div>
@@ -3282,7 +3257,7 @@ class Dashboard {
 
         // Determine timestamps
         const capturedTimestamp = match?.podCapturedAt ?? guardSignatureTimestamp;
-        const verifiedTimestamp = guardSignatureTimestamp;
+        const verifiedTimestamp = guardSignatureTimestamp ?? match?.podCapturedAt;
 
         // Set captured timestamp
         const capturedSpan = document.getElementById('guardSignatureCapturedTimestamp');
