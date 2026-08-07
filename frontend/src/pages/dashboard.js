@@ -3491,7 +3491,16 @@ class Dashboard {
             .filter((d) => {
                 const queueEntry = this.state.queue.find((q) => q.id === d.id);
                 if (queueEntry) return queueEntry.status !== "complete";
-                return true; // not in queue → available (eligible for re-entry)
+
+                // Driver not in queue - check if they have any active assignments
+                const driverAssignmentsList = Object.values(assignments).filter(
+                    asgn => asgn.driverId === d.id
+                );
+
+                // Driver is available if they have at least one assignment that's not completed
+                return driverAssignmentsList.some(
+                    asgn => asgn.tripStatus !== "completed"
+                );
             });
 
         // â"€â"€ 3. Merge —" queue first, then assigned-only drivers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
