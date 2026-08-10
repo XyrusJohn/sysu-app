@@ -33,6 +33,7 @@ const sapRoutes = require("./routes/sapRoute.js");
 const userRoutes = require("./routes/userRoute.js");
 const qrRoutes = require("./routes/qrRoute.js");
 const driverRoutes = require("./routes/driverRoute.js");
+const adminRoutes = require("./routes/adminRoute.js");
 const { startCleanupScheduler } = require("./utils/qrTokenCleanup");
 const { startCleanupScheduler: startQueueCleanup } = require("./utils/queueCleanup");
 const { startCleanupScheduler: startIncidentCleanup } = require("./utils/incidentCleanup");
@@ -98,6 +99,7 @@ app.use("/api/sap", sapRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/qr", qrRoutes);
 app.use("/api/drivers", driverRoutes);
+app.use("/api/admin", adminRoutes);
 
 const server = http.createServer(app);
 const io = new Server(server, {
