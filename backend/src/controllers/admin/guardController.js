@@ -82,7 +82,7 @@ exports.createGuard = async (req, res) => {
 
         await admin.firestore().collection("security_guard").doc(guardId).set(doc);
 
-        return res.status(201).json(doc);
+        return res.status(201).json({id: guardId, ...doc});
     } catch (error) {
         console.error("createGuard error:", error.message);
         return res.status(500).json({message: "Internal server error"});
@@ -102,38 +102,39 @@ exports.updateGuard = async (req, res) => {
             return res.status(404).json({message: "Guard not found"});
         }
 
-        const updates = {...req.body};
-        delete updates.guardId;
-        delete updates.createdAt;
+        const existingData = existing.data();
 
-        let normalized;
-        try {
-            normalized = validateGuardPayload({
-                firstName: updates.firstName !== undefined ? updates.firstName : existing.data().firstName,
-                lastName: updates.lastName !== undefined ? updates.lastName : existing.data().lastName,
-                middleInitial:
-                    updates.middleInitial !== undefined ? updates.middleInitial : existing.data().middleInitial,
-            });
-        } catch (validationError) {
-            console.error("updateGuard validation error:", validationError.message);
-            return res.status(500).json({message: "Internal server error"});
+        const allowed = ["firstName", "lastName", "middleInitial"];
+        const updates = {};
+        if (req.body && typeof req.body === "object") {
+            for (const key of allowed) {
+                if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+                    updates[key] = req.body[key];
+                }
+            }
         }
+
+        const normalized = validateGuardPayload({
+            firstName: updates.firstName !== undefined ? updates.firstName : existingData.firstName,
+            lastName: updates.lastName !== undefined ? updates.lastName : existingData.lastName,
+            middleInitial:
+                updates.middleInitial !== undefined ? updates.middleInitial : existingData.middleInitial,
+        });
 
         if (normalized.errors.length > 0) {
             return res.status(400).json({errors: normalized.errors});
         }
 
         const nextFirstName =
-            updates.firstName !== undefined ? normalized.firstName : existing.data().firstName;
+            updates.firstName !== undefined ? normalized.firstName : existingData.firstName;
         const nextLastName =
-            updates.lastName !== undefined ? normalized.lastName : existing.data().lastName;
+            updates.lastName !== undefined ? normalized.lastName : existingData.lastName;
         const nextMiddleInitial =
-            updates.middleInitial !== undefined ? normalized.middleInitial : existing.data().middleInitial || "";
+            updates.middleInitial !== undefined ? normalized.middleInitial : existingData.middleInitial || "";
 
         const fullName = buildFullName(nextFirstName, nextLastName, nextMiddleInitial);
 
         const patch = {
-            ...updates,
             firstName: nextFirstName,
             lastName: nextLastName,
             middleInitial: nextMiddleInitial,
