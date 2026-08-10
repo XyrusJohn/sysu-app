@@ -142,8 +142,10 @@ exports.setTruckCompanyActive = async (req, res) => {
             return res.status(404).json({message: "Truck company not found"});
         }
 
-        const currentActive = existing.data().active !== false;
-        const nextActive = !currentActive;
+        if (typeof req.body?.active !== "boolean") {
+            return res.status(400).json({errors: [{field: "active", message: "active must be a boolean"}]});
+        }
+        const nextActive = req.body.active;
 
         await docRef.update({
             active: nextActive,

@@ -1721,26 +1721,22 @@ class Dashboard {
 
     _subscribeGuards() {
         if (this._guardsUnsub) return; // guard against double-subscribe
-        try {
-            this._guardsUnsub = SecurityGuardService.subscribe((data) => {
-                this.state._guards = data;
-                if (this._activeDocsTab === "guards") this._renderGuardsView();
-            });
-        } catch (err) {
-            console.warn("Guards listener failed:", err.message);
-        }
+        SecurityGuardService.subscribe((data) => {
+            this.state._guards = data;
+            if (this._activeDocsTab === "guards") this._renderGuardsView();
+        })
+            .then((unsub) => { this._guardsUnsub = unsub; })
+            .catch((err) => console.warn("Guards listener failed:", err.message));
     }
 
     _subscribeTruckCompanies() {
         if (this._truckCompaniesUnsub) return;
-        try {
-            this._truckCompaniesUnsub = TruckCompanyService.subscribe((data) => {
-                this.state._truckCompanies = data;
-                if (this._activeDocsTab === "truck-companies") this._renderTruckCompaniesView();
-            });
-        } catch (err) {
-            console.warn("Truck companies listener failed:", err.message);
-        }
+        TruckCompanyService.subscribe((data) => {
+            this.state._truckCompanies = data;
+            if (this._activeDocsTab === "truck-companies") this._renderTruckCompaniesView();
+        })
+            .then((unsub) => { this._truckCompaniesUnsub = unsub; })
+            .catch((err) => console.warn("Truck companies listener failed:", err.message));
     }
 
     _renderAll() {
