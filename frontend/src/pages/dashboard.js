@@ -1010,6 +1010,50 @@ class Dashboard {
                     : "dark";
             applyTheme(current === "light" ? "dark" : "light");
         });
+
+        // ─── Documents tab sub-tab wiring ──────────────────────
+        // Dispatch on btn.dataset.tab. Guards/Truck Companies sub-tabs are admin-only
+        // (RBAC visibility handled in applyRBAC). Other tabs (pending/approved/rejected/
+        // expired/completed) flow into _renderDocsView, which is the foundation owned by
+        // the override_requests spec — when that lands, _renderDocsView will replace this
+        // placeholder. The feature-detect guards against the method being absent.
+        document.querySelectorAll(".docs-tab-btn").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                // Active-tab styling
+                document.querySelectorAll(".docs-tab-btn").forEach((b) => {
+                    b.classList.remove("border-sysu-red", "text-sysu-red", "bg-sysu-red/5");
+                    b.classList.add("border-transparent", "text-db-text3");
+                });
+                btn.classList.add("border-sysu-red", "text-sysu-red", "bg-sysu-red/5");
+                btn.classList.remove("border-transparent", "text-db-text3");
+
+                // Track active tab in state for subscription gating
+                this.state._activeDocsTab = btn.dataset.tab || "pending";
+
+                // Dispatch
+                const tab = btn.dataset.tab;
+                if (tab === "guards") {
+                    this._renderGuardsView();
+                } else if (tab === "truck-companies") {
+                    this._renderTruckCompaniesView();
+                } else if (typeof this._renderDocsView === "function") {
+                    this._renderDocsView();
+                } else {
+                    // Placeholder while override_requests spec foundation is uncommitted.
+                    const container = document.getElementById("docsListContainer");
+                    if (container) {
+                        container.innerHTML = `<div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">No ${escapeHtml(tab)} items.</div>`;
+                    }
+                }
+            });
+        });
+
+        // Default to Pending active
+        const pendingTabBtn = document.querySelector(".docs-tab-btn[data-tab='pending']");
+        if (pendingTabBtn) {
+            pendingTabBtn.classList.add("border-sysu-red", "text-sysu-red", "bg-sysu-red/5");
+            pendingTabBtn.classList.remove("border-transparent", "text-db-text3");
+        }
     }
 
     _setupSocket() {
