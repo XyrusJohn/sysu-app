@@ -2698,8 +2698,9 @@ class Dashboard {
         const fleetContent   = document.getElementById("fleetContent");
         const ordersContent  = document.getElementById("ordersContent");
         const trackingContent = document.getElementById("trackingContent");
+        const docsContent     = document.getElementById("docsContent");
 
-        const views = [mainContent, usersContent, sapContent, fleetContent, ordersContent, trackingContent];
+        const views = [mainContent, usersContent, sapContent, fleetContent, ordersContent, trackingContent, docsContent];
         views.forEach((v) => {
             if (v) v.style.setProperty("display", "none", "important");
         });
@@ -2717,7 +2718,7 @@ class Dashboard {
         };
 
         // Hide ALL content views first —" then caller shows what it needs
-        document.querySelectorAll("#mainContent, #fleetContent, #ordersContent, #usersContent, #sapContent, #trackingContent")
+        document.querySelectorAll("#mainContent, #fleetContent, #ordersContent, #usersContent, #sapContent, #trackingContent, #docsContent")
             .forEach((el) => el?.classList.add("hidden"));
 
         if (viewId === "users") {
@@ -2769,6 +2770,27 @@ class Dashboard {
             showView(trackingContent);
             if (sidePanel) sidePanel.classList.remove("open");
             this._initTrackingView();
+        } else if (viewId === "docs") {
+            showView(docsContent);
+            if (sidePanel) sidePanel.classList.remove("open");
+            // Default render: route to the active sub-tab. If _renderDocsView is present
+            // (override_requests spec foundation), use it. Otherwise route to the active
+            // sub-tab directly so admin tabs (Guards/Truck Companies) are reachable.
+            const activeTab = this.state._activeDocsTab || "pending";
+            if (activeTab === "guards" && typeof this._renderGuardsView === "function") {
+                this._renderGuardsView();
+            } else if (activeTab === "truck-companies" && typeof this._renderTruckCompaniesView === "function") {
+                this._renderTruckCompaniesView();
+            } else if (typeof this._renderDocsView === "function") {
+                this._renderDocsView();
+            } else {
+                // Placeholder for pending/approved/rejected/expired/completed until the
+                // override_requests spec's _renderDocsView lands.
+                const container = document.getElementById("docsListContainer");
+                if (container) {
+                    container.innerHTML = `<div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">No ${escapeHtml(activeTab)} items.</div>`;
+                }
+            }
         } else {
             showView(mainContent);
             if (sidePanel && !sidePanel.classList.contains("open")) {
