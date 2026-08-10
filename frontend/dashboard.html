@@ -1118,6 +1118,8 @@
             <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="rejected">Rejected</button>
             <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="expired">Expired</button>
             <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="completed">Completed</button>
+            <button id="docsGuardsTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="guards">Guards</button>
+            <button id="docsTruckCompaniesTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="truck-companies">Truck Companies</button>
         </div>
 
         <div id="docsListContainer" class="flex-1 overflow-y-auto p-6">
@@ -1128,6 +1130,80 @@
     </section>
 
 </main>
+
+<!-- Guard Modal -->
+<div id="guardModal" class="hidden fixed inset-0 z-[8500] bg-black/60 items-center justify-center p-4">
+    <div class="bg-db-panel border border-db-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-db-border flex items-center justify-between">
+            <div>
+                <h2 id="guardModalTitle" class="text-base font-bold text-db-text font-display">Add Guard</h2>
+                <p class="text-[11px] text-db-text3 mt-0.5">Reference data for SAP line items.</p>
+            </div>
+            <button id="guardModalCloseBtn" type="button" class="text-db-text3 hover:text-db-text w-7 h-7 rounded-lg hover:bg-db-item-hover flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        </div>
+        <div class="p-5 space-y-4">
+            <div id="guardModalIdWrap" class="hidden">
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Guard ID</label>
+                <input id="guardModalId" type="text" readonly class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text2 font-mono cursor-not-allowed opacity-70" />
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">First Name *</label>
+                <input id="guardFirstName" type="text" maxlength="60" class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50" placeholder="James" />
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Last Name *</label>
+                <input id="guardLastName" type="text" maxlength="60" class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50" placeholder="Rivera" />
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Middle Initial</label>
+                <input id="guardMiddleInitial" type="text" maxlength="5" class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50" placeholder="B." />
+            </div>
+            <div class="bg-db-bg rounded-xl p-3 text-[12px] text-db-text2 flex items-center justify-between">
+                <span class="text-db-text3 uppercase text-[10px] font-bold tracking-wider">Full Name</span>
+                <span id="guardFullNamePreview" class="font-bold">—</span>
+            </div>
+        </div>
+        <div class="px-5 py-3 border-t border-db-border flex justify-end gap-2">
+            <button id="guardModalCancelBtn" type="button" class="px-4 py-2 rounded-lg text-[12px] text-db-text3 hover:text-db-text hover:bg-db-item-hover transition-colors">Cancel</button>
+            <button id="guardModalSaveBtn" type="button" class="px-4 py-2 rounded-lg text-[12px] font-bold uppercase tracking-wider bg-sysu-red hover:bg-sysu-red-dark text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Truck Company Modal -->
+<div id="truckCompanyModal" class="hidden fixed inset-0 z-[8500] bg-black/60 items-center justify-center p-4">
+    <div class="bg-db-panel border border-db-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-db-border flex items-center justify-between">
+            <div>
+                <h2 id="truckCompanyModalTitle" class="text-base font-bold text-db-text font-display">Add Truck Company</h2>
+                <p class="text-[11px] text-db-text3 mt-0.5">Reference data for driver assignment.</p>
+            </div>
+            <button id="truckCompanyModalCloseBtn" type="button" class="text-db-text3 hover:text-db-text w-7 h-7 rounded-lg hover:bg-db-item-hover flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        </div>
+        <div class="p-5 space-y-4">
+            <div id="truckCompanyCodeWrap" class="hidden">
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Company Code</label>
+                <input id="truckCompanyCodeInput" type="text" readonly class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text2 font-mono cursor-not-allowed opacity-70" />
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Forwarder Code *</label>
+                <input id="truckCompanyForwarderCode" type="text" maxlength="50" class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50" placeholder="40000279" />
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Name *</label>
+                <input id="truckCompanyName" type="text" maxlength="200" class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50" placeholder="LALAMOVE PHILIPPINES INC" />
+            </div>
+        </div>
+        <div class="px-5 py-3 border-t border-db-border flex justify-end gap-2">
+            <button id="truckCompanyModalCancelBtn" type="button" class="px-4 py-2 rounded-lg text-[12px] text-db-text3 hover:text-db-text hover:bg-db-item-hover transition-colors">Cancel</button>
+            <button id="truckCompanyModalSaveBtn" type="button" class="px-4 py-2 rounded-lg text-[12px] font-bold uppercase tracking-wider bg-sysu-red hover:bg-sysu-red-dark text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+        </div>
+    </div>
+</div>
 
 <!-- Security Enforcement Overlay -->
 <div
