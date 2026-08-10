@@ -1453,7 +1453,8 @@ class Dashboard {
             if (this.state.sapFilter === "delivered") {
                 // Only show rows that have an assignment entry with tripStatus === "completed"
                 // from our local sap_assignments database, NOT from SAP ODATA.
-                if (!asgn || asgn.tripStatus !== "completed") return false;
+                // Using case-insensitive comparison to handle potential case variations
+                if (!asgn || !(asgn.tripStatus?.toLowerCase() === "completed")) return false;
             } else if (this.state.sapFilter === "in_transit") {
                 if (tripStatus !== "in_transit") return false;
             } else if (this.state.sapFilter === "fully_loaded") {
@@ -1537,7 +1538,7 @@ class Dashboard {
                 const shipmentDisplay = stripZeros(key);
                 const asgn = this.state.sapAssignments[key];
                 const status = rec.PgiStatus || rec.CheckStatus || "Pending";
-                const isDelivered = status.toUpperCase() === "DELIVERED" || asgn?.tripStatus === "completed";
+                const isDelivered = status.toUpperCase() === "DELIVERED" || (asgn?.tripStatus?.toLowerCase() === "completed");
 
                 return `
         <tr class="hover:bg-db-item-hover transition-colors border-b border-db-border">
@@ -2110,6 +2111,15 @@ class Dashboard {
         const driverName = driver.driverName || "Unknown Driver";
         const truckPlate = driver.plateNumber || "—";
 
+        // Read the Auth UID from the queue entry (unifies with sysu-go mobile app's driverId assumption)
+        const driverUid = driver.driverId;
+        if (!driverUid) {
+            alert("Cannot assign: queue entry is missing driverId (Auth UID). Contact admin.");
+            this.closeAssignModal();
+            if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = originalText; }
+            return;
+        }
+
         // Derive OBD line items from the receiving records grouped by dispatch
         const receivingRecords = this.state.sapGroupedByDispatch[dispatchKey] || [];
         const lineItems = receivingRecords
@@ -2136,7 +2146,7 @@ class Dashboard {
         import("firebase/firestore").then(({ doc, setDoc, updateDoc, serverTimestamp: ts }) => {
             Promise.all([
                 setDoc(doc(db, "sap_assignments", dispatchKey), {
-                    driverId,
+                    driverId: driverUid,
                     driverName,
                     truckPlate,
                     truckCompany: driver.truckCompany || driver.company || "—",
@@ -2144,7 +2154,7 @@ class Dashboard {
                     lineItems,
                 }),
                 // Safe queue update: skips rewriting status if driver is already loading another dispatch
-                this._safeUpdateQueueAssignment(driverId, dispatchKey),
+                this._safeUpdateQueueAssignment(driverUid, dispatchKey),
             ])
                 .then(() => {
                     alert(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
@@ -3498,8 +3508,9 @@ class Dashboard {
                 );
 
                 // Driver is available if they have at least one assignment that's not completed
+                // Using case-insensitive comparison to handle potential case variations
                 return driverAssignmentsList.some(
-                    asgn => asgn.tripStatus !== "completed"
+                    asgn => !(asgn.tripStatus?.toLowerCase() === "completed")
                 );
             });
 
@@ -3714,7 +3725,27 @@ class Dashboard {
         const dispatchKey = this.state.assignTarget;
         if (!driverId || !dispatchKey) return;
 
+        // �� 🔧 ENFORCE FIFO QUEUE ORDER - Prevent queue jumping
         const confirmBtn = document.getElementById("assignConfirmBtn");
+        try {
+            const availableDrivers = this._getAvailableDrivers(this.state.requiredTruckType);
+            if (availableDrivers.length > 0) {
+                const firstInQueue = availableDrivers[0]; // FIFO-first driver
+                if (firstInQueue.id !== driverId) {
+                    const firstDriverName = firstInQueue.driverName || "Unknown Driver";
+                    if (confirmBtn) {
+                        confirmBtn.disabled = false;
+                        confirmBtn.textContent = "Confirm Assignment";
+                    }
+                    alert(`Assignment blocked: ${firstDriverName} is next in FIFO queue. Please select the earliest available driver first.`);
+                    return;
+                }
+            }
+        } catch (fifoError) {
+            console.error("FIFO validation error:", fifoError);
+            // Continue with assignment if FIFO validation fails (fail-open for safety)
+        }
+
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = "ASSIGNING..."; }
 
         try {
