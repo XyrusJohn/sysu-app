@@ -18,6 +18,8 @@ import {EVENTS, socket, getDriverSocket} from "../api/socket.js";
 import {AuthService} from "../api/authService.js";
 import {SAPService} from "../api/sapService.js";
 import {API_CONFIG} from "../api/config.js";
+import {SecurityGuardService} from "../api/securityGuardService.js";
+import {TruckCompanyService} from "../api/truckCompanyService.js";
 import {db, auth} from "../api/firebase.js";
 import {updateProfile} from "firebase/auth";
 import {
@@ -1300,6 +1302,153 @@ class Dashboard {
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
+    }
+
+    _renderGuardsView() {
+        const container = document.getElementById("docsListContainer");
+        if (!container) return;
+
+        const docs = Object.values(this.state._guards || {});
+        docs.sort((a, b) => {
+            const an = parseInt(String(a.guardId || "").replace(/\D/g, ""), 10) || 0;
+            const bn = parseInt(String(b.guardId || "").replace(/\D/g, ""), 10) || 0;
+            return an - bn;
+        });
+
+        const search = (this.state._guardSearch || "").toLowerCase();
+        const filtered = search
+            ? SecurityGuardService.search(this.state._guardSearch, docs)
+            : docs;
+
+        container.innerHTML = `
+            <div class="flex flex-col gap-3">
+                <div class="flex items-center gap-2 mb-2">
+                    <input id="guardSearchInput" type="text" placeholder="Search guards..." value="${escapeHtml(this.state._guardSearch || "")}" class="flex-1 h-10 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none" />
+                    <button id="guardAddBtn" class="px-4 h-10 rounded-xl text-[12px] font-bold uppercase tracking-wider bg-sysu-red hover:bg-sysu-red-dark text-white transition-colors">+ Add Guard</button>
+                </div>
+                ${filtered.length === 0 ? `<div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">No guards found.</div>` : filtered.map((g) => this._renderGuardCard(g)).join("")}
+            </div>
+        `;
+
+        document.getElementById("guardSearchInput")?.addEventListener("input", (e) => {
+            this.state._guardSearch = e.target.value;
+            this._renderGuardsView();
+        });
+        document.getElementById("guardAddBtn")?.addEventListener("click", () => {
+            this._openGuardModal(null);
+        });
+
+        container.querySelectorAll("[data-action='guard-edit']").forEach((btn) => {
+            btn.addEventListener("click", () => this._openGuardModal(btn.dataset.id));
+        });
+        container.querySelectorAll("[data-action='guard-toggle']").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const id = btn.dataset.id;
+                const currentlyActive = btn.dataset.active === "true";
+                this._softDeleteGuard(id, currentlyActive);
+            });
+        });
+    }
+
+    _renderGuardCard(g) {
+        const statusPill = g.active
+            ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-green-500/20 text-green-400">Active</span>`
+            : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-db-item-hover text-db-text3">Inactive</span>`;
+        const toggleLabel = g.active ? "Deactivate" : "Reactivate";
+        const toggleClass = g.active
+            ? "text-sysu-red hover:bg-sysu-red/10"
+            : "text-green-400 hover:bg-green-500/10";
+        return `
+            <div class="bg-db-panel border border-db-border rounded-xl p-4 hover:border-db-text3 transition-colors">
+                <div class="flex items-start justify-between gap-4">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-sm font-bold text-db-text font-mono">${escapeHtml(g.guardId || g.id || "")}</span>
+                            ${statusPill}
+                        </div>
+                        <div class="text-base text-db-text font-bold">${escapeHtml(g.fullName || "")}</div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button data-action="guard-edit" data-id="${escapeHtml(g.id || "")}" class="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider text-db-text2 hover:bg-db-item-hover transition-colors">Edit</button>
+                        <button data-action="guard-toggle" data-id="${escapeHtml(g.id || "")}" data-active="${g.active ? "true" : "false"}" class="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider ${toggleClass} transition-colors">${toggleLabel}</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    _renderTruckCompaniesView() {
+        const container = document.getElementById("docsListContainer");
+        if (!container) return;
+
+        const docs = Object.values(this.state._truckCompanies || {});
+        docs.sort((a, b) => {
+            const an = parseInt(a.companyCode || "0", 10) || 0;
+            const bn = parseInt(b.companyCode || "0", 10) || 0;
+            return an - bn;
+        });
+
+        const search = (this.state._tcSearch || "").toLowerCase();
+        const filtered = search
+            ? TruckCompanyService.search(this.state._tcSearch, docs)
+            : docs;
+
+        container.innerHTML = `
+            <div class="flex flex-col gap-3">
+                <div class="flex items-center gap-2 mb-2">
+                    <input id="tcSearchInput" type="text" placeholder="Search truck companies..." value="${escapeHtml(this.state._tcSearch || "")}" class="flex-1 h-10 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none" />
+                    <button id="tcAddBtn" class="px-4 h-10 rounded-xl text-[12px] font-bold uppercase tracking-wider bg-sysu-red hover:bg-sysu-red-dark text-white transition-colors">+ Add Truck Company</button>
+                </div>
+                ${filtered.length === 0 ? `<div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">No truck companies found.</div>` : filtered.map((c) => this._renderTruckCompanyCard(c)).join("")}
+            </div>
+        `;
+
+        document.getElementById("tcSearchInput")?.addEventListener("input", (e) => {
+            this.state._tcSearch = e.target.value;
+            this._renderTruckCompaniesView();
+        });
+        document.getElementById("tcAddBtn")?.addEventListener("click", () => {
+            this._openTruckCompanyModal(null);
+        });
+
+        container.querySelectorAll("[data-action='tc-edit']").forEach((btn) => {
+            btn.addEventListener("click", () => this._openTruckCompanyModal(btn.dataset.id));
+        });
+        container.querySelectorAll("[data-action='tc-toggle']").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const id = btn.dataset.id;
+                const currentlyActive = btn.dataset.active === "true";
+                this._softDeleteTruckCompany(id, currentlyActive);
+            });
+        });
+    }
+
+    _renderTruckCompanyCard(c) {
+        const statusPill = c.active
+            ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-green-500/20 text-green-400">Active</span>`
+            : `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-db-item-hover text-db-text3">Inactive</span>`;
+        const toggleLabel = c.active ? "Deactivate" : "Reactivate";
+        const toggleClass = c.active
+            ? "text-sysu-red hover:bg-sysu-red/10"
+            : "text-green-400 hover:bg-green-500/10";
+        return `
+            <div class="bg-db-panel border border-db-border rounded-xl p-4 hover:border-db-text3 transition-colors">
+                <div class="flex items-start justify-between gap-4">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-sm font-bold text-db-text font-mono">${escapeHtml(c.companyCode || c.id || "")}</span>
+                            ${statusPill}
+                        </div>
+                        <div class="text-base text-db-text font-bold">${escapeHtml(c.name || "")}</div>
+                        <div class="text-[11px] text-db-text3 font-mono mt-0.5">${escapeHtml(c.forwarderCode || "")}</div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button data-action="tc-edit" data-id="${escapeHtml(c.id || "")}" class="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider text-db-text2 hover:bg-db-item-hover transition-colors">Edit</button>
+                        <button data-action="tc-toggle" data-id="${escapeHtml(c.id || "")}" data-active="${c.active ? "true" : "false"}" class="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider ${toggleClass} transition-colors">${toggleLabel}</button>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
     _renderAll() {
