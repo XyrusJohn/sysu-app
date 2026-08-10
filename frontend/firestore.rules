@@ -89,6 +89,23 @@ service cloud.firestore {
       allow write: if false; // Only backend API writes (via Admin SDK)
     }
 
+    // ─── Security Guards ───────────────────────────────────────────────────────
+    // Read: authenticated users (live onSnapshot in admin Document tab).
+    // Write: backend API only (POST/PATCH /api/admin/guards) which uses
+    //        Firebase Admin SDK and bypasses rules.
+    match /security_guard/{id} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ─── Truck Companies ───────────────────────────────────────────────────────
+    // Read: authenticated users (live onSnapshot in admin Document tab).
+    // Write: backend API only (POST/PATCH /api/admin/truck-companies).
+    match /truck_company/{id} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // ─── Default: Deny all ────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
