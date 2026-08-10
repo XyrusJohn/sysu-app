@@ -164,6 +164,12 @@ class Dashboard {
         if (exportBtn) {
             exportBtn.style.display = isAdmin ? "flex" : "none";
         }
+
+        // Show admin-only sub-tabs in the Documents view
+        const guardsTab = document.getElementById("docsGuardsTabBtn");
+        const tcTab = document.getElementById("docsTruckCompaniesTabBtn");
+        if (guardsTab) guardsTab.classList.toggle("hidden", !isAdmin);
+        if (tcTab) tcTab.classList.toggle("hidden", !isAdmin);
     }
 
     async _startDataEngines() {
