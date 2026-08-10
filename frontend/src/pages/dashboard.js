@@ -92,6 +92,7 @@ class Dashboard {
             _lastDragTime: 0,
             _lastDragX: 0,
             _lastDragY: 0,
+            _activeDocsTab: "pending",
         };
 
         this.renderTimer = null;
@@ -103,6 +104,7 @@ class Dashboard {
     _bindMethods() {
         this.handleLogout = this.handleLogout.bind(this);
         this.handleNavClick = this.handleNavClick.bind(this);
+        this._updateGuardFullNamePreview = this._updateGuardFullNamePreview.bind(this);
     }
 
     async init() {
@@ -188,6 +190,9 @@ class Dashboard {
             assignmentReady(); // unblock even on failure
             console.warn(err.message);
         }
+
+        this._subscribeGuards();
+        this._subscribeTruckCompanies();
 
         try {
             await Promise.race([
@@ -1449,6 +1454,249 @@ class Dashboard {
                 </div>
             </div>
         `;
+    }
+
+    _openGuardModal(id) {
+        this._editGuardId = id || null;
+        const modal = document.getElementById("guardModal");
+        const title = document.getElementById("guardModalTitle");
+        const idWrap = document.getElementById("guardModalIdWrap");
+        const idInput = document.getElementById("guardModalId");
+        const fn = document.getElementById("guardFirstName");
+        const ln = document.getElementById("guardLastName");
+        const mi = document.getElementById("guardMiddleInitial");
+        const preview = document.getElementById("guardFullNamePreview");
+
+        if (!modal) return;
+        modal.classList.remove("hidden");
+        modal.classList.add("flex");
+        if (title) title.textContent = id ? "Edit Guard" : "Add Guard";
+        if (fn) fn.value = "";
+        if (ln) ln.value = "";
+        if (mi) mi.value = "";
+        if (preview) preview.textContent = "—";
+
+        if (id) {
+            const g = this.state._guards?.[id];
+            if (g) {
+                if (idInput) idInput.value = g.guardId || g.id || "";
+                if (idWrap) idWrap.classList.remove("hidden");
+                if (fn) fn.value = g.firstName || "";
+                if (ln) ln.value = g.lastName || "";
+                if (mi) mi.value = g.middleInitial || "";
+                this._updateGuardFullNamePreview();
+            }
+        } else {
+            if (idWrap) idWrap.classList.add("hidden");
+        }
+
+        const closeModal = () => this._closeGuardModal();
+        document.getElementById("guardModalCloseBtn")?.addEventListener("click", closeModal, {once: true});
+        document.getElementById("guardModalCancelBtn")?.addEventListener("click", closeModal, {once: true});
+        document.getElementById("guardModalSaveBtn")?.addEventListener("click", () => this._saveGuard(), {once: true});
+        [fn, ln, mi].forEach((el) => {
+            if (!el) return;
+            el.removeEventListener("input", this._updateGuardFullNamePreview);
+            el.addEventListener("input", () => this._updateGuardFullNamePreview());
+        });
+    }
+
+    _updateGuardFullNamePreview() {
+        const fn = (document.getElementById("guardFirstName")?.value || "").trim();
+        const ln = (document.getElementById("guardLastName")?.value || "").trim();
+        const mi = (document.getElementById("guardMiddleInitial")?.value || "").trim();
+        const preview = document.getElementById("guardFullNamePreview");
+        if (!preview) return;
+        if (!fn && !ln && !mi) {
+            preview.textContent = "—";
+            return;
+        }
+        preview.textContent = `${fn}${mi ? " " + mi : ""} ${ln}`.replace(/\s+/g, " ").trim();
+    }
+
+    _closeGuardModal() {
+        const modal = document.getElementById("guardModal");
+        if (modal) {
+            modal.classList.add("hidden");
+            modal.classList.remove("flex");
+        }
+        this._editGuardId = null;
+    }
+
+    async _saveGuard() {
+        const fn = (document.getElementById("guardFirstName")?.value || "").trim();
+        const ln = (document.getElementById("guardLastName")?.value || "").trim();
+        const mi = (document.getElementById("guardMiddleInitial")?.value || "").trim();
+        const saveBtn = document.getElementById("guardModalSaveBtn");
+
+        if (!fn || !ln) {
+            this._showToast("First name and last name are required");
+            return;
+        }
+        if (fn.length > 60 || ln.length > 60 || mi.length > 5) {
+            this._showToast("Field length exceeds the limit");
+            return;
+        }
+
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = "SAVING...";
+        }
+        try {
+            if (this._editGuardId) {
+                await SecurityGuardService.update(this._editGuardId, {firstName: fn, lastName: ln, middleInitial: mi});
+                this._showToast("Guard updated");
+            } else {
+                await SecurityGuardService.create({firstName: fn, lastName: ln, middleInitial: mi});
+                this._showToast("Guard added");
+            }
+            this._closeGuardModal();
+        } catch (err) {
+            console.error("Save guard error:", err);
+            this._showToast("Failed to save: " + err.message);
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = "Save";
+            }
+        }
+    }
+
+    async _softDeleteGuard(guardId, currentlyActive) {
+        const guard = this.state._guards?.[guardId];
+        const label = guard?.fullName || guard?.guardId || guardId;
+        const action = currentlyActive ? "Deactivate" : "Reactivate";
+        if (!window.confirm(`${action} ${guardId} ${label}?`)) return;
+        try {
+            await SecurityGuardService.setActive(guardId, !currentlyActive);
+            this._showToast(`Guard ${action.toLowerCase()}d`);
+        } catch (err) {
+            console.error("Toggle guard error:", err);
+            this._showToast("Failed: " + err.message);
+        }
+    }
+
+    _openTruckCompanyModal(code) {
+        this._editTruckCompanyCode = code || null;
+        const modal = document.getElementById("truckCompanyModal");
+        const title = document.getElementById("truckCompanyModalTitle");
+        const codeWrap = document.getElementById("truckCompanyCodeWrap");
+        const codeInput = document.getElementById("truckCompanyCodeInput");
+        const fc = document.getElementById("truckCompanyForwarderCode");
+        const nm = document.getElementById("truckCompanyName");
+
+        if (!modal) return;
+        modal.classList.remove("hidden");
+        modal.classList.add("flex");
+        if (title) title.textContent = code ? "Edit Truck Company" : "Add Truck Company";
+        if (fc) fc.value = "";
+        if (nm) nm.value = "";
+
+        if (code) {
+            const c = this.state._truckCompanies?.[code];
+            if (c) {
+                if (codeInput) codeInput.value = c.companyCode || c.id || "";
+                if (codeWrap) codeWrap.classList.remove("hidden");
+                if (fc) fc.value = c.forwarderCode || "";
+                if (nm) nm.value = c.name || "";
+            }
+        } else {
+            if (codeWrap) codeWrap.classList.add("hidden");
+        }
+
+        const closeModal = () => this._closeTruckCompanyModal();
+        document.getElementById("truckCompanyModalCloseBtn")?.addEventListener("click", closeModal, {once: true});
+        document.getElementById("truckCompanyModalCancelBtn")?.addEventListener("click", closeModal, {once: true});
+        document.getElementById("truckCompanyModalSaveBtn")?.addEventListener("click", () => this._saveTruckCompany(), {once: true});
+    }
+
+    _closeTruckCompanyModal() {
+        const modal = document.getElementById("truckCompanyModal");
+        if (modal) {
+            modal.classList.add("hidden");
+            modal.classList.remove("flex");
+        }
+        this._editTruckCompanyCode = null;
+    }
+
+    async _saveTruckCompany() {
+        const fc = (document.getElementById("truckCompanyForwarderCode")?.value || "").trim();
+        const nm = (document.getElementById("truckCompanyName")?.value || "").trim();
+        const saveBtn = document.getElementById("truckCompanyModalSaveBtn");
+
+        if (!fc || !nm) {
+            this._showToast("Forwarder code and name are required");
+            return;
+        }
+        if (!/^[A-Za-z0-9-]+$/.test(fc)) {
+            this._showToast("Forwarder code may only contain letters, digits, and dashes");
+            return;
+        }
+        if (fc.length > 50 || nm.length > 200) {
+            this._showToast("Field length exceeds the limit");
+            return;
+        }
+
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = "SAVING...";
+        }
+        try {
+            if (this._editTruckCompanyCode) {
+                await TruckCompanyService.update(this._editTruckCompanyCode, {forwarderCode: fc, name: nm});
+                this._showToast("Truck company updated");
+            } else {
+                await TruckCompanyService.create({forwarderCode: fc, name: nm});
+                this._showToast("Truck company added");
+            }
+            this._closeTruckCompanyModal();
+        } catch (err) {
+            console.error("Save truck company error:", err);
+            this._showToast("Failed to save: " + err.message);
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = "Save";
+            }
+        }
+    }
+
+    async _softDeleteTruckCompany(code, currentlyActive) {
+        const c = this.state._truckCompanies?.[code];
+        const label = c?.name || c?.companyCode || code;
+        const action = currentlyActive ? "Deactivate" : "Reactivate";
+        if (!window.confirm(`${action} ${code} ${label}?`)) return;
+        try {
+            await TruckCompanyService.setActive(code, !currentlyActive);
+            this._showToast(`Truck company ${action.toLowerCase()}d`);
+        } catch (err) {
+            console.error("Toggle truck company error:", err);
+            this._showToast("Failed: " + err.message);
+        }
+    }
+
+    _subscribeGuards() {
+        if (this._guardsUnsub) return; // guard against double-subscribe
+        try {
+            this._guardsUnsub = SecurityGuardService.subscribe((data) => {
+                this.state._guards = data;
+                if (this._activeDocsTab === "guards") this._renderGuardsView();
+            });
+        } catch (err) {
+            console.warn("Guards listener failed:", err.message);
+        }
+    }
+
+    _subscribeTruckCompanies() {
+        if (this._truckCompaniesUnsub) return;
+        try {
+            this._truckCompaniesUnsub = TruckCompanyService.subscribe((data) => {
+                this.state._truckCompanies = data;
+                if (this._activeDocsTab === "truck-companies") this._renderTruckCompaniesView();
+            });
+        } catch (err) {
+            console.warn("Truck companies listener failed:", err.message);
+        }
     }
 
     _renderAll() {
