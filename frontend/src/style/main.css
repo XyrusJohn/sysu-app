@@ -357,3 +357,83 @@ a {
 #podPreviewImg.grab {
   cursor: grab;
 }
+
+/* ─── FIFO-NEXT driver highlight (Assign Driver modal) ─────────────────── */
+.driver-row.fifo-next {
+    border: 2px solid var(--color-sysu-gold, #f5a623);
+    box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.25);
+    animation: fifo-pulse 2s ease-in-out infinite;
+    background: linear-gradient(90deg, rgba(245, 166, 35, 0.08) 0%, transparent 60%);
+}
+
+/* ─── Rail buttons — refined visual treatment (applies to every rail action) ───── */
+.docs-rail-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px var(--color-db-border), 0 0 0 3px rgba(200, 16, 46, 0.18);
+}
+
+.docs-rail-btn .docs-rail-icon {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.docs-rail-btn:hover .docs-rail-icon {
+    filter: drop-shadow(0 0 3px rgba(245, 166, 35, 0.22));
+}
+
+/* Per-button dot accent — only Documents carries a brand mark at rest */
+.docs-rail-btn .docs-rail-dot {
+    box-shadow: 0 0 6px rgba(200, 16, 46, 0.7);
+}
+
+/* Logout (red) gets its own hue in the hover glow */
+.docs-rail-btn[id="logoutBtn"]:hover .docs-rail-icon {
+    filter: drop-shadow(0 0 4px rgba(240, 68, 68, 0.32));
+}
+
+.docs-rail-tooltip {
+    letter-spacing: 0.005em;
+}
+
+[data-theme="light"] .docs-rail-tooltip {
+    background: rgba(255, 255, 255, 0.96);
+    border-color: rgba(0, 0, 0, 0.08);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.03);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .docs-rail-btn,
+    .docs-rail-icon,
+    .docs-rail-dot,
+    .docs-rail-tooltip {
+        transition: none !important;
+    }
+}
+
+@keyframes fifo-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.25);
+    }
+    50% {
+        box-shadow: 0 0 0 9px rgba(245, 166, 35, 0.40);
+    }
+}
+
+.fifo-next-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--color-sysu-gold, #f5a623);
+    color: #000;
+    border-radius: 9999px;
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: 8px;
+    box-shadow: 0 0 8px rgba(245, 166, 35, 0.6);
+}

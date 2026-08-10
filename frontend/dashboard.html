@@ -69,162 +69,190 @@
 
     <!-- Theme Toggle -->
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="themeToggle"
             aria-label="Toggle dark/light mode"
     >
-        <!-- Sun icon (show in dark mode → switch to light) -->
-        <svg id="iconLight" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-[18px] h-[18px] stroke-[1.8]">
-            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
-            <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
-            <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-        </svg>
-        <!-- Moon icon (show in light mode → switch to dark) -->
-        <svg id="iconDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-[18px] h-[18px] stroke-[1.8] hidden">
-            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
-        </svg>
-        <span class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]">Toggle Theme</span>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <!-- Sun icon (show in dark mode → switch to light) -->
+            <svg id="iconLight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] stroke-[1.7]">
+                <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            <!-- Moon icon (show in light mode → switch to dark) -->
+            <svg id="iconDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] stroke-[1.7] hidden">
+                <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+            </svg>
+        </span>
+        <span class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]">Toggle Theme</span>
     </button>
 
     <!-- Rail Icons -->
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group on"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group on"
             id="rOverview"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <rect x="3" y="3" width="7" height="7" rx="1"/>
-            <rect x="14" y="3" width="7" height="7" rx="1"/>
-            <rect x="3" y="14" width="7" height="7" rx="1"/>
-            <rect x="14" y="14" width="7" height="7" rx="1"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                <rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Overview</span
         >
     </button>
 
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rOrders"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <path
-                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"
-            />
-            <rect x="9" y="3" width="6" height="4" rx="1"/>
-            <path d="M9 12h6M9 16h4"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <path
+                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"
+                />
+                <rect x="9" y="3" width="6" height="4" rx="1"/>
+                <path d="M9 12h6M9 16h4"/>
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Orders</span
         >
     </button>
 
     <!-- Driver Location Tracking -->
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rTracking"
     >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-[18px] h-[18px] stroke-[1.8]">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-            <circle cx="12" cy="10" r="3"/>
-        </svg>
-        <span class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]">Live Tracking</span>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] stroke-[1.7]">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+            </svg>
+        </span>
+        <span class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]">Live Tracking</span>
     </button>
 
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rDrivers"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-            <circle cx="9" cy="7" r="4"/>
-            <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Drivers</span
         >
     </button>
 
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rDocs"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="16" y1="13" x2="8" y2="13"/>
-            <line x1="16" y1="17" x2="8" y2="17"/>
-            <polyline points="10 9 9 9 8 9"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="15.5" y1="13" x2="8.5" y2="13"/>
+                <line x1="15.5" y1="16.5" x2="8.5" y2="16.5"/>
+            </svg>
+            <span class="docs-rail-dot absolute -top-[1px] -right-[1px] w-[5px] h-[5px] rounded-full bg-sysu-red opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100"></span>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Documents</span
         >
     </button>
 
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rSAP"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
-            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-            <line x1="6" y1="6" x2="6.01" y2="6"/>
-            <line x1="6" y1="18" x2="6.01" y2="18"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                <line x1="6" y1="6" x2="6.01" y2="6"/>
+                <line x1="6" y1="18" x2="6.01" y2="18"/>
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >SAP Shipments</span>
     </button>
 
     <a
             href="/qr-generator"
             target="_blank"
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group no-underline"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group no-underline"
             id="rQR"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <rect x="3" y="3" width="7" height="7" rx="1"/>
-            <rect x="14" y="3" width="7" height="7" rx="1"/>
-            <rect x="3" y="14" width="7" height="7" rx="1"/>
-            <rect x="14" y="14" width="7" height="7" rx="1"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                <rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >QR Generator</span
         >
     </a>
@@ -232,21 +260,25 @@
     <div class="w-5 h-[1px] bg-db-border my-2 shrink-0"></div>
 
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rUsers"
             style="display: none"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-            <path d="M13.73 21a2 2 0 01-3.46 0"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                <path d="M13.73 21a2 2 0 01-3.46 0"/>
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Admin Portal</span
         >
     </button>
@@ -254,22 +286,26 @@
     <div class="w-5 h-[1px] bg-db-border my-2 shrink-0"></div>
 
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rSettings"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <circle cx="12" cy="12" r="3"/>
-            <path
-                    d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
-            />
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <circle cx="12" cy="12" r="3"/>
+                <path
+                        d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+                />
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Settings</span
         >
     </button>
@@ -277,21 +313,25 @@
     <div class="flex-1"></div>
 
     <button
-            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-[#f04444] flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-[#f0444415] group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-[#f04444] flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-[#f0444415] group"
             id="logoutBtn"
     >
-        <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                class="w-[18px] h-[18px] stroke-[1.8]"
-        >
-            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-        </svg>
+        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
+            <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="w-[18px] h-[18px] stroke-[1.7]"
+            >
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+        </span>
         <span
-                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+                class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Logout</span
         >
     </button>
@@ -1059,6 +1099,34 @@
         </div>
     </div>
 
+    <!-- ─── Admin Override Approval Flow: Documents Tab + Override Modals ─── -->
+    <section id="docsContent" class="hidden w-full flex-1 flex flex-col bg-db-bg overflow-hidden">
+        <div class="px-6 py-4 border-b border-db-border flex items-center justify-between shrink-0">
+            <div>
+                <h1 class="text-lg font-bold text-db-text font-display">Documents</h1>
+                <p class="text-[11px] text-db-text3 mt-0.5">FIFO override requests — admin approval queue</p>
+            </div>
+            <button id="docsRefreshBtn" class="text-[11px] text-db-text3 hover:text-db-text px-3 py-1.5 rounded-lg hover:bg-db-item-hover transition-colors flex items-center gap-1.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-3.5 h-3.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path></svg>
+                Refresh
+            </button>
+        </div>
+
+        <div class="flex gap-1 px-6 pt-3 border-b border-db-border shrink-0">
+            <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="pending">Pending <span id="docsBadgePending" class="ml-1 text-[10px] bg-sysu-gold/20 text-sysu-gold px-1.5 py-0.5 rounded-full font-mono"></span></button>
+            <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="approved">Approved <span id="docsBadgeApproved" class="ml-1 text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full font-mono"></span></button>
+            <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="rejected">Rejected</button>
+            <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="expired">Expired</button>
+            <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="completed">Completed</button>
+        </div>
+
+        <div id="docsListContainer" class="flex-1 overflow-y-auto p-6">
+            <div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">
+                Loading override requests...
+            </div>
+        </div>
+    </section>
+
 </main>
 
 <!-- Security Enforcement Overlay -->
@@ -1517,6 +1585,9 @@
             </p>
         </div>
 
+        <!-- Override Request Pending Banner (populated by dashboard.js) -->
+        <div id="assignModalOverrideBanner"></div>
+
         <!-- Driver List -->
         <div class="flex-1 overflow-y-auto" id="assignModalDriverList">
             <!-- Dynamic content -->
@@ -1536,6 +1607,12 @@
                     class="flex-[2] h-11 bg-sysu-red hover:bg-[#b00f28] text-white font-bold rounded-xl transition-all shadow-[0_4px_14px_rgba(200,16,46,0.3)] uppercase tracking-wider text-xs"
             >
                 Confirm Assignment
+            </button>
+        </div>
+        <!-- Request Override Button (shown after FIFO block) -->
+        <div class="px-5 pb-5 bg-db-bg/50 shrink-0">
+            <button id="requestOverrideBtn" class="hidden w-full bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold border border-sysu-gold/30 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all">
+                ⚠ Request Override (Admin Approval)
             </button>
         </div>
     </div>
@@ -1686,5 +1763,98 @@
 <script type="module" src="src/main.js"></script>
 
 <script type="module" src="src/pages/dashboard.js"></script>
+
+<!-- Request Override Sub-Modal -->
+<div id="requestOverrideModal" class="hidden fixed inset-0 z-[8500] bg-black/60 items-center justify-center p-4">
+    <div class="bg-db-panel border border-db-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-db-border flex items-center justify-between">
+            <div>
+                <h2 class="text-base font-bold text-db-text font-display">Request FIFO Override</h2>
+                <p class="text-[11px] text-db-text3 mt-0.5">Admin approval required to bypass strict FIFO.</p>
+            </div>
+            <button id="requestOverrideCloseBtn" class="text-db-text3 hover:text-db-text w-7 h-7 rounded-lg hover:bg-db-item-hover flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        </div>
+        <div class="p-5 space-y-4">
+            <div>
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Reason</label>
+                <select id="requestOverrideReason" class="w-full bg-db-bg border border-db-border rounded-lg px-3 py-2 text-sm text-db-text focus:border-sysu-red focus:outline-none">
+                    <option value="vip_customer">VIP Customer — Urgent Delivery</option>
+                    <option value="driver_request">Driver Personal Request</option>
+                    <option value="urgent_delivery">Time-Critical Delivery</option>
+                    <option value="truck_match">Specific Truck Requirement</option>
+                    <option value="other">Other (specify below)</option>
+                </select>
+            </div>
+            <div id="requestOverrideNoteWrap" class="hidden">
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-db-text3 mb-1.5">Additional Note (optional, max 200 chars)</label>
+                <textarea id="requestOverrideNote" maxlength="200" rows="3" class="w-full bg-db-bg border border-db-border rounded-lg px-3 py-2 text-sm text-db-text focus:border-sysu-red focus:outline-none resize-none" placeholder="Brief context..."></textarea>
+            </div>
+            <div class="bg-db-bg rounded-lg p-3 text-[11px] text-db-text3">
+                <div class="flex justify-between mb-1">
+                    <span class="text-db-text3">Shipment:</span>
+                    <span id="requestOverrideDispatchNum" class="text-db-text font-mono font-bold">—</span>
+                </div>
+                <div class="flex justify-between mb-1">
+                    <span class="text-db-text3">Requested Driver:</span>
+                    <span id="requestOverrideDriverName" class="text-db-text font-bold">—</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-db-text3">FIFO-First (bypassed):</span>
+                    <span id="requestOverrideFifoFirstName" class="text-sysu-gold font-bold">—</span>
+                </div>
+            </div>
+        </div>
+        <div class="px-5 py-3 border-t border-db-border flex justify-end gap-2">
+            <button id="requestOverrideCancelBtn" class="px-4 py-2 rounded-lg text-[12px] text-db-text3 hover:text-db-text hover:bg-db-item-hover transition-colors">Cancel</button>
+            <button id="requestOverrideSubmitBtn" class="px-4 py-2 rounded-lg text-[12px] font-bold uppercase tracking-wider bg-sysu-red hover:bg-sysu-red-dark text-white transition-colors">Submit Request</button>
+        </div>
+    </div>
+</div>
+
+<!-- Proceed Approved Override Sub-Modal -->
+<div id="proceedOverrideModal" class="hidden fixed inset-0 z-[8500] bg-black/60 items-center justify-center p-4">
+    <div class="bg-db-panel border border-db-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-db-border flex items-center justify-between">
+            <div>
+                <h2 class="text-base font-bold text-db-text font-display">Approved — Proceed</h2>
+                <p class="text-[11px] text-db-text3 mt-0.5">Override approved. Confirm to assign.</p>
+            </div>
+            <button id="proceedOverrideCloseBtn" class="text-db-text3 hover:text-db-text w-7 h-7 rounded-lg hover:bg-db-item-hover flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        </div>
+        <div class="p-5 space-y-3 bg-db-bg/40">
+            <div class="flex justify-between text-[12px]">
+                <span class="text-db-text3">Shipment:</span>
+                <span id="proceedDispatchNum" class="text-db-text font-mono font-bold">—</span>
+            </div>
+            <div class="flex justify-between text-[12px]">
+                <span class="text-db-text3">Driver:</span>
+                <span id="proceedDriverName" class="text-db-text font-bold">—</span>
+            </div>
+            <div class="flex justify-between text-[12px]">
+                <span class="text-db-text3">Plate:</span>
+                <span id="proceedDriverPlate" class="text-db-text font-mono">—</span>
+            </div>
+            <div class="flex justify-between text-[12px]">
+                <span class="text-db-text3">FIFO bypassed:</span>
+                <span id="proceedFifoFirstName" class="text-sysu-gold font-bold">—</span>
+            </div>
+            <div class="flex justify-between text-[12px]">
+                <span class="text-db-text3">Approved by:</span>
+                <span id="proceedApproverName" class="text-green-400 font-bold">—</span>
+            </div>
+            <div class="text-[10px] text-sysu-gold bg-sysu-gold/10 p-2 rounded-lg border border-sysu-gold/20 mt-3">
+                ⚠ FIFO ordering will be bypassed for this shipment only.
+            </div>
+        </div>
+        <div class="px-5 py-3 border-t border-db-border flex justify-end gap-2">
+            <button id="proceedOverrideCancelBtn" class="px-4 py-2 rounded-lg text-[12px] text-db-text3 hover:text-db-text hover:bg-db-item-hover transition-colors">Cancel</button>
+            <button id="proceedOverrideConfirmBtn" class="px-4 py-2 rounded-lg text-[12px] font-bold uppercase tracking-wider bg-green-600 hover:bg-green-700 text-white transition-colors">Confirm Assignment</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>
