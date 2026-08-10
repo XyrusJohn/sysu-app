@@ -75,7 +75,7 @@ Each card shows:
 - **Edit** button (always visible to admin)
 - **Deactivate** when active, **Reactivate** when inactive
 
-Search filters by `guardId`, `firstName`, `lastName`, `fullName` substring (case-insensitive).
+Search filters by `guardId`, `firstName`, `lastName`, `fullName` substring (case-insensitive). Search runs client-side over the subscribed snapshot; expected scale (< 200 docs) is well within what a full-list filter handles. If registries grow past ~1000 docs, switch to a server-side search endpoint — out of scope for v1.
 
 ### Truck Companies sub-tab
 
@@ -206,7 +206,8 @@ generateNextGuardId(): string
 
 generateNextCompanyCode(): string
   - Same algorithm but codes are zero-padded numeric strings
-  - Min width = 2 digits (matches existing data "01".."51")
+  - Width = max(2, ceil(log10(maxExistingN + 1)))
+  - Matches existing data "01".."51" at width 2 today; auto-widens at 100 to preserve sort order
 ```
 
 Re-use of retired IDs: when a guard is deactivated, the ID is NOT freed. New guards always get a fresh ID. This avoids ambiguity when historical records reference the ID.
