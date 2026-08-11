@@ -725,3 +725,47 @@ exports.revokeCancelAssignment = async (req, res) => {
     }
 };
 
+// GET /api/sap/locations
+//
+// Returns the last persisted location for every dispatch whose tripStatus
+// is in `["loading", "loaded", "in_transit"]`. Each entry has the shape:
+//   { dispatchKey, driverId, driverName, truckPlate, lat, lng, at, tripStatus }
+//
+// `lat` and `lng` are 0/null if the driver has never reported a position
+// for that dispatch — call sites should skip those.
+//
+// Used by the dispatcher dashboard on initial load so that markers appear
+// immediately, even before any live `driver_moving` event arrives from the
+// driver app.
+exports.getActiveDriverLocations = async (req, res) => {
+    try {
+        const snap = await DB()
+            .collection(SAP_COLLECTION)
+            .where("tripStatus", "in", ["loading", "loaded", "in_transit"])
+            .get();
+
+        const results = [];
+        for (const doc of snap.docs) {
+            const data = doc.data();
+            const ll = data.lastLocation;
+            const lat = ll && typeof ll.lat === "number" ? ll.lat : null;
+            const lng = ll && typeof ll.lng === "number" ? ll.lng : null;
+            results.push({
+                dispatchKey: doc.id,
+                driverId: data.driverId || null,
+                driverName: data.driverName || null,
+                truckPlate: data.truckPlate || null,
+                tripStatus: data.tripStatus || null,
+                lat,
+                lng,
+                at: ll && ll.at ? ll.at.toMillis ? ll.at.toMillis() : null : null,
+            });
+        }
+
+        return ok(res, {locations: results});
+    } catch (err) {
+        console.error("[sapAssignment] getActiveDriverLocations error:", err);
+        return bad(res, 500, "INTERNAL", "Failed to load driver locations.");
+    }
+};
+

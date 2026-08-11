@@ -156,4 +156,29 @@ export const SAPAssignmentService = {
         });
         return handle(res);
     },
+
+    /**
+     * Fetch the last persisted location for every in-flight dispatch
+     * (loading / loaded / in_transit). Used by the dispatcher dashboard on
+     * initial load so truck markers appear immediately, even before any
+     * live `driver_moving` event arrives from the driver app.
+     *
+     * @returns {Promise<{locations: Array<{
+     *   dispatchKey: string,
+     *   driverId: string|null,
+     *   driverName: string|null,
+     *   truckPlate: string|null,
+     *   tripStatus: string|null,
+     *   lat: number|null,
+     *   lng: number|null,
+     *   at: number|null,
+     * }>>}
+     */
+    async fetchActiveLocations() {
+        const res = await fetch(
+            `${API_CONFIG.BASE_URL}/api/sap/locations`,
+            {method: "GET", headers: await authHeaders()},
+        );
+        return handle(res);
+    },
 };

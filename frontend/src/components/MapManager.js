@@ -163,8 +163,18 @@ const ST = {
     delayed: { rc: "#F97316", rg: "rgba(249,115,22,0.26)",  lbl: "Delayed" },
     stopped: { rc: "#EF4444", rg: "rgba(239,68,68,0.26)",   lbl: "Stopped" },
     offline: { rc: "#EF4444", rg: "rgba(239,68,68,0.25)",    lbl: "Offline"  },
+    // Marker seeded from persisted lastLocation, but real-time GPS hasn't
+    // arrived yet (or driver app is paused / stationary). Amber color so it's
+    // visually distinct from "real" online markers.
+    pending: { rc: "#A78BFA", rg: "rgba(167,139,250,0.30)", lbl: "Awaiting GPS" },
 };
 const _st = (s) => ST[s] ?? ST.offline;
+
+// Default fallback coordinates when no real GPS has arrived yet. Manila
+// center — same as the map's initial center so the marker is at least
+// visible somewhere sensible.
+const FALLBACK_LAT = 14.5995;
+const FALLBACK_LNG = 120.9842;
 
 // ── Popup HTML ─────────────────────────────────────────────────────────────────
 
@@ -237,7 +247,18 @@ const _popup = ({ name, driverId, shipmentId, lat, lng }, cfg) => `
  */
 export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, containerId = _defaultId) => {
     const e = _e(containerId);
-    if (!e.map || !lat || !lng || !driverId) return;
+    if (!e.map || !lat || !lng || !driverId) {
+        // Always log skips so silent failures are visible during development.
+        console.warn("[updateMarker] skipped", {
+            driverId,
+            lat,
+            lng,
+            containerId,
+            hasMap: !!e.map,
+            reason: !e.map ? "no-map" : !driverId ? "no-driverId" : !lat ? "no-lat" : "no-lng",
+        });
+        return;
+    }
     _injectCSS();
 
     const cfg = _st(status);
@@ -267,6 +288,47 @@ export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, c
             .addTo(e.map)
             .bindPopup(_popup({ name, driverId, shipmentId, lat, lng }, cfg), { className: "flm-pop", maxWidth: 260 });
     }
+};
+
+/**
+ * Render a marker for a driver even when no real GPS coordinates have
+ * arrived yet. Uses the dispatch record's `lastLocation` if available, and
+ * falls back to Manila center coordinates with status "pending" so the
+ * dispatcher sees a marker the moment they reload the page (instead of an
+ * empty map while waiting for the driver app to start emitting).
+ *
+ * The marker auto-updates as soon as `updateMarker()` is called with real
+ * coordinates from a live `driver_moving` event — `pending` is purely the
+ * initial seed visual.
+ *
+ * @param {{ driverId: string, name?: string, shipmentId?: string,
+ *           lat?: number|null, lng?: number|null, hasRealGps?: boolean }} input
+ * @param {string} [containerId="map"]
+ */
+export const seedMarker = (input, containerId = _defaultId) => {
+    const {driverId, name, shipmentId, lat, lng} = input;
+    if (!driverId) return false;
+
+    const realLat = typeof lat === "number" && lat !== 0 ? lat : null;
+    const realLng = typeof lng === "number" && lng !== 0 ? lng : null;
+    const hasRealGps = realLat != null && realLng != null;
+
+    const useLat = hasRealGps ? realLat : FALLBACK_LAT;
+    const useLng = hasRealGps ? realLng : FALLBACK_LNG;
+    const useStatus = hasRealGps ? "offline" : "pending";
+
+    updateMarker(
+        {
+            driverId,
+            lat: useLat,
+            lng: useLng,
+            name: name || "Unknown Driver",
+            status: useStatus,
+            shipmentId: shipmentId || null,
+        },
+        containerId,
+    );
+    return true;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

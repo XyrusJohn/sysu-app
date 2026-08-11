@@ -31,4 +31,9 @@ router.post("/cancel/decide", ctrl.decideCancelAssignment);
 // Dispatcher revokes their own pending cancel request.
 router.post("/cancel/revoke", ctrl.revokeCancelAssignment);
 
+// Last-known locations for every in-flight dispatch (loading / loaded / in_transit).
+// Used by the dispatcher dashboard on initial load so truck markers appear even
+// before any live `driver_moving` event arrives from the driver app.
+router.get("/locations", ctrl.getActiveDriverLocations);
+
 module.exports = router;

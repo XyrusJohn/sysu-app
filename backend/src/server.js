@@ -1,7 +1,7 @@
 const express = require("express");
 const {Server} = require("socket.io");
 const http = require("http");
-const {initializeFirebase} = require("./config/firebase");
+const {initializeFirebase, admin} = require("./config/firebase");
 const dotenv = require("dotenv");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -141,6 +141,50 @@ io.on("connection", async (socket) => {
         }
         console.log("[driver_moving] ✓ broadcasting update_admin_map to all clients");
         io.emit("update_admin_map", data);
+
+        // ── Persist lastLocation to sap_assignments so the dispatcher can
+        //    render the marker even when the driver app has just reconnected
+        //    (or briefly stopped emitting). We find the active dispatch for
+        //    this driver (in_transit / loaded / loading) and write
+        //    {lat, lng, at}.
+        const {lat, lng} = data;
+        if (typeof lat !== "number" || typeof lng !== "number" || lat === 0 || lng === 0) {
+            console.log("[driver_moving] (skip persist: invalid coords)");
+            return;
+        }
+        const db = admin.firestore();
+        db.collection("sap_assignments")
+            .where("driverId", "==", data.driverId)
+            .where("tripStatus", "in", ["loaded", "in_transit", "loading"])
+            .limit(1)
+            .get()
+            .then((snap) => {
+                if (snap.empty) {
+                    console.log("[driver_moving] (skip persist: no active dispatch for driver)");
+                    return null;
+                }
+                const doc = snap.docs[0];
+                return doc.ref
+                    .set(
+                        {
+                            lastLocation: {
+                                lat,
+                                lng,
+                                at: admin.firestore.FieldValue.serverTimestamp(),
+                            },
+                        },
+                        {merge: true},
+                    )
+                    .then(() => doc.id);
+            })
+            .then((updatedId) => {
+                if (updatedId) {
+                    console.log("[driver_moving] ✓ persisted lastLocation to", updatedId);
+                }
+            })
+            .catch((err) => {
+                console.error("[driver_moving] ✗ persist error:", err?.message ?? err);
+            });
     });
 });
 

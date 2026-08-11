@@ -2,6 +2,7 @@
     initLeafletMap,
     switchMapTheme,
     updateMarker,
+    seedMarker,
     focusOnLocation,
     clearMarkers,
     markers,
@@ -261,6 +262,83 @@ class Dashboard {
 
         this._setupSocket();
         this._setupDriverLocationSocket();
+        this._seedLastKnownLocations();
+    }
+
+    /**
+     * ONE-SHOT poll on page load. Pulls the last persisted location for every
+     * in-flight dispatch (loading / loaded / in_transit) and seeds both
+     * `liveTracking` and `liveScans` so markers appear on the overview map
+     * immediately — even before any live `driver_moving` event arrives from
+     * the driver app.
+     *
+     * After this runs, live socket events take over (see `_setupSocket` and
+     * `_setupDriverLocationSocket`). No interval poll: refreshing the page
+     * is the explicit way to re-sync.
+     */
+    async _seedLastKnownLocations() {
+        try {
+            const {locations} = await SAPAssignmentService.fetchActiveLocations();
+            if (!Array.isArray(locations) || locations.length === 0) {
+                console.log("[locationSeed] no active driver locations");
+                return;
+            }
+            console.log("[locationSeed] seeding", locations.length, "active locations");
+            const now = Date.now();
+            for (const loc of locations) {
+                console.log(
+                    "[locationSeed] entry:",
+                    JSON.stringify({
+                        dispatchKey: loc.dispatchKey,
+                        driverId: loc.driverId,
+                        driverName: loc.driverName,
+                        lat: loc.lat,
+                        lng: loc.lng,
+                        tripStatus: loc.tripStatus,
+                        hasCoords: !!(loc.lat && loc.lng && loc.lat !== 0 && loc.lng !== 0),
+                    }),
+                );
+                if (!loc.driverId) {
+                    console.log("[locationSeed] (skipped — missing driverId)");
+                    continue;
+                }
+
+                const realLat = typeof loc.lat === "number" && loc.lat !== 0 ? loc.lat : null;
+                const realLng = typeof loc.lng === "number" && loc.lng !== 0 ? loc.lng : null;
+                const hasRealGps = realLat != null && realLng != null;
+
+                const seeded = {
+                    driverId: loc.driverId,
+                    lat: realLat,
+                    lng: realLng,
+                    status: hasRealGps ? "offline" : "pending", // tentative
+                    name: loc.driverName || "Unknown Driver",
+                    sapDocId: loc.dispatchKey,
+                    truckPlate: loc.truckPlate || null,
+                    tripStatus: loc.tripStatus || null,
+                    lastSeen: typeof loc.at === "number" ? loc.at : now,
+                    awaitingGps: !hasRealGps,
+                };
+
+                this.state.liveTracking[loc.driverId] = seeded;
+                this.state.liveScans[loc.driverId] = seeded;
+
+                seedMarker(
+                    {
+                        driverId: loc.driverId,
+                        name: seeded.name,
+                        shipmentId: loc.dispatchKey,
+                        lat: loc.lat,
+                        lng: loc.lng,
+                    },
+                    "map",
+                );
+            }
+            this._scheduleLiveScansRender();
+            this._renderAll();
+        } catch (err) {
+            console.warn("[locationSeed] failed:", err?.message ?? err);
+        }
     }
 
     async _syncSAP(skipRender = false) {
@@ -1066,6 +1144,11 @@ class Dashboard {
         // Forwarded from every driver_moving. Turns driver GREEN immediately
         // even if they were previously RED (offline) —" handles reconnect race.
         socket.on(EVENTS.DRIVER_MOVING, (data) => {
+            console.log(
+                "[socket/DRIVER_MOVING] driverId:", data?.driverId,
+                "lat:", data?.lat, "lng:", data?.lng,
+                "status:", data?.status, "name:", data?.name,
+            );
             const existing = this.state.liveTracking[data.driverId];
             const wasOffline = existing?.status === "offline";
 
@@ -1158,12 +1241,24 @@ class Dashboard {
     // and joins them with sap_assignments Firestore docs for shipment/plate data.
     async _setupDriverLocationSocket() {
         const driverSocket = getDriverSocket();
-        if (!driverSocket) return;
+        if (!driverSocket) {
+            console.warn("[driverSocket] getDriverSocket() returned null — driver location feed unavailable");
+            return;
+        }
+
+        console.log("[driverSocket] subscribing to update_admin_map + update_status; URL =", API_CONFIG.DRIVER_TRACKING_URL);
 
         // â"€â"€ update_admin_map (broadcast from sysu-go Railway) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         driverSocket.on("update_admin_map", async (data) => {
             const {driverId, sapDocId, lat, lng, status, name} = data;
             const now = Date.now();
+            console.log(
+                "[driverSocket/update_admin_map] driverId:", driverId,
+                "lat:", lat, "lng:", lng,
+                "status:", status, "name:", name,
+                "sapDocId:", sapDocId,
+                "hasValidCoords:", !!(lat && lng && lat !== 0 && lng !== 0),
+            );
 
             // Keep latest location in state
             this.state.liveScans[driverId] = {
@@ -1253,6 +1348,17 @@ class Dashboard {
                 driverSocket.connect();
             }
         }
+
+        // Diagnostic listeners for the driver's secondary socket.
+        driverSocket.on("connect", () => {
+            console.log("[driverSocket] ✓ connected to", API_CONFIG.DRIVER_TRACKING_URL);
+        });
+        driverSocket.on("disconnect", (reason) => {
+            console.warn("[driverSocket] ✗ disconnected:", reason);
+        });
+        driverSocket.on("connect_error", (err) => {
+            console.error("[driverSocket] ✗ connect_error:", err?.message ?? err);
+        });
     }
 
     _liveScansRenderTimer = null;
