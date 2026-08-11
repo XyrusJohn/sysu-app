@@ -358,12 +358,100 @@ a {
   cursor: grab;
 }
 
-/* ─── FIFO-NEXT driver highlight (Assign Driver modal) ─────────────────── */
+/* ─── FIFO-NEXT driver highlight (Assign Driver modal) ───────────────────
+   Industrial: 3px gold rail on the left edge, slow opacity pulse. The rest
+   of the row stays quiet. No halo, no gradient sweep, no thick border.
+*/
 .driver-row.fifo-next {
-    border: 2px solid var(--color-sysu-gold, #f5a623);
-    box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.25);
-    animation: fifo-pulse 2s ease-in-out infinite;
-    background: linear-gradient(90deg, rgba(245, 166, 35, 0.08) 0%, transparent 60%);
+    position: relative;
+    background: rgba(245, 166, 35, 0.05);
+    animation: fifo-rail-pulse 2400ms ease-in-out infinite;
+}
+.driver-row.fifo-next::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--color-sysu-gold, #f5a623);
+}
+
+@keyframes fifo-rail-pulse {
+    0%, 100% { background: rgba(245, 166, 35, 0.05); }
+    50%      { background: rgba(245, 166, 35, 0.10); }
+}
+
+/* ─── Override-APPROVED driver highlight (Assign Driver modal) ──────────────
+   Same industrial treatment as fifo-next, but blue. Used when the dispatcher
+   has an approved admin bypass token for a non-FIFO driver — that row is
+   the one the token applies to, so it should pulse to show "click me".
+   Distinct from fifo-next (gold) so the dispatcher can tell the two states
+   apart at a glance.
+*/
+.driver-row.override-approved {
+    position: relative;
+    background: rgba(59, 130, 246, 0.08);
+    animation: override-rail-pulse 1800ms ease-in-out infinite;
+    cursor: pointer;
+}
+.driver-row.override-approved::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #3b82f6;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.55);
+}
+.driver-row.override-approved:hover {
+    background: rgba(59, 130, 246, 0.14);
+}
+
+@keyframes override-rail-pulse {
+    0%, 100% { background: rgba(59, 130, 246, 0.08); }
+    50%      { background: rgba(59, 130, 246, 0.18); }
+}
+
+.override-approved-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px 2px 6px;
+    background: #3b82f6;
+    color: #ffffff;
+    border-radius: 2px;
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-left: 8px;
+    line-height: 1;
+}
+.override-approved-tag::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+    animation: override-tag-blink 1800ms ease-in-out infinite;
+}
+
+@keyframes override-tag-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .driver-row.override-approved {
+        animation: none;
+        background: rgba(59, 130, 246, 0.14);
+    }
+    .override-approved-tag::before {
+        animation: none;
+    }
 }
 
 /* ─── Rail buttons — refined visual treatment (applies to every rail action) ───── */
@@ -413,27 +501,37 @@ a {
     }
 }
 
-@keyframes fifo-pulse {
-    0%, 100% {
-        box-shadow: 0 0 0 4px rgba(245, 166, 35, 0.25);
-    }
-    50% {
-        box-shadow: 0 0 0 9px rgba(245, 166, 35, 0.40);
-    }
+@keyframes fifo-rail-pulse {
+    0%, 100% { background: rgba(245, 166, 35, 0.05); }
+    50%      { background: rgba(245, 166, 35, 0.10); }
 }
 
-.fifo-next-badge {
+.fifo-next-tag {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+    gap: 5px;
+    padding: 2px 7px 2px 6px;
     background: var(--color-sysu-gold, #f5a623);
-    color: #000;
-    border-radius: 9999px;
+    color: #0a0a0a;
+    border-radius: 2px;
     font-size: 9px;
     font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     margin-left: 8px;
-    box-shadow: 0 0 8px rgba(245, 166, 35, 0.6);
+    line-height: 1;
+}
+.fifo-next-tag::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #0a0a0a;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .driver-row.fifo-next {
+        animation: none;
+        background: rgba(245, 166, 35, 0.08);
+    }
 }

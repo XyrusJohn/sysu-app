@@ -17,6 +17,7 @@ import {
 import {EVENTS, socket, getDriverSocket} from "../api/socket.js";
 import {AuthService} from "../api/authService.js";
 import {SAPService} from "../api/sapService.js";
+import {SAPAssignmentService} from "../api/sapAssignmentService.js";
 import {API_CONFIG} from "../api/config.js";
 import {SecurityGuardService} from "../api/securityGuardService.js";
 import {TruckCompanyService} from "../api/truckCompanyService.js";
@@ -35,6 +36,7 @@ import {
     addDoc,
     serverTimestamp,
     getDocs,
+    limit,
 } from "firebase/firestore";
 
 // â"€â"€ XSS Prevention â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -76,6 +78,9 @@ class Dashboard {
             queue: [],
             assignTarget: null,
             requiredTruckType: null,
+            overrideRequestId: null,     // pending override request, if any
+            overrideTokenId: null,       // approved token id (used by next assign call)
+            overrideRequestStatus: null, // 'pending' | 'approved' | 'denied' | 'revoked' | 'expired'
             ordersTruckTypeFilter: "all",
             podZoomLevel: 1,
             podIsDragging: false,
@@ -1892,6 +1897,18 @@ class Dashboard {
 
             const asgn = this.state.sapAssignments[g.key];
             const tripStatus = asgn?.tripStatus;
+            const tripStatusLower = (tripStatus || "").toLowerCase();
+
+            // [filterTrace] diagnostic for tripStatus casing
+            if (window.__SYSU_DEBUG_FILTER__ && this.state.sapFilter === "fully_loaded") {
+                console.log(
+                    "[filterTrace] fully_loaded key:", g.key,
+                    "tripStatus:", JSON.stringify(tripStatus),
+                    "tripStatusLower:", JSON.stringify(tripStatusLower),
+                    "guardSig:", !!asgn?.guardSignatureBase64 || (asgn?.lineItems || []).some((li) => li.guardSignatureBase64),
+                    "podCapturedAt:", (asgn?.lineItems || []).some((li) => li.podCapturedAt),
+                );
+            }
 
             if (this.state.sapFilter === "delivered") {
                 // Only show rows that have an assignment entry with tripStatus === "completed"
@@ -1901,11 +1918,19 @@ class Dashboard {
             } else if (this.state.sapFilter === "in_transit") {
                 if (tripStatus !== "in_transit") return false;
             } else if (this.state.sapFilter === "fully_loaded") {
-                if (tripStatus !== "fully_loaded") return false;
+                // A row belongs in the Fully Loaded filter ONLY when its
+                // tripStatus === "loaded" (case-insensitive). The
+                // presence of a guard signature does NOT pull a row in
+                // here — once the driver has advanced past loaded
+                // (e.g. to in_transit), the row belongs in the matching
+                // downstream filter regardless of guardSignatureBase64.
+                if (tripStatusLower !== "loaded") return false;
             } else if (this.state.sapFilter === "loading") {
                 if (tripStatus !== "loading") return false;
             } else if (this.state.sapFilter === "assigned") {
-                if (tripStatus !== null) return false;
+                // A fresh assignment has tripStatus === "assigned" until the
+                // driver transitions to "loading" / "loaded" / "in_transit".
+                if (tripStatus !== "assigned") return false;
             } else if (this.state.sapFilter === "forAssignment") {
                 // Exclude already DELIVERED — no point assigning something already delivered
                 if ((g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
@@ -2005,19 +2030,84 @@ class Dashboard {
           </td>
           <td class="px-6 py-4 text-right">
              ${
-                    isDelivered
-                        ? '<span class="text-green-500 font-bold text-xs">COMPLETE</span>'
+                isDelivered
+                    ? '<span class="text-green-500 font-bold text-xs">COMPLETE</span>'
+                    : asgn
+                        ? (
+                            // Hide the cancel/change dropdown once the driver
+                            // has actually started loading. Cancellations and
+                            // driver changes are no longer useful (or even
+                            // allowed server-side) once the trip is in
+                            // loading / loaded / in_transit. Only the
+                            // freshly-assigned state keeps the action menu.
+                            (asgn.tripStatus || "").toLowerCase() === "assigned"
+                                ? `<select data-action="row-action" data-dispatch="${escapeHtml(key)}" data-truck-type="${escapeHtml(rec.TruckType || "")}" class="bg-db-bg border border-db-border text-db-text2 px-2.5 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:border-sysu-red/50 focus:outline-none focus:border-sysu-red/50">
+                                     <option value="" disabled selected>Action &mdash; choose</option>
+                                     <option value="cancel-assignment">Cancel assignment</option>
+                                     <option value="change-assignment">Change assignment</option>
+                                   </select>`
+                                : '<span class="text-db-text3 text-[10px] font-bold uppercase tracking-wider opacity-60">In progress</span>'
+                        )
                         : `<button
                              onclick="window.dashboard.openAssignModal('${encodeURIComponent(key)}', '${escapeHtml(rec.TruckType || "")}')"
                              class="bg-sysu-red/10 hover:bg-sysu-red/20 text-sysu-red px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer">
-                             ${asgn ? "CHANGE" : "ASSIGN"}
+                             ASSIGN
                            </button>`
-                }
+            }
           </td>
         </tr>
       `;
             })
             .join("");
+
+        // Wire the per-row action dropdown (Cancel / Change). One delegated
+        // listener, attached once, so re-renders don't lose it.
+        if (!body.dataset.rowActionWired) {
+            body.dataset.rowActionWired = "1";
+            body.addEventListener("change", (evt) => {
+                const sel = evt.target.closest('[data-action="row-action"]');
+                if (!sel) return;
+                const action = sel.value;
+                const dispatchKey = sel.dataset.dispatch;
+                const truckType = sel.dataset.truckType || "";
+                console.log("[rowAction] change", {action, dispatchKey, truckType});
+                if (!action || !dispatchKey) return;
+
+                if (action === "change-assignment") {
+                    // Reset the dropdown so re-opening the modal doesn't
+                    // double-fire on re-render.
+                    sel.value = "";
+                    this.openAssignModal(
+                        encodeURIComponent(dispatchKey),
+                        truckType,
+                    );
+                    return;
+                }
+
+                if (action === "cancel-assignment") {
+                    // Reset immediately so the confirm dialog isn't blocking
+                    // a stale value if the user cancels.
+                    sel.value = "";
+                    // Inline reason prompt — keeping parity with the
+                    // Confirmed Assignments card view's reason dropdown,
+                    // but condensed to a single prompt since the SAP table
+                    // doesn't have room for a long dropdown.
+                    const reason = window.prompt(
+                        `Cancel assignment for dispatch ${dispatchKey}?\n\nReason (will be sent for admin approval):`,
+                        "Wrong driver assigned",
+                    );
+                    console.log("[rowAction] cancel prompt result:", {reason});
+                    if (!reason || !reason.trim()) return;
+                    this._cancelAssignment(
+                        dispatchKey,
+                        reason.trim(),
+                        sel,
+                        body,
+                    );
+                    return;
+                }
+            });
+        }
     }
 
     _renderDrivers() {
@@ -2585,38 +2675,37 @@ class Dashboard {
                 };
             });
 
-        // Use confirmAssignment pattern: write to Firestore directly
-        import("firebase/firestore").then(({ doc, setDoc, updateDoc, serverTimestamp: ts }) => {
-            Promise.all([
-                setDoc(doc(db, "sap_assignments", dispatchKey), {
-                    driverId: driverUid,
-                    driverName,
-                    truckPlate,
-                    truckCompany: driver.truckCompany || driver.company || "—",
-                    assignedAt: ts(),
-                    lineItems,
-                }),
-                // Safe queue update: skips rewriting status if driver is already loading another dispatch
-                this._safeUpdateQueueAssignment(driverUid, dispatchKey),
-            ])
-                .then(() => {
-                    alert(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
-                    this.closeAssignModal();
-                    this._renderAll();
-                })
-                .catch((err) => {
-                    console.error("Fleet assign error:", err);
-                    alert("Failed to assign driver: " + err.message);
-                })
-                .finally(() => {
-                    if (confirmBtn) {
-                        confirmBtn.disabled = false;
-                        confirmBtn.textContent = originalText;
-                    }
-                    this.state.assignTarget = null;
-                    this.state.selectedQueueDriverId = null;
-                });
-        });
+        // Server-authoritative assignment write. Same path as the SAP modal.
+        SAPAssignmentService.assignDriver({
+            dispatchKey,
+            requestedDriverId: driverUid,
+            truckType: this.state.requiredTruckType || driver.truckType || "",
+            lineItems,
+            driverSnapshot: {
+                driverName,
+                truckPlate,
+                truckCompany: driver.truckCompany || driver.company || "—",
+            },
+            overrideTokenId: this.state.overrideTokenId || null,
+        })
+            .then(() => {
+                alert(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
+                this.state.overrideTokenId = null;
+                this.closeAssignModal();
+                this._renderAll();
+            })
+            .catch((err) => {
+                console.error("Fleet assign error:", err.code, err.message);
+                alert("Failed to assign driver: " + (err.message || err.code || "unknown"));
+            })
+            .finally(() => {
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = originalText;
+                }
+                this.state.assignTarget = null;
+                this.state.selectedQueueDriverId = null;
+            });
     }
 
     sortSap(key) {
@@ -3897,11 +3986,32 @@ class Dashboard {
     _parseDelDateTime(sapDate) { return this._formatDelDateDisplay(sapDate); }
 
     _getAvailableDrivers(requiredTruckType) {
-        const norm = (s) => (s || "").replace(/\./g, "").replace(/\b[A-Z]\b ?/g, "").replace(/\s+/g, " ").toLowerCase().trim();
-        const truckMatch = (d) =>
-            !requiredTruckType ||
-            !d.truckType ||
-            norm(d.truckType) === norm(requiredTruckType);
+        // ── Normalize truck-type strings for comparison ─────────────────────
+        // Examples that should all match:
+        //   "AUV", "auv", "Auv." → "auv"
+        //   "6-Wheel Tractor" → "6wheeltractor"
+        //   "Closed Van" → "closedvan"
+        const norm = (s) => (s || "")
+            .replace(/\./g, "")          // drop periods (e.g., "Tractor.")
+            .replace(/-/g, "")           // drop dashes (e.g., "6-Wheel")
+            .replace(/\s+/g, " ")        // collapse whitespace
+            .toLowerCase()
+            .trim();
+
+        // The dispatch requires a specific truck type. A driver row is
+        // shown only when their truck type — if known — matches that
+        // requirement. Unknown / empty truck type is REJECTED (we used
+        // to let it pass through, which caused the server to later
+        // reject the assignment with "Driver is no longer in the queue"
+        // because the driver wasn't actually eligible). The only
+        // exception is when no truck type is required on the dispatch.
+        const required = (requiredTruckType || "").trim();
+        const truckMatch = (d) => {
+            if (!required) return true;
+            const dt = (d.truckType || "").trim();
+            if (!dt) return false;       // unknown truck type → reject
+            return norm(dt) === norm(required);
+        };
 
         // â"€â"€ 1. Queue drivers eligible for FIRST assignment (not yet assigned) â"€â"€â"€â"€â"€â"€â"€â"€â"€
         // isAssigned = false → driver not yet assigned any shipment → QUEUE tab.
@@ -3925,7 +4035,25 @@ class Dashboard {
             if (!dId) continue;
             const driver = this.state.drivers.find((drv) => drv.id === dId) || {};
             const queueEntry = this.state.queue.find((q) => q.id === dId);
-            const driverTruckType = queueEntry?.truckType || driver?.truckType || "";
+            // Truck type can live on the queue entry, the drivers doc,
+            // OR the most recent sap_assignments doc (which the server
+            // writes when a driver is assigned — see controller line
+            // `truckType,`). All three are valid sources; pick the first
+            // one that's actually populated so an already-assigned driver
+            // still resolves when their queue entry was wiped or their
+            // drivers doc never had a truckType.
+            const driverTruckType =
+                queueEntry?.truckType ||
+                driver?.truckType ||
+                asgn?.truckType ||
+                "";
+            if (window.__SYSU_DEBUG_TRUCKTYPE__) {
+                const source = queueEntry?.truckType ? "queue"
+                    : driver?.truckType ? "drivers"
+                    : asgn?.truckType ? "asgn"
+                    : "none";
+                console.log("[_getAvailableDrivers] driverId:", dId, "truckType:", JSON.stringify(driverTruckType), "source:", source, "required:", JSON.stringify(required));
+            }
 
             if (!driverAssignments[dId]) {
                 // First time —" initialise with queue check-in time (primary FIFO key)
@@ -3961,27 +4089,70 @@ class Dashboard {
             }
         }
 
+        // Active tripStatuses block a driver from taking another dispatch.
+        // "assigned" → driver has not started loading yet — STILL ELIGIBLE for multi-shipment
+        // "loading"  → driver is at the warehouse
+        // "loaded"   → ready to depart (this is the actual stored value in
+        //              Firestore; the spec called it "fully_loaded" but the
+        //              field has historically been set as "loaded" when
+        //              guard verification completes and PODs are uploaded)
+        // "in_transit" → en route
+        // Only "completed" frees the driver up again.
+        //
+        // IMPORTANT: "assigned" must NOT be in this set. Multi-shipment requires
+        // that a driver with an existing assignment in "assigned" state (not
+        // yet loading) can still receive a new dispatch. Once the assignment
+        // transitions to loading/loaded/in_transit/completed, the driver is
+        // BUSY and cannot take another dispatch.
+        const ACTIVE_TRIP_STATUSES = new Set([
+            "loading",
+            "loaded",
+            "in_transit",
+        ]);
+
         const assignedDrivers = Object.values(driverAssignments)
             .filter((d) => truckMatch(d))
+            .map((d) => {
+                // Collect every tripStatus this driver currently has across
+                // their assignments.
+                const driverAssignmentsList = Object.values(assignments).filter(
+                    (asgn) => asgn.driverId === d.id
+                );
+                const tripStatuses = driverAssignmentsList.map(
+                    (asgn) => (asgn.tripStatus || "<none>").toLowerCase()
+                );
+                const hasActiveLoad = driverAssignmentsList.some((asgn) =>
+                    ACTIVE_TRIP_STATUSES.has((asgn.tripStatus || "").toLowerCase())
+                );
+                if (window.__SYSU_DEBUG_MULTISHIP__) {
+                    console.log(
+                        "[multiShip] driver:", d.id, d.driverName,
+                        "tripStatuses:", JSON.stringify(tripStatuses),
+                        "hasActiveLoad:", hasActiveLoad,
+                    );
+                }
+                return {...d, _hasActiveLoad: hasActiveLoad};
+            });
+
+        // Drivers on an active load cannot take another dispatch — they
+        // still appear in the modal (under the Assigned tab) so the
+        // dispatcher can see WHY they're not selectable, but they are
+        // marked busy and the row is non-clickable.
+        const busyDrivers = assignedDrivers.filter((d) => d._hasActiveLoad);
+        const availableAssigned = assignedDrivers.filter((d) => !d._hasActiveLoad)
             .filter((d) => {
                 const queueEntry = this.state.queue.find((q) => q.id === d.id);
                 if (queueEntry) return queueEntry.status !== "complete";
-
-                // Driver not in queue - check if they have any active assignments
-                const driverAssignmentsList = Object.values(assignments).filter(
-                    asgn => asgn.driverId === d.id
-                );
-
-                // Driver is available if they have at least one assignment that's not completed
-                // Using case-insensitive comparison to handle potential case variations
-                return driverAssignmentsList.some(
-                    asgn => !(asgn.tripStatus?.toLowerCase() === "completed")
-                );
+                // Driver not in queue — if they have no active load (already
+                // filtered above), they ARE eligible.
+                return true;
             });
 
         // â"€â"€ 3. Merge —" queue first, then assigned-only drivers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+        // ── 3. Merge — queue first, then assigned drivers (available + busy) ──
         const queuedIds = new Set(queueDrivers.map((d) => d.id));
-        const extraAssigned = assignedDrivers.filter((d) => !queuedIds.has(d.id));
+        const extraAssigned = [...availableAssigned, ...busyDrivers]
+            .filter((d) => !queuedIds.has(d.id));
         const allDrivers = [...queueDrivers, ...extraAssigned];
 
         // â"€â"€ 4. FIFO sort —" earliest check-in first â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -4023,12 +4194,43 @@ class Dashboard {
         const confirmBtn = document.getElementById("assignConfirmBtn");
         if (!modal) return;
 
+        // ── Resume override state after page refresh ──────────────────────
+        console.log("[bypass] openAssignModal called with dispatchKey:", dispatchKey, "truckType:", truckType, "state.overrideRequestId:", this.state.overrideRequestId, "state.overrideTokenId:", this.state.overrideTokenId);
+        // If the dispatcher submitted an override, refreshed, then came back,
+        // the in-memory state is gone. We fall back to querying Firestore
+        // for any approved override request from this dispatcher for this
+        // dispatch, and if its token hasn't expired, restore it so the modal
+        // opens already unlocked.
+        this._resumeApprovedOverride(dispatchKey).catch((err) =>
+            console.error("[bypass] resumeApprovedOverride failed:", err),
+        );
+        // Also ensure the admin-queue snapshot is live so that an approval
+        // landing while the modal is open drives the unlock immediately,
+        // without waiting for the Documents tab to be visited.
+        this._ensureAdminQueueSubscriptions();
+
         dispatchNumEl.textContent = dispatchKey;
         truckTypeEl.textContent = truckType || "ANY";
         if (confirmBtn) {
             confirmBtn.disabled = true;
             confirmBtn.textContent = "✓ CONFIRM ASSIGNMENT";
             confirmBtn.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+
+             const bypassBtn = document.getElementById("requestOverrideBtn");
+        if (bypassBtn) {
+            bypassBtn.disabled = false;
+            bypassBtn.textContent = "⚠ Request Override (Admin Approval)";
+            bypassBtn.classList.remove("hidden");
+            bypassBtn.onclick = () => this._requestBypass();
+        const submitBtn = document.getElementById("requestOverrideSubmit");
+        if (submitBtn) submitBtn.onclick = () => this._submitBypass();
+        const cancelBtn = document.getElementById("requestOverrideCancel");
+        if (cancelBtn) cancelBtn.onclick = () => this._cancelBypassPanel();
+        const overridePanel = document.getElementById("requestOverridePanel");
+        if (overridePanel) overridePanel.classList.add("hidden");
+        const overrideSelect = document.getElementById("requestOverrideReason");
+        if (overrideSelect) overrideSelect.value = "";
         }
 
         // â"€â"€ Multiple shipment: include both queued and already-assigned drivers â"€â"€
@@ -4067,14 +4269,20 @@ class Dashboard {
             const queueRows    = queueDrivers.map((d, i) => ({...d, _groupPos: i + 1, _groupTotal: queueDrivers.length}));
             const assignedRows = assignedDrivers.map((d, i) => ({...d, _groupPos: i + 1, _groupTotal: assignedDrivers.length}));
 
+            const earliestId = availableDrivers[0]?.id;
+            // Helper: classes for the earliest (FIFO-next) row.
+            // The css keyframe + halo style are already defined in src/style/main.css
+            // (.driver-row.fifo-next).
+            const fifoNextExtras = "fifo-next";
             listEl.innerHTML = tabBar + queueRows.map((d) => `
-                <div class="driver-row p-4 border-b border-db-border cursor-pointer hover:bg-db-item-hover transition-colors flex items-center justify-between"
-                     data-id="${d.id}" data-group="queue">
+                <div class="driver-row p-4 border-b border-db-border ${d.id !== earliestId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-db-item-hover'} transition-colors flex items-center justify-between ${d.id === earliestId ? fifoNextExtras : ''}"
+                     data-id="${d.id}" data-group="queue" data-locked="${d.id !== earliestId ? '1' : '0'}" data-earliest="${d.id === earliestId ? '1' : '0'}">
                     <div class="flex items-center gap-4">
                         <span class="text-[10px] font-mono text-db-text3">#${String(d._groupPos).padStart(2, "0")} / ${d._groupTotal}</span>
                         <div class="flex flex-col">
                             <div class="flex items-center gap-2">
                                 <span class="text-sm font-bold text-db-text">${escapeHtml(d.driverName || d.user?.name || "Unknown Driver")}</span>
+                                ${d.id === earliestId ? '<span class="fifo-next-tag">Next</span>' : ''}
                                 ${d._isFull ? `<span class="bg-red-600 text-white border border-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide inline-flex items-center gap-1">
                                     <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                                     LOCKED
@@ -4087,16 +4295,29 @@ class Dashboard {
                         <div class="text-[10px] text-db-text3 font-mono text-right">
                             ${d.entryTime ? new Date(d.entryTime.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
                         </div>
+                        ${d.id !== earliestId ? `<button data-action="request-override" data-driver-id="${d.id}" class="row-override-btn text-[9px] font-bold uppercase tracking-wider text-sysu-gold border border-sysu-gold/40 bg-sysu-gold/10 hover:bg-sysu-gold/20 px-2 py-1 rounded transition-colors">Override</button>` : ""}
                     </div>
                 </div>
-            `).join("") + assignedRows.map((d) => `
-                <div class="driver-row p-4 border-b border-db-border cursor-pointer hover:bg-db-item-hover transition-colors flex items-center justify-between"
-                     data-id="${d.id}" data-group="assigned">
+            `).join("") + assignedRows.map((d) => {
+                // Drivers on an active load (loading/loaded/in_transit) cannot
+                // take another dispatch — they appear in the Assigned tab so
+                // the dispatcher can see why they're unavailable, but the row
+                // is locked and shows a BUSY badge.
+                const isBusy = d._hasActiveLoad === true;
+                const rowLocked = isBusy || d.id !== earliestId;
+                return `
+                <div class="driver-row p-4 border-b border-db-border ${rowLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-db-item-hover'} transition-colors flex items-center justify-between ${d.id === earliestId && !isBusy ? fifoNextExtras : ''}"
+                     data-id="${d.id}" data-group="assigned" data-locked="${rowLocked ? '1' : '0'}" data-earliest="${d.id === earliestId && !isBusy ? '1' : '0'}">
                     <div class="flex items-center gap-4">
                         <span class="text-[10px] font-mono text-db-text3">#${String(d._groupPos).padStart(2, "0")} / ${d._groupTotal}</span>
                         <div class="flex flex-col">
                             <div class="flex items-center gap-2">
                                 <span class="text-sm font-bold text-db-text">${escapeHtml(d.driverName || d.user?.name || "Unknown Driver")}</span>
+                                ${d.id === earliestId && !isBusy ? '<span class="fifo-next-tag">Next</span>' : ''}
+                                ${isBusy ? `<span class="bg-amber-500 text-black border border-amber-600 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide inline-flex items-center gap-1">
+                                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                    BUSY
+                                </span>` : ''}
                                 ${d._isFull ? `<span class="bg-red-600 text-white border border-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide inline-flex items-center gap-1">
                                     <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                                     LOCKED
@@ -4109,10 +4330,12 @@ class Dashboard {
                         <div class="text-[10px] text-db-text3 font-mono text-right">
                             ${d.entryTime ? new Date(d.entryTime.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
                         </div>
+                        ${!isBusy && d.id !== earliestId ? `<button data-action="request-override" data-driver-id="${d.id}" class="row-override-btn text-[9px] font-bold uppercase tracking-wider text-sysu-gold border border-sysu-gold/40 bg-sysu-gold/10 hover:bg-sysu-gold/20 px-2 py-1 rounded transition-colors">Override</button>` : ""}
                         <span class="text-[9px] text-db-accent opacity-60 font-mono">âœ" assigned</span>
                     </div>
                 </div>
-            `).join("");
+                `;
+            }).join("");
 
             // Attach tab click handlers
             listEl.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -4144,9 +4367,25 @@ class Dashboard {
                 row.style.display = (row.dataset.group === "queue") ? "" : "none";
             });
 
-            // Click on driver row
+            // Click on driver row. Non-earliest rows are ignored unless we
+            // have an approved override token. The server is the final gate.
+            //
+            // Exception: clicks on the per-row "Override" button bypass the
+            // FIFO gate, because the whole point of that button is to start
+            // an admin-approved override request for that specific driver.
             listEl.querySelectorAll(".driver-row").forEach((row) => {
-                row.addEventListener("click", () => this.selectDriver(row.dataset.id));
+                row.addEventListener("click", (evt) => {
+                    const target = evt.target.closest("[data-action]");
+                    if (target && target.dataset.action === "request-override") {
+                        console.log("[override] per-row button clicked, driverId:", row.dataset.id);
+                        evt.stopPropagation();
+                        this.selectDriver(row.dataset.id);
+                        this._requestBypass();
+                        return;
+                    }
+                    if (row.dataset.id !== earliestId && !this.state.overrideTokenId) return;
+                    this.selectDriver(row.dataset.id);
+                });
             });
         }
 
@@ -4159,15 +4398,36 @@ class Dashboard {
 
         // Check if selected driver is full → lock confirm button
         const drv = this.state._modalAvailableDrivers?.find(d => d.id === driverId);
-        const isLocked = drv?._isFull === true;
+        const isFull = drv?._isFull === true;
+
+        // FIFO enforcement: only the earliest driver may be confirmed
+        // without an approved override token. If the dispatcher picked a
+        // non-earliest driver and we don't yet have an approved token,
+        // disable the confirm button and surface the override CTA instead.
+        const availableDrivers = this.state._modalAvailableDrivers || [];
+        const earliestId = availableDrivers[0]?.id;
+        const hasOverrideToken = !!this.state.overrideTokenId;
+        const isEarliest = driverId === earliestId;
+        const canConfirm = !isFull && (isEarliest || hasOverrideToken);
 
         const confirmBtn = document.getElementById("assignConfirmBtn");
-        if (isLocked) {
+        const bypassBtn = document.getElementById("requestOverrideBtn");
+
+        if (isFull) {
             if (confirmBtn) {
                 confirmBtn.disabled = true;
                 confirmBtn.textContent = "🚫 Driver Full — Cannot Assign";
                 confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
             }
+            if (bypassBtn) bypassBtn.classList.add("hidden");
+        } else if (!canConfirm) {
+            // Non-earliest and no override token: lock confirm, show bypass.
+            if (confirmBtn) {
+                confirmBtn.disabled = true;
+                confirmBtn.textContent = "🔒 Not Earliest — Request Override";
+                confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
+            }
+            if (bypassBtn) bypassBtn.classList.remove("hidden");
         } else {
             if (confirmBtn) {
                 confirmBtn.disabled = false;
@@ -4185,37 +4445,214 @@ class Dashboard {
         });
     }
 
+    /**
+     * Dispatcher-initiated cancel now requires admin approval. Mirrors the
+     * override request flow: write a cancelRequests doc, lock the row,
+     * poll until the admin approves or denies, then re-render.
+     */
+    async _cancelAssignment(dispatchKey, reason, selectEl, bodyEl) {
+        // bodyEl is whichever container the row lives in (ordersBody for the
+        // Confirmed Assignments card view, sapBody for the SAP table row).
+        // Defaults to ordersBody for backward compatibility.
+        const containerEl = bodyEl || document.getElementById("ordersBody");
+        console.log("[cancelAssignment] called", {dispatchKey, reason, hasBodyEl: !!bodyEl, bodyId: bodyEl?.id});
+        // Confirm before sending the request — once an admin approves, the
+        // assignment is gone.
+        const ok = window.confirm(
+            `Request cancellation of dispatch ${dispatchKey}?\n\n` +
+                `An admin must approve before the assignment is rolled back.\n\n` +
+                `Reason: ${reason}`,
+        );
+        if (!ok) {
+            console.log("[cancelAssignment] user cancelled at confirm");
+            if (selectEl) selectEl.value = "";
+            return;
+        }
+        try {
+            if (selectEl) {
+                selectEl.disabled = true;
+                selectEl.classList.add("opacity-50", "cursor-not-allowed");
+            }
+            console.log("[cancelAssignment] calling requestCancel service...");
+            const result = await SAPAssignmentService.requestCancel({
+                dispatchKey,
+                reason,
+            });
+            const requestId = result && result.requestId;
+            console.log("[cancelAssignment] requestCancel response:", {requestId, result});
+            if (!requestId) {
+                throw new Error("requestCancel returned no requestId");
+            }
+            // Track per-row so re-renders don't lose the lock. The pending
+            // flag is stashed on whichever container the row lives in.
+            if (containerEl) {
+                containerEl.dataset["pendingCancel" + dispatchKey] = requestId;
+            }
+            this._showAssignBanner(
+                "Cancel request sent — awaiting admin approval.",
+                "info",
+            );
+            this._pollCancelRequest(dispatchKey, requestId);
+        } catch (err) {
+            console.error("[cancelAssignment] request error:", err.code, err.message, err);
+            if (selectEl) {
+                selectEl.disabled = false;
+                selectEl.classList.remove("opacity-50", "cursor-not-allowed");
+                selectEl.value = "";
+            }
+            window.alert("Failed to request cancel: " + (err.message || err.code || "unknown"));
+        }
+    }
+
+    _pollCancelRequest(dispatchKey, requestId) {
+        const fetchOnce = async () => {
+            try {
+                const fb = await import("firebase/firestore");
+                const snap = await fb.getDoc(fb.doc(db, "cancelRequests", requestId));
+                if (!snap.exists()) {
+                    // The doc is gone — treat as terminal, re-render and stop.
+                    this._clearPendingCancel(dispatchKey);
+                    this._refreshBothViews();
+                    return;
+                }
+                const data = snap.data();
+                if (data.status === "approved") {
+                    this._clearPendingCancel(dispatchKey);
+                    this._showAssignBanner(
+                        `Cancel for ${dispatchKey} approved — assignment rolled back.`,
+                        "success",
+                    );
+                    this._refreshBothViews();
+                    return;
+                }
+                if (data.status === "denied") {
+                    this._clearPendingCancel(dispatchKey);
+                    this._showAssignBanner(
+                        `Cancel for ${dispatchKey} denied by admin. Assignment stands.`,
+                        "error",
+                    );
+                    // Re-enable the select so the dispatcher can re-pick.
+                    this._resetCancelSelect(dispatchKey);
+                    return;
+                }
+                if (data.status === "revoked") {
+                    this._clearPendingCancel(dispatchKey);
+                    this._showAssignBanner("Cancel request cancelled.", "info");
+                    this._resetCancelSelect(dispatchKey);
+                    return;
+                }
+                // Still pending — poll again.
+                setTimeout(fetchOnce, 3000);
+            } catch (err) {
+                console.error("[cancelAssignment] poll error:", err);
+                setTimeout(fetchOnce, 5000);
+            }
+        };
+        fetchOnce();
+    }
+
+    _clearPendingCancel(dispatchKey) {
+        // Clear from both possible containers — the cancel row could live in
+        // either view.
+        const ids = ["ordersBody", "sapBody"];
+        for (const id of ids) {
+            const el = document.getElementById(id);
+            if (el) delete el.dataset["pendingCancel" + dispatchKey];
+        }
+    }
+
+    /**
+     * Re-render whichever view is currently visible. The cancel flow can
+     * originate from either the Confirmed Assignments card view or the
+     * SAP table row; the assignment subscription will refresh both, but
+     * the visible table needs an explicit re-render so the user sees the
+     * change immediately.
+     */
+    _refreshBothViews() {
+        try {
+            this.renderOrders();
+        } catch (err) {
+            console.warn("[refresh] renderOrders failed:", err);
+        }
+        try {
+            this._renderSapTable();
+        } catch (err) {
+            console.warn("[refresh] _renderSapTable failed:", err);
+        }
+    }
+
+    _resetCancelSelect(dispatchKey) {
+        // Re-enable the dropdown that initiated this cancel request,
+        // regardless of which view it lives in.
+        const ids = ["ordersBody", "sapBody"];
+        for (const id of ids) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            const sel = el.querySelector(
+                `[data-action="cancel-reason"][data-dispatch="${CSS.escape(dispatchKey)}"], ` +
+                `[data-action="row-action"][data-dispatch="${CSS.escape(dispatchKey)}"]`,
+            );
+            if (sel) {
+                sel.disabled = false;
+                sel.classList.remove("opacity-50", "cursor-not-allowed");
+                sel.value = "";
+            }
+        }
+    }
+
     async confirmAssignment() {
         const driverId = this.state.selectedQueueDriverId;
         const dispatchKey = this.state.assignTarget;
-        if (!driverId || !dispatchKey) return;
-
-        // �� 🔧 ENFORCE FIFO QUEUE ORDER - Prevent queue jumping
-        const confirmBtn = document.getElementById("assignConfirmBtn");
-        try {
-            const availableDrivers = this._getAvailableDrivers(this.state.requiredTruckType);
-            if (availableDrivers.length > 0) {
-                const firstInQueue = availableDrivers[0]; // FIFO-first driver
-                if (firstInQueue.id !== driverId) {
-                    const firstDriverName = firstInQueue.driverName || "Unknown Driver";
-                    if (confirmBtn) {
-                        confirmBtn.disabled = false;
-                        confirmBtn.textContent = "Confirm Assignment";
-                    }
-                    alert(`Assignment blocked: ${firstDriverName} is next in FIFO queue. Please select the earliest available driver first.`);
-                    return;
-                }
-            }
-        } catch (fifoError) {
-            console.error("FIFO validation error:", fifoError);
-            // Continue with assignment if FIFO validation fails (fail-open for safety)
+        console.log("[assignTrace] confirmAssignment START", {
+            driverId,
+            dispatchKey,
+            overrideTokenId: this.state.overrideTokenId,
+            overrideRequestId: this.state.overrideRequestId,
+            requiredTruckType: this.state.requiredTruckType,
+        });
+        if (!driverId || !dispatchKey) {
+            console.warn("[assignTrace] missing driverId or dispatchKey, aborting");
+            return;
         }
 
+        // FIFO enforcement lives on the server now (POST /api/sap/assign).
+        // The client-side alert has been intentionally removed so it cannot
+        // be disabled from DevTools. The server transaction is the gate.
+        const confirmBtn = document.getElementById("assignConfirmBtn");
         if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = "ASSIGNING..."; }
 
         try {
-            const driver = this.state.queue.find(q => q.id === driverId);
-            if (!driver) throw new Error("Driver not found in queue.");
+            // Look up the driver from the same merged list the modal renders.
+            // `state.queue` only has fresh queue entries — if the dispatcher
+            // picked an already-Assigned driver (who is on the FIFO-earliest
+            // line), the lookup would fail. _modalAvailableDrivers is the
+            // union of queue + assigned, scoped to the dispatch's truck type.
+            const mergedDrivers = this.state._modalAvailableDrivers
+                || this.state.queue;
+            let driver = mergedDrivers.find(q => q.id === driverId);
+
+            // Override fallback: if the driver isn't in the modal list
+            // (e.g., they were filtered out for truck type, or the queue
+            // subscription hasn't refreshed since the override was issued),
+            // look them up from the broader queue/drivers collections and
+            // build a minimal record so the assign call can succeed.
+            if (!driver) {
+                const queueHit = (this.state.queue || []).find(q => q.id === driverId);
+                const driverHit = (this.state.drivers || []).find(d => d.id === driverId);
+                if (queueHit || driverHit) {
+                    driver = {
+                        id: driverId,
+                        driverName: queueHit?.driverName || driverHit?.name || driverHit?.driverName || "Unknown Driver",
+                        plateNumber: queueHit?.plateNumber || driverHit?.plateNumber || "---",
+                        truckCompany: queueHit?.truckCompany || driverHit?.truckingCompany || driverHit?.company || "—",
+                    };
+                    console.warn("[assign] driver not in modal list, fell back to queue/drivers", {
+                        driverId,
+                        source: queueHit ? "queue" : "drivers",
+                    });
+                }
+            }
+            if (!driver) throw new Error("Driver not found in available list.");
 
             const driverName = driver.driverName || driver.user?.name || "Unknown Driver";
             const truckPlate = driver.plateNumber || driver.user?.plateNumber || "---";
@@ -4239,25 +4676,92 @@ class Dashboard {
                     };
                 });
 
-            await setDoc(doc(db, "sap_assignments", dispatchKey), {
-                driverId,
-                driverName,
-                truckPlate,
-                truckCompany: driver.truckCompany || driver.company || "—",
-                assignedAt: serverTimestamp(),
+            await SAPAssignmentService.assignDriver({
+                dispatchKey,
+                requestedDriverId: driverId,
+                truckType: this.state.requiredTruckType,
                 lineItems,
+                driverSnapshot: {
+                    driverName,
+                    truckPlate,
+                    truckCompany: driver.truckCompany || driver.company || "—",
+                },
+                overrideTokenId: this.state.overrideTokenId || null,
             });
+            console.log("[assignTrace] confirmAssignment SUCCESS", {driverId, dispatchKey});
 
-            await this._safeUpdateQueueAssignment(driverId, this.state.assignTarget);
+            // Reset override state - token was consumed server-side.
+            this.state.overrideRequestId = null;
+            this.state.overrideTokenId = null;
+            this.state.overrideRequestStatus = null;
+            this.state.resumedOverrideTargetId = null;
+            // Strip the override-approved highlight so a future modal
+            // reopen doesn't briefly show stale styling from the consumed
+            // token.
+            this._clearOverrideApprovedMark();
+            this._applyConfirmLockState();
+            if (this._overridePollTimer) {
+                clearTimeout(this._overridePollTimer);
+                this._overridePollTimer = null;
+            }
 
             alert(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
             this.closeAssignModal();
             this._renderAll();
         } catch (err) {
-            console.error("Assignment error:", err);
-            alert("Failed to assign driver: " + err.message);
+            // Map structured server errors to user-visible messages.
+            const map = {
+                NOT_EARLIEST: () => {
+                    const earliestId = err.meta && err.meta.earliestDriverId;
+                    const earliestRow = this.state._modalAvailableDrivers?.find(d => d.id === earliestId);
+                    const name = earliestRow?.driverName || "the next driver in line";
+                    this._showAssignBanner(`${name} is next in line. Pick them or request a bypass.`);
+                },
+                TOKEN_REQUIRED: () => {
+                    this._showAssignBanner("A bypass approval is required to assign this driver.");
+                },
+                TOKEN_EXPIRED: () => {
+                    this.state.overrideTokenId = null;
+                    this._showAssignBanner("Bypass expired — request a new one.");
+                },
+                TOKEN_CONSUMED: () => {
+                    this.state.overrideTokenId = null;
+                    this._showAssignBanner("This bypass was already used.");
+                },
+                TOKEN_DRIVER_MISMATCH: () => {
+                    this.state.overrideTokenId = null;
+                    this._showAssignBanner("This bypass doesn't apply to that driver.");
+                },
+                TOKEN_DISPATCH_MISMATCH: () => {
+                    this.state.overrideTokenId = null;
+                    this._showAssignBanner("This bypass doesn't apply to this dispatch.");
+                },
+                DRIVER_INACTIVE: () => {
+                    this._showAssignBanner("Driver is no longer in the queue. Refresh and try again.");
+                },
+                DRIVER_ON_ACTIVE_LOAD: () => {
+                    this._showAssignBanner("Driver is already on an active load. They cannot take another dispatch until it completes.");
+                },
+                DISPATCH_TAKEN: () => {
+                    this._showAssignBanner("Another dispatcher assigned this dispatch. The list will refresh.");
+                    setTimeout(() => { this.closeAssignModal(); this._renderAll(); }, 1500);
+                },
+                VALIDATION: () => {
+                    this._showAssignBanner(err.message || "Invalid request.");
+                },
+                HTTP_401: () => {
+                    this._showAssignBanner("Session expired. Please sign in again.");
+                },
+            };
+
+            const handler = map[err.code] || (() => this._showAssignBanner("Failed to assign: " + (err.message || err.code || "unknown")));
+            handler();
+            console.error("[confirmAssignment] server error:", err.code, err.message);
         } finally {
-            if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = "Confirm Assignment"; }
+            // Re-apply the override-aware lock state so an error doesn't
+            // accidentally re-enable Confirm while a bypass request is still
+            // pending admin approval.
+            this._applyConfirmLockState();
         }
     }
 
@@ -4268,36 +4772,30 @@ class Dashboard {
         this.state.assignTarget = null;
         this.state.selectedQueueDriverId = null;
         this.state.requiredTruckType = null;
-    }
-
-    async deleteUserRecord(uid) {
-        if (!confirm("Permanently delete this account?")) return;
-        try {
-            const token = await AuthService.getToken();
-            const response = await fetch(`${API_CONFIG.BASE_URL}/api/users/delete`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({uid}),
-            });
-
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.message || "Failed to delete user");
-            }
-
-            const toast = document.getElementById("toast");
-            if (toast) {
-                toast.textContent = "User deleted.";
-                toast.style.opacity = "1";
-                setTimeout(() => (toast.style.opacity = "0"), 3000);
-            }
-        } catch (e) {
-            console.error("Error deleting user", e);
-            alert("Error deleting user: " + e.message);
+        // Reset override state on close; the token (if any) is single-use
+        // and may have already been consumed server-side.
+        this.state.overrideRequestId = null;
+        this.state.overrideTokenId = null;
+        this.state.overrideRequestStatus = null;
+        this.state.resumedOverrideTargetId = null;
+        if (this._overridePollTimer) {
+            clearTimeout(this._overridePollTimer);
+            this._overridePollTimer = null;
         }
+        // Strip the override-approved highlight so a future modal open
+        // for a different dispatch doesn't show stale pulse on a row.
+        this._clearOverrideApprovedMark();
+        // Hide the reason dropdown panel; restore the trigger button.
+        const panel = document.getElementById("requestOverridePanel");
+        const btn = document.getElementById("requestOverrideBtn");
+        const select = document.getElementById("requestOverrideReason");
+        if (panel) panel.classList.add("hidden");
+        if (btn) {
+            btn.classList.remove("hidden");
+            btn.disabled = false;
+            btn.textContent = "⚠ Request Override (Admin Approval)";
+        }
+        if (select) select.value = "";
     }
 
     // â"€â"€ Shared queue-update helper â"€â"€
@@ -4317,6 +4815,666 @@ class Dashboard {
             updatedAt: serverTimestamp(),
         });
     }
+    /**
+     * Show a banner inside the modal with the error from /api/sap/assign and
+     * keep the modal open so the dispatcher can try again or request a bypass.
+     */
+    _showAssignBanner(message, kind = "error") {
+        const banner = document.getElementById("assignModalOverrideBanner");
+        if (!banner) return;
+        const cls = kind === "info"
+            ? "bg-blue-500/10 border-blue-500/30 text-blue-200"
+            : "bg-red-500/10 border-red-500/40 text-red-200";
+        banner.className = `mx-4 mt-2 px-3 py-2 text-xs rounded border ${cls}`;
+        banner.textContent = message;
+    }
+
+    /**
+     * Dispatcher wants to break FIFO. Records the requested driver, prompts
+     * for a reason, and creates a pending overrideRequests doc.
+     */
+    async _requestBypass() {
+        const dispatchKey = this.state.assignTarget;
+        const driverId = this.state.selectedQueueDriverId;
+        if (!dispatchKey || !driverId) {
+            this._showAssignBanner("Select a driver first, then request the bypass.");
+            return;
+        }
+
+        // Reveal the reason dropdown. Submission happens in _submitBypass().
+        const panel = document.getElementById("requestOverridePanel");
+        const btn = document.getElementById("requestOverrideBtn");
+        const select = document.getElementById("requestOverrideReason");
+        if (panel) panel.classList.remove("hidden");
+        if (btn) btn.classList.add("hidden");
+        if (select) {
+            select.value = "";
+            select.focus();
+        }
+    }
+
+    _applyConfirmLockState() {
+        const btn = document.getElementById("assignConfirmBtn");
+        if (!btn) return;
+        const isPending = this.state.overrideRequestStatus === "pending";
+        if (isPending) {
+            btn.disabled = true;
+            btn.textContent = "Awaiting admin approval…";
+        } else {
+            // Restore default state. _selectFleetDispatch / _confirmFleetAssignment
+            // will re-disable it as needed.
+            btn.disabled = false;
+            btn.textContent = "Confirm Assignment";
+        }
+        // Per-row override buttons mirror the same gate. While a request is
+        // pending we do not allow starting a SECOND one — revoke the first
+        // or wait for an admin decision first.
+        document.querySelectorAll(".row-override-btn").forEach((rowBtn) => {
+            if (isPending) {
+                rowBtn.setAttribute("data-locked", "1");
+                rowBtn.classList.add("opacity-40", "cursor-not-allowed", "pointer-events-none");
+            } else {
+                rowBtn.removeAttribute("data-locked");
+                rowBtn.classList.remove("opacity-40", "cursor-not-allowed", "pointer-events-none");
+            }
+        });
+    }
+
+    // ─── UNIFIED ADMIN QUEUE (_renderDocsView) ───────────────────────
+    //
+    // Reads overrideRequests + cancelRequests via onSnapshot, merges
+    // them into a single sorted list, and renders a unified pending /
+    // approved / rejected view gated by the existing docs sub-tab
+    // buttons (pending / approved / rejected). The "action" filter
+    // chips at the top of the panel narrow by override | cancel |
+    // change. Approve / Deny buttons are gated by the dispatcher's
+    // admin role — non-admins still see the queue (read-only) so the
+    // status of their own requests is visible.
+    _ensureAdminQueueSubscriptions() {
+        if (this._adminQueueSubs) return;
+        console.log("[adminQueue] subscribing to overrideRequests + cancelRequests");
+        if (!this.state._adminActionRequests) {
+            this.state._adminActionRequests = [];
+        }
+        if (!this.state._adminActionFilter) {
+            this.state._adminActionFilter = "all";
+        }
+        // Use the top-level imports — dashboard.js is an ES module and the
+        // bundler re-binds module instances per import. A dynamic require()
+        // here would resolve to a different onSnapshot reference and the
+        // snapshot would never deliver updates to this dashboard instance.
+        const ovrQ = query(collection(db, "overrideRequests"), orderBy("requestedAt", "desc"), limit(50));
+        const canQ = query(collection(db, "cancelRequests"), orderBy("requestedAt", "desc"), limit(50));
+        this._adminQueueSubs = {};
+        this._adminQueueSubs.override = onSnapshot(ovrQ, (snap) => {
+            console.log("[adminQueue] overrideRequests snapshot, size:", snap.size);
+            this._mergeAdminRequests("override", snap);
+            this._syncOverrideApprovalFromSnapshot(snap);
+        }, (err) => console.error("[adminQueue] overrideRequests:", err));
+        this._adminQueueSubs.cancel = onSnapshot(canQ, (snap) => {
+            console.log("[adminQueue] cancelRequests snapshot, size:", snap.size);
+            this._mergeAdminRequests("cancel", snap);
+        }, (err) => console.error("[adminQueue] cancelRequests:", err));
+    }
+
+    _mergeAdminRequests(kind, snap) {
+        const items = [];
+        snap.forEach((doc) => {
+            const data = doc.data();
+            items.push({
+                id: doc.id,
+                kind,
+                ...data,
+            });
+        });
+        const merged = (this.state._adminActionRequests || []).filter(
+            (r) => r.kind !== kind,
+        );
+        merged.push(...items);
+        merged.sort((a, b) => {
+            const ta = a.requestedAt?.toMillis?.() || (a.requestedAt?.seconds ? a.requestedAt.seconds * 1000 : 0);
+            const tb = b.requestedAt?.toMillis?.() || (b.requestedAt?.seconds ? b.requestedAt.seconds * 1000 : 0);
+            return tb - ta;
+        });
+        this.state._adminActionRequests = merged;
+        this._updatePendingBadge();
+        const tab = this.state._activeDocsTab || "pending";
+        if (tab !== "guards" && tab !== "truck-companies") {
+            this._renderDocsView();
+        }
+    }
+
+    /**
+     * Drive the assign modal unlock from the admin-queue snapshot, not
+     * just from the polling fallback.
+     *
+     * The admin queue subscription (`_ensureAdminQueueSubscriptions`)
+     * already listens to `overrideRequests` for the Documents tab. We
+     * piggy-back on its snapshots: if any doc matches the dispatcher's
+     * currently-open assign modal request and its status flipped to
+     * approved, adopt the token and unlock the rows. This works
+     * regardless of whether the modal was opened BEFORE or AFTER the
+     * admin's decision — the snapshot fires on the next write.
+     */
+    _syncOverrideApprovalFromSnapshot(snap) {
+        const me = (this.state.user && this.state.user.uid)
+            || (AuthService.getUserProfile() && AuthService.getUserProfile().id)
+            || (auth.currentUser && auth.currentUser.uid);
+        if (!me) {
+            console.log("[bypass] _syncOverrideApprovalFromSnapshot: no me, skipping");
+            return;
+        }
+        const openDispatchKey = this.state.assignTarget;
+        if (!openDispatchKey) {
+            console.log("[bypass] _syncOverrideApprovalFromSnapshot: no openDispatchKey, skipping");
+            return;
+        }
+        console.log("[bypass] _syncOverrideApprovalFromSnapshot: scanning", snap.size, "docs for dispatchKey:", openDispatchKey, "as user", me);
+
+        // Don't downgrade an already-unlocked state if the dispatcher is
+        // looking at a different request. We only adopt a token if EITHER
+        // (a) our live state points at this same request id, OR
+        // (b) we have no live override yet but there's an approved token
+        //     for this dispatch from this dispatcher.
+        const liveId = this.state.overrideRequestId;
+        const liveToken = this.state.overrideTokenId;
+        let matchedCount = 0;
+
+        snap.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (data.requestedBy !== me) return;
+            if (data.dispatchKey !== openDispatchKey) return;
+            if (data.status !== "approved") return;
+            const expiresAt = data.tokenExpiresAt
+                ? new Date(data.tokenExpiresAt)
+                : null;
+            if (!data.tokenId || !expiresAt || expiresAt.getTime() <= Date.now()) {
+                console.log("[bypass] _sync: skipping doc", docSnap.id, "token expired or missing");
+                return;
+            }
+            // Already have this token, nothing to do.
+            if (liveId === docSnap.id && liveToken === data.tokenId) {
+                console.log("[bypass] _sync: skipping doc", docSnap.id, "already adopted");
+                return;
+            }
+            matchedCount++;
+            this.state.overrideRequestId = docSnap.id;
+            this.state.overrideTokenId = data.tokenId;
+            this.state.overrideRequestStatus = "approved";
+            this.state.resumedOverrideTargetId = data.requestedDriverId;
+            if (this._overridePollTimer) {
+                clearTimeout(this._overridePollTimer);
+                this._overridePollTimer = null;
+            }
+            console.log("[bypass] approval synced from admin-queue snapshot", {
+                requestId: docSnap.id,
+                tokenId: data.tokenId,
+                requestedDriverId: data.requestedDriverId,
+            });
+            this._unlockDriverRows(data.requestedDriverId);
+            // Repeat briefly in case the rows re-render right after.
+            let attempt = 0;
+            const retry = () => {
+                if (attempt++ >= 10) return;
+                this._unlockDriverRows(data.requestedDriverId);
+                setTimeout(retry, 200);
+            };
+            setTimeout(retry, 50);
+            this._showAssignBanner(
+                "Bypass approved — you can now confirm the assignment.",
+                "info",
+            );
+        });
+        if (matchedCount === 0) {
+            console.log("[bypass] _sync: no matching approved requests for this dispatch+user");
+        }
+    }
+
+    _updatePendingBadge() {
+        const badge = document.getElementById("docsBadgePending");
+        if (!badge) return;
+        const count = (this.state._adminActionRequests || []).filter(
+            (r) => r.status === "pending",
+        ).length;
+        badge.textContent = count > 0 ? String(count) : "";
+    }
+
+    _renderDocsView() {
+        this._ensureAdminQueueSubscriptions();
+        const container = document.getElementById("docsListContainer");
+        if (!container) return;
+
+        const tab = this.state._activeDocsTab || "pending";
+        const filter = this.state._adminActionFilter || "all";
+        const me = (this.state.user && this.state.user.uid) || null;
+        const myRole = (this.state.user && this.state.user.role) || "";
+        const isAdmin = myRole === "admin" || myRole === "super_admin";
+
+        const rows = (this.state._adminActionRequests || []).filter((r) => {
+            if (tab === "pending" && r.status !== "pending") return false;
+            if (tab === "approved" && r.status !== "approved") return false;
+            if (tab === "rejected" && !(r.status === "denied" || r.status === "revoked")) return false;
+            if (tab === "expired") return false;
+            if (tab === "completed") return false;
+            if (filter !== "all" && r.kind !== filter) return false;
+            return true;
+        });
+
+        const filterChip = (key, label) => {
+            const active = filter === key;
+            return '<button data-action="admin-filter" data-filter="' + key + '" class="px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors ' + (active ? 'bg-sysu-red/15 border border-sysu-red/40 text-sysu-red' : 'bg-db-item border border-db-border text-db-text3 hover:text-db-text') + '">' + escapeHtml(label) + '</button>';
+        };
+
+        let html = "";
+        html += '<div class="flex items-center gap-2 mb-4">';
+        html += filterChip("all", "All");
+        html += filterChip("override", "Override");
+        html += filterChip("cancel", "Cancel");
+        html += filterChip("change", "Change");
+        html += "</div>";
+
+        if (rows.length === 0) {
+            html += '<div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">No ' + escapeHtml(tab) + ' admin requests.</div>';
+        } else {
+            for (const r of rows) {
+                const ts = r.requestedAt?.toDate?.() || (r.requestedAt?.seconds ? new Date(r.requestedAt.seconds * 1000) : null);
+                const tsLabel = ts ? ts.toLocaleString() : "—";
+                const kindLabel = r.kind === "override" ? "FIFO OVERRIDE" : (r.kind === "cancel" ? "CANCEL" : "CHANGE");
+                const kindClass = r.kind === "override"
+                    ? "bg-sysu-gold/15 border-sysu-gold/40 text-sysu-gold"
+                    : "bg-sysu-red/15 border-sysu-red/40 text-sysu-red";
+                const statusLabel = (r.status || "pending").toUpperCase();
+                const statusClass = r.status === "approved"
+                    ? "bg-green-500/15 border-green-500/40 text-green-400"
+                    : (r.status === "denied" || r.status === "revoked")
+                        ? "bg-db-text3/15 border-db-text3/30 text-db-text3"
+                        : "bg-yellow-500/15 border-yellow-500/40 text-yellow-400";
+                const isMine = r.requestedBy === me;
+                const canDecide = isAdmin && r.status === "pending";
+
+                html += '<div class="rounded-lg border border-db-border bg-db-item p-4 mb-2">';
+                html += '<div class="flex items-start justify-between gap-3">';
+                html += '<div class="min-w-0 flex-1">';
+                html += '<div class="flex items-center gap-2 mb-2 flex-wrap">';
+                html += '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ' + kindClass + '">' + escapeHtml(kindLabel) + '</span>';
+                html += '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ' + statusClass + '">' + escapeHtml(statusLabel) + '</span>';
+                if (isMine) {
+                    html += '<span class="text-[9px] font-bold uppercase tracking-wider text-sysu-red opacity-70">YOURS</span>';
+                }
+                html += "</div>";
+                html += '<div class="text-[12px] font-mono text-db-text mb-1">Dispatch ' + escapeHtml(r.dispatchKey || "—") + '</div>';
+                html += '<div class="text-[11px] text-db-text2 mb-1"><span class="text-db-text3 opacity-60">Reason:</span> ' + escapeHtml(r.reason || "—") + '</div>';
+                if (r.requestedDriverId) {
+                    html += '<div class="text-[10px] font-mono text-db-text3 opacity-70 mb-1">Driver: ' + escapeHtml(r.requestedDriverId) + '</div>';
+                }
+                html += '<div class="text-[10px] text-db-text3 opacity-60">Requested ' + escapeHtml(tsLabel) + '</div>';
+                html += "</div>";
+
+                if (canDecide) {
+                    html += '<div class="flex flex-col gap-1.5 shrink-0">';
+                    html += '<button data-action="admin-approve" data-kind="' + escapeHtml(r.kind) + '" data-id="' + escapeHtml(r.id) + '" class="px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-green-600 hover:bg-green-500 text-white transition-colors">Approve</button>';
+                    html += '<button data-action="admin-deny" data-kind="' + escapeHtml(r.kind) + '" data-id="' + escapeHtml(r.id) + '" class="px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-db-bg border border-db-border hover:border-sysu-red/50 text-db-text2 hover:text-sysu-red transition-colors">Deny</button>';
+                    html += "</div>";
+                } else if (r.status === "pending" && !isAdmin) {
+                    html += '<div class="text-[9px] font-bold uppercase tracking-wider text-db-text3 opacity-50 shrink-0">Admin only</div>';
+                }
+                html += "</div>";
+                html += "</div>";
+            }
+        }
+
+        container.innerHTML = html;
+
+        if (!container.dataset.adminWired) {
+            container.dataset.adminWired = "1";
+            container.addEventListener("click", (evt) => {
+                const t = evt.target.closest("[data-action]");
+                if (!t) return;
+                const action = t.dataset.action;
+                if (action === "admin-filter") {
+                    this.state._adminActionFilter = t.dataset.filter || "all";
+                    this._renderDocsView();
+                } else if (action === "admin-approve" || action === "admin-deny") {
+                    this._adminDecide(t.dataset.kind, t.dataset.id, action === "admin-approve" ? "approved" : "denied");
+                }
+            });
+        }
+    }
+
+    async _adminDecide(kind, requestId, decision) {
+        const reason = (decision === "denied"
+            ? (window.prompt("Deny reason (optional):") || undefined)
+            : undefined);
+        try {
+            if (kind === "override") {
+                await SAPAssignmentService.decideOverride({requestId, decision, reason});
+            } else if (kind === "cancel") {
+                await SAPAssignmentService.decideCancel({requestId, decision, reason});
+            } else {
+                console.warn("[adminDecide] unknown kind:", kind);
+                return;
+            }
+            this._showAssignBanner(
+                kind + " request " + (decision === "approved" ? "approved" : "denied") + ".",
+                decision === "approved" ? "success" : "info",
+            );
+        } catch (err) {
+            console.error("[adminDecide] error:", err);
+            window.alert("Failed to " + decision + ": " + (err.message || err.code || "unknown"));
+        }
+    }
+
+    async _submitBypass() {
+        const dispatchKey = this.state.assignTarget;
+        const driverId = this.state.selectedQueueDriverId;
+        const select = document.getElementById("requestOverrideReason");
+        const reason = (select && select.value || "").trim();
+        if (!reason) {
+            this._showAssignBanner("Pick a reason before submitting the bypass request.");
+            if (select) select.focus();
+            return;
+        }
+
+        const panel = document.getElementById("requestOverridePanel");
+        const bypassBtn = document.getElementById("requestOverrideBtn");
+        try {
+            if (panel) panel.classList.add("hidden");
+            console.log("[bypass] submitting request", {dispatchKey, driverId, reason});
+            const result = await SAPAssignmentService.requestOverride({
+                dispatchKey,
+                requestedDriverId: driverId,
+                reason,
+            });
+            const requestId = result && result.requestId;
+            console.log("[bypass] requestOverride response:", {requestId, result});
+            if (!requestId) {
+                throw new Error("requestOverride returned no requestId");
+            }
+            this.state.overrideRequestId = requestId;
+            this.state.overrideRequestStatus = "pending";
+            this._applyConfirmLockState();
+            this._pollOverrideRequest();
+            this._showAssignBanner("Awaiting admin approval…", "info");
+        } catch (err) {
+            console.error("[bypass] request failed:", err.code, err.message, err);
+            this._showAssignBanner("Failed to submit bypass request: " + (err.message || err.code || "unknown"));
+            if (panel) panel.classList.remove("hidden");
+            if (bypassBtn) bypassBtn.classList.add("hidden");
+        }
+    }
+
+    _cancelBypassPanel() {
+        const panel = document.getElementById("requestOverridePanel");
+        const btn = document.getElementById("requestOverrideBtn");
+        const select = document.getElementById("requestOverrideReason");
+        if (panel) panel.classList.add("hidden");
+        if (btn) btn.classList.remove("hidden");
+        if (select) select.value = "";
+    }
+
+    _pollOverrideRequest() {
+        if (this._overridePollTimer) {
+            clearTimeout(this._overridePollTimer);
+            this._overridePollTimer = null;
+        }
+        const requestId = this.state.overrideRequestId;
+        if (!requestId) return;
+
+        const fetchOnce = async () => {
+            try {
+                const fb = await import("firebase/firestore");
+                const snap = await fb.getDoc(fb.doc(db, "overrideRequests", requestId));
+                if (!snap.exists()) {
+                    this._overridePollTimer = setTimeout(fetchOnce, 3000);
+                    return;
+                }
+                const data = snap.data();
+                console.log("[bypass] poll status:", data.status, "tokenId:", data.tokenId);
+                this.state.overrideRequestStatus = data.status;
+                this._applyConfirmLockState();
+                if (data.status === "approved" && data.tokenId) {
+                    this.state.overrideTokenId = data.tokenId;
+                    this._showAssignBanner("Bypass approved — you can now confirm the assignment.", "info");
+                    // Visually unlock all driver rows in the open modal.
+                    // _unlockDriverRows handles the cosmetic opacity-50 +
+                    // cursor-not-allowed removal AND paints the
+                    // approved-target row with the blue override-approved
+                    // pulse so the dispatcher can see which row to click.
+                    this._unlockDriverRows(data.requestedDriverId);
+                } else if (data.status === "denied") {
+                    this._showAssignBanner("Bypass denied by admin. Pick the FIFO driver or try again.", "error");
+                    this.state.overrideRequestId = null;
+                    this.state.overrideTokenId = null;
+                } else if (data.status === "revoked") {
+                    this._showAssignBanner("Bypass request cancelled.", "info");
+                    this.state.overrideRequestId = null;
+                    this.state.overrideTokenId = null;
+                } else {
+                    this._overridePollTimer = setTimeout(fetchOnce, 3000);
+                }
+            } catch (err) {
+                console.error("[bypass] poll error:", err);
+                this._overridePollTimer = setTimeout(fetchOnce, 5000);
+            }
+        };
+        fetchOnce();
+    }
+
+    /**
+     * Fallback for override state after a page refresh.
+     *
+     * Polling depends on `state.overrideRequestId` surviving across polls,
+     * which it does during a normal session. But if the dispatcher refreshes
+     * the page after submitting the request, in-memory state is wiped. By
+     * the time they reopen the assign modal the admin may already have
+     * approved, but the modal would render with the FIFO lock still active
+     * and nothing to poll.
+     *
+     * This helper runs once on modal open. It looks up the most recent
+     * approved override request from the current dispatcher for this
+     * dispatch, and if its token is still unexpired, restores the in-memory
+     * state so the modal opens with the rows unlocked.
+     */
+    async _resumeApprovedOverride(dispatchKey) {
+        const me = (this.state.user && this.state.user.uid)
+            || (AuthService.getUserProfile() && AuthService.getUserProfile().id)
+            || (auth.currentUser && auth.currentUser.uid);
+        if (!me) {
+            console.log("[bypass] _resumeApprovedOverride: no me, skipping");
+            return;
+        }
+        console.log("[bypass] _resumeApprovedOverride: querying for dispatchKey:", dispatchKey, "as user", me);
+        // Always check — even if we already have a live request, the page
+        // may have been reloaded mid-flight, polling may have been cancelled
+        // when the modal closed, and the server-side request may already
+        // be approved. The function is idempotent: if our in-memory state
+        // already matches the resumed doc we bail below.
+
+        try {
+            // Single-field query — no composite index needed. Override
+            // request volume per dispatch is tiny (<10), so client-side
+            // filter is cheap.
+            const q = query(
+                collection(db, "overrideRequests"),
+                where("dispatchKey", "==", dispatchKey),
+            );
+            const snap = await getDocs(q);
+            console.log("[bypass] _resumeApprovedOverride: snap.size =", snap.size);
+            if (snap.empty) return;
+            const now = Date.now();
+            console.log("[bypass] _resumeApprovedOverride: scanning", snap.size, "docs");
+            // Pick the most recent approved, unexpired request from this
+            // dispatcher.
+            let best = null;
+            snap.forEach((docSnap) => {
+                const data = docSnap.data();
+                console.log("[bypass] _resume: doc", docSnap.id, "requestedBy:", data.requestedBy, "status:", data.status, "tokenId:", data.tokenId, "dispatchKey:", data.dispatchKey);
+                if (data.requestedBy !== me) return;
+                if (data.status !== "approved") return;
+                const expiresAt = data.tokenExpiresAt
+                    ? new Date(data.tokenExpiresAt)
+                    : null;
+                if (!data.tokenId || !expiresAt || expiresAt.getTime() <= now) {
+                    return;
+                }
+                const decidedAt =
+                    data.decidedAt && data.decidedAt.toMillis
+                        ? data.decidedAt.toMillis()
+                        : 0;
+                if (!best || decidedAt > best.decidedAtMs) {
+                    best = {docSnap, data, decidedAtMs: decidedAt};
+                }
+            });
+            if (!best) return;
+
+            // Idempotency: if our in-memory state already matches this
+            // exact approved token, skip the rest to avoid banner churn.
+            if (
+                this.state.overrideRequestId === best.docSnap.id &&
+                this.state.overrideTokenId === best.data.tokenId
+            ) {
+                return;
+            }
+
+            this.state.overrideRequestId = best.docSnap.id;
+            this.state.overrideTokenId = best.data.tokenId;
+            this.state.overrideRequestStatus = "approved";
+            // Keep the resume context so confirmAssignment can find the
+            // driver even if the row isn't currently in the modal's
+            // _modalAvailableDrivers list (e.g., the driver was filtered out
+            // because they were marked complete or no longer match the truck
+            // type after a previous assignment).
+            this.state.resumedOverrideTargetId = best.data.requestedDriverId;
+            // Stop any stale poll (it may have been looking up a different
+            // request id, or polling may have been cancelled by close).
+            if (this._overridePollTimer) {
+                clearTimeout(this._overridePollTimer);
+                this._overridePollTimer = null;
+            }
+            console.log("[bypass] resumed approved override", {
+                requestId: best.docSnap.id,
+                tokenId: best.data.tokenId,
+                requestedDriverId: best.data.requestedDriverId,
+            });
+
+            // Unlock the driver rows visually. openAssignModal renders
+            // the rows synchronously after this call site, but if the
+            // modal was already open (re-open) the rows are already in
+            // the DOM. Run the unlock now AND a few retries so we win
+            // any race against row re-renders.
+            this._unlockDriverRows(best.data.requestedDriverId);
+            const targetId = best.data.requestedDriverId;
+            let attempt = 0;
+            const retry = () => {
+                if (attempt++ >= 10) return;
+                this._unlockDriverRows(targetId);
+                setTimeout(retry, 200);
+            };
+            setTimeout(retry, 50);
+
+            this._showAssignBanner(
+                "Bypass approved (restored after refresh) — you can now confirm the assignment.",
+                "info",
+            );
+        } catch (err) {
+            // Most likely missing index; the live poll path will still work
+            // for requests that survive across the page session.
+            console.warn("[bypass] resumeApprovedOverride query failed:", err);
+        }
+    }
+
+    /**
+     * Visually unlock all driver rows in the assign modal and highlight the
+     * row the token applies to. Mirrors the unlock block inside
+     * `_pollOverrideRequest`'s approved branch.
+     */
+    _unlockDriverRows(requestedDriverId) {
+        console.log("[bypass] _unlockDriverRows called, requestedDriverId:", requestedDriverId);
+        const listEl = document.getElementById("assignModalDriverList");
+        console.log("[bypass] _unlockDriverRows listEl:", listEl);
+        if (listEl) {
+            const rowCount = listEl.querySelectorAll(".driver-row").length;
+            console.log("[bypass] _unlockDriverRows total rows:", rowCount);
+            // Strip the lock styling and any prior override-approved marker
+            // from every row so we always start clean before re-applying the
+            // marker to whichever row the token now applies to.
+            listEl.querySelectorAll(".driver-row").forEach((row) => {
+                row.dataset.locked = "0";
+                row.classList.remove(
+                    "opacity-50",
+                    "cursor-not-allowed",
+                    "pointer-events-none",
+                    "override-approved",
+                    "bg-sysu-red/10",
+                    "border-l-4",
+                    "border-l-sysu-red",
+                );
+                row.classList.add("cursor-pointer", "hover:bg-db-item-hover");
+                // Remove the approved tag if it was previously injected.
+                const oldTag = row.querySelector(".override-approved-tag");
+                if (oldTag) oldTag.remove();
+            });
+            if (requestedDriverId) {
+                const target = listEl.querySelector(
+                    `.driver-row[data-id="${requestedDriverId}"]`,
+                );
+                console.log("[bypass] _unlockDriverRows target row found:", !!target);
+                if (target) {
+                    console.log("[bypass] _unlockDriverRows applying override-approved to:", requestedDriverId);
+                    target.classList.add("override-approved");
+                    // Inject a small "Bypass approved" tag next to the
+                    // driver name so it's visually obvious which row the
+                    // token applies to, even on the Assigned tab where
+                    // the dispatcher might not expect it. We anchor it
+                    // on the same flex container that holds the driver
+                    // name so it sits inline like the "Next" tag.
+                    const tag = document.createElement("span");
+                    tag.className = "override-approved-tag";
+                    tag.textContent = "Bypass approved";
+                    // The name row structure is:
+                    //   <div class="flex flex-col">
+                    //     <div class="flex items-center gap-2">   ← insert here
+                    //       <span ...>Driver Name</span>
+                    //       <span ...>Next</span>  (if FIFO)
+                    //     </div>
+                    //     <span ...>Plate</span>
+                    //   </div>
+                    const nameRow = target.querySelector(
+                        ".flex.items-center.gap-2",
+                    );
+                    const anchor = nameRow || target;
+                    if (!anchor.querySelector(".override-approved-tag")) {
+                        anchor.appendChild(tag);
+                    }
+                }
+            }
+        }
+        // Always set selectedQueueDriverId so confirmAssignment has a target
+        // even when the row wasn't rendered (e.g., the driver was filtered
+        // out of _modalAvailableDrivers for the current truck type). The
+        // confirm path has its own driver lookup fallback for this case.
+        if (requestedDriverId) {
+            this.state.selectedQueueDriverId = requestedDriverId;
+        }
+        this._applyConfirmLockState();
+    }
+
+    /**
+     * Strip the override-approved highlight from every driver row.
+     * Called after the token is consumed (successful assign) or when
+     * the modal closes — prevents the blue pulse from lingering on a
+     * stale row when the dispatcher reopens the modal for a different
+     * dispatch.
+     */
+    _clearOverrideApprovedMark() {
+        const listEl = document.getElementById("assignModalDriverList");
+        if (!listEl) return;
+        listEl.querySelectorAll(".driver-row.override-approved").forEach((row) => {
+            row.classList.remove("override-approved");
+        });
+        listEl.querySelectorAll(".override-approved-tag").forEach((tag) => tag.remove());
+    }
+
 
     // â"€â"€ CONFIRMED ASSIGNMENTS / ORDERS VIEW â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
     renderOrders() {
@@ -4518,6 +5676,31 @@ class Dashboard {
                     html += '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>';
                     html += escapeHtml(o.planningDate);
                     html += '</div>';
+                    // Cancel row — dispatcher can roll back this assignment.
+                    // If a cancel request is already pending for this
+                    // dispatchKey, show a status strip instead of the
+                    // dropdown so the dispatcher can't double-submit.
+                    const isCancelPending = !!(
+                        document.getElementById("ordersBody") &&
+                        document.getElementById("ordersBody").dataset["pendingCancel" + o.dispatchKey]
+                    );
+                    html += '<div class="flex items-center gap-2 px-5 pb-3" style="border-top:1px solid rgba(255,255,255,0.04);padding-top:8px;margin-top:2px;">';
+                    if (isCancelPending) {
+                        html += '<div class="flex-1 h-7 flex items-center justify-center rounded-md text-[10px] font-bold uppercase tracking-wider" style="background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.4);color:#eab308;">';
+                        html += '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="mr-1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+                        html += 'Cancel pending admin approval</div>';
+                    } else {
+                        html += '<select data-action="cancel-reason" data-dispatch="' + escapeHtml(o.dispatchKey) + '" class="flex-1 h-7 bg-db-bg border border-db-border rounded-md px-2 text-[10px] text-db-text focus:outline-none focus:border-sysu-red/50 cursor-pointer">';
+                        html += '<option value="" disabled selected>Cancel &mdash; pick a reason</option>';
+                        html += '<option value="Wrong driver assigned">Wrong driver assigned</option>';
+                        html += '<option value="Driver unavailable (no-show / offline)">Driver unavailable (no-show / offline)</option>';
+                        html += '<option value="Customer changed requirements">Customer changed requirements</option>';
+                        html += '<option value="Dispatch re-routed to another dispatch">Dispatch re-routed to another dispatch</option>';
+                        html += '<option value="Duplicate assignment (created twice)">Duplicate assignment (created twice)</option>';
+                        html += '<option value="Other (see dispatcher notes)">Other (see dispatcher notes)</option>';
+                        html += '</select>';
+                    }
+                    html += '</div>';
                     html += '</div>';
                     html += '</div>';
                 });
@@ -4526,6 +5709,21 @@ class Dashboard {
         });
         html += '</div>';
         body.innerHTML = html;
+
+        // Wire cancel-reason selects to the rollback flow. We attach via the
+        // parent body (event delegation) so a re-render does not lose the
+        // listener, and so we don't have to bind per-card.
+        if (!body.dataset.cancelWired) {
+            body.dataset.cancelWired = "1";
+            body.addEventListener("change", (evt) => {
+                const sel = evt.target.closest('[data-action="cancel-reason"]');
+                if (!sel) return;
+                const dispatchKey = sel.dataset.dispatch;
+                const reason = sel.value;
+                if (!dispatchKey || !reason) return;
+                this._cancelAssignment(dispatchKey, reason, sel, body);
+            });
+        }
     }
 
     _renderOrdersTruckTypeChips(orders) {

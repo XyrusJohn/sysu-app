@@ -1690,6 +1690,26 @@
             <button id="requestOverrideBtn" class="hidden w-full bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold border border-sysu-gold/30 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all">
                 ⚠ Request Override (Admin Approval)
             </button>
+            <div id="requestOverridePanel" class="hidden mt-2 bg-db-bg/70 border border-sysu-gold/20 rounded-lg p-3">
+                <label class="block text-[10px] font-bold uppercase tracking-wider text-sysu-gold mb-1.5">Reason</label>
+                <select id="requestOverrideReason" class="w-full bg-db-bg border border-db-border rounded-md px-2 py-1.5 text-xs text-db-text focus:outline-none focus:border-sysu-gold/50">
+                    <option value="" disabled selected>Select a reason…</option>
+                    <option value="Customer requires specific truck">Customer requires specific truck</option>
+                    <option value="Special plate / container match">Special plate / container match</option>
+                    <option value="Driver has matching specialized equipment">Driver has matching specialized equipment</option>
+                    <option value="Time-critical delivery (override with explanation)">Time-critical delivery (override with explanation)</option>
+                    <option value="First driver unavailable (offline / no-show)">First driver unavailable (offline / no-show)</option>
+                    <option value="Other (admin will review)">Other (admin will review)</option>
+                </select>
+                <div class="flex gap-2 mt-2">
+                    <button id="requestOverrideSubmit" class="flex-1 bg-sysu-gold/20 hover:bg-sysu-gold/30 text-sysu-gold border border-sysu-gold/40 px-3 py-2 rounded-md text-xs font-bold uppercase tracking-wider transition-all">
+                        Submit Request
+                    </button>
+                    <button id="requestOverrideCancel" class="bg-db-item-hover hover:bg-db-border text-db-text3 px-3 py-2 rounded-md text-xs font-bold uppercase tracking-wider transition-all">
+                        Cancel
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 </div>

@@ -22,23 +22,32 @@ service cloud.firestore {
 
     // ─── Queue ───────────────────────────────────────────────────────────────
     // Read: public (Command Center / dashboard need live read).
-    // Write: authenticated users only.
+    // Write: limited to non-authoritative fields.
     //
-    // SECURITY NOTE: Current queue write rule allows any authenticated user to
-    // write any queue document. This is a conscious trade-off: the web dashboard's
-    // Fleet Manager assign flow writes directly to Firestore (used by dispatchers
-    // with admin credentials to update driver queue entries they don't own).
-    //
-    // For strict security: restrict to document owner only AND move Fleet Manager
-    // assignments through a backend API endpoint that uses Firebase Admin SDK
-    // (PATCH /api/dispatch/assign — see integration guide).
-    //
-    // Queue entries created by QR scan have an auto-generated doc ID (not the
-    // driver's UID). The authoritative ownership field is `driverId` in the
-    // document data (not the document ID).
+    // The authoritative FIFO ordering and dispatch assignment goes through
+    // the backend (POST /api/sap/assign). Direct client writes that would
+    // break that ordering — entryTime, status, isAssigned, assignedShipment,
+    // registrationComplete — are forbidden. Clients may still patch a driver's
+    // own non-authoritative fields (e.g. lastSeenAt) on their own document.
     match /queue/{queueId} {
       allow read:  if true;
-      allow write: if request.auth != null;
+
+      // Create: allowed for any authenticated user (QR scan creates the entry
+      // with an auto id, not the driver's UID). The backend re-validates and
+      // accepts or rejects.
+      allow create: if request.auth != null
+        && !('status' in request.resource.data
+             && request.resource.data.status == 'loading');
+
+      // Update: only the document owner may update, and only non-authoritative
+      // fields. The protected fields below are sealed.
+      allow update: if request.auth != null
+        && request.auth.uid == queueId
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['entryTime', 'status', 'isAssigned', 'assignedShipment',
+                       'registrationComplete', 'truckType']);
+
+      allow delete: if false;
     }
 
     // ─── Drivers (Live Fleet Tracking) ───────────────────────────────────────
@@ -51,24 +60,13 @@ service cloud.firestore {
 
     // ─── SAP Assignments ──────────────────────────────────────────────────────
     // Public read: anyone can see confirmed assignments (dispatch table).
-    // Write: authenticated users (admin UI is the write gate).
-    //        Strictly: writes should go through backend API (PATCH /api/dispatch/assign)
-    //        which uses Firebase Admin SDK and bypasses rules.
+    // Write: backend API only (POST /api/sap/assign) which uses Firebase Admin
+    //        SDK and bypasses rules. Direct client writes are denied so the
+    //        server can enforce FIFO ordering, single-use override tokens, and
+    //        race resolution on concurrent assignments.
     match /sap_assignments/{shipmentId} {
       allow read:  if true;
-      allow write: if request.auth != null;
-
-      // Validate new lineItems schema on create.
-      // - customerName required (string): delivery recipient / ship-to party
-      // - quantity required (number): float/double, e.g. 2.5, 3.25
-      // - obdNumber required (string): SAP OBD/Delivery number
-      // - amount is explicitly forbidden inside each line item
-      allow create: if request.auth != null
-        && request.resource.data.lineItems.size() > 0
-        && request.resource.data.lineItems[0].obdNumber is string
-        && request.resource.data.lineItems[0].quantity is number
-        && request.resource.data.lineItems[0].customerName is string
-        && !("amount" in request.resource.data.lineItems[0]);
+      allow write: if false;
     }
 
     // ─── Incidents ───────────────────────────────────────────────────────────
@@ -87,6 +85,44 @@ service cloud.firestore {
     match /qr_tokens/{tokenId} {
       allow read:  if true;
       allow write: if false; // Only backend API writes (via Admin SDK)
+    }
+
+    // ─── Override Requests (FIFO bypass flow) ───────────────────────────────
+    // Dispatchers may create a pending request tied to their own uid. Only the
+    // backend can move the request to approved/denied/revoked/consumed — that
+    // decision is what issues a single-use override token.
+    match /overrideRequests/{requestId} {
+      allow read: if request.auth != null;
+
+      // Create only as a pending request authored by the caller.
+      allow create: if request.auth != null
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasAll([
+             'dispatchKey', 'requestedDriverId', 'reason', 'requestedBy',
+             'requestedAt', 'status'
+           ])
+        && request.resource.data.decidedBy == null
+        && request.resource.data.decision == null;
+
+      // Status transitions go through the backend; clients can only revoke
+      // their own pending requests.
+      allow update: if request.auth != null
+        && resource.data.requestedBy == request.auth.uid
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'revoked'
+        && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'decidedAt']);
+
+      allow delete: if false;
+    }
+
+    // ─── Override Tokens ─────────────────────────────────────────────────────
+    // Single-use, short-lived tokens issued by the backend. Clients must not
+    // read or write them — the controller verifies and consumes them through
+    // Admin SDK.
+    match /overrideTokens/{tokenId} {
+      allow read, write: if false;
     }
 
     // ─── Security Guards ───────────────────────────────────────────────────────

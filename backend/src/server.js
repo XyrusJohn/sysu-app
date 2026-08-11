@@ -30,6 +30,7 @@ initializeFirebase();
 
 const authRoutes = require("./routes/authRoute.js");
 const sapRoutes = require("./routes/sapRoute.js");
+const sapAssignmentRoutes = require("./routes/sapAssignmentRoute.js");
 const userRoutes = require("./routes/userRoute.js");
 const qrRoutes = require("./routes/qrRoute.js");
 const driverRoutes = require("./routes/driverRoute.js");
@@ -96,6 +97,7 @@ app.use((req, res, next) => {
 app.use(express.json({limit: "10kb"}));
 app.use("/api/auth", authRoutes);
 app.use("/api/sap", sapRoutes);
+app.use("/api/sap", sapAssignmentRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/qr", qrRoutes);
 app.use("/api/drivers", driverRoutes);
