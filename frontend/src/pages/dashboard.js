@@ -248,7 +248,7 @@ class Dashboard {
             const docs = snap.docs.map((doc) => ({id: doc.id, ...doc.data()}));
             console.log("[FIRESTORE queue] docs received:", docs.length, docs.map(d => ({id: d.id, driverName: d.driverName, registrationComplete: d.registrationComplete, status: d.status})));
             this.state.queue = docs
-                .filter((q) => q.status !== "complete")
+                .filter((q) => q.status !== "completed")
                 .sort((a, b) => {
                     // Prefer entryTime, fall back to joinedAt, then to updatedAt
                     const getTs = (d) =>
@@ -1163,17 +1163,26 @@ class Dashboard {
                 status: isCurrentlyOffline ? "offline" : "online",
             };
 
+            // Validate coordinates - treat lat/lng = 0 same as null (no position sentinel)
+            const FALLBACK_LAT = 14.5995;
+            const FALLBACK_LNG = 120.9219;
+            const safeLat = !data.lat ? ((existing && existing.lat) || FALLBACK_LAT) : data.lat;
+            const safeLng = !data.lng ? ((existing && existing.lng) || FALLBACK_LNG) : data.lng;
+
             if (wasOffline) {
                 // Driver was RED and just started moving → turn GREEN immediately
-                // using the fresh position from update_admin_map.
+                // using the fresh position from update_admin_map (with validated coordinates).
                 updateMarker({
                     driverId: data.driverId,
-                    lat: data.lat,
-                    lng: data.lng,
+                    lat: safeLat,
+                    lng: safeLng,
                     status: "online",
                     name: data.name || existing?.name || "Unknown Driver",
                 });
             } else {
+                // Update marker with validated coordinates
+                this.state.liveTracking[data.driverId].lat = safeLat;
+                this.state.liveTracking[data.driverId].lng = safeLng;
                 updateMarker(this.state.liveTracking[data.driverId]);
             }
 
@@ -1252,6 +1261,12 @@ class Dashboard {
         driverSocket.on("update_admin_map", async (data) => {
             const {driverId, sapDocId, lat, lng, status, name} = data;
             const now = Date.now();
+
+            // Handle completed shipments - ignore location updates
+            if (status === "completed") {
+                console.log("[driverSocket/update_admin_map] ↘ ignoring location update for completed shipment:", driverId);
+                return;
+            }
             console.log(
                 "[driverSocket/update_admin_map] driverId:", driverId,
                 "lat:", lat, "lng:", lng,
@@ -1275,7 +1290,21 @@ class Dashboard {
             // â˜… Show the driver's truck on the overview #map immediately when location is received.
             // This is the counterpart to MapTrackingPanel's _upsertMarker() —" that panel handles the
             // #trackingMap; this handler ensures the Overview map also shows the driver marker.
-            updateMarker({ driverId, lat, lng, status: status === "offline" ? "offline" : "online", name: name || "Unknown Driver", sapDocId }, "map");
+            // Validate coordinates - treat lat/lng = 0 same as null (no position sentinel)
+// Fallback to Manila center if no prior position (brand new driver
+// with no SharedPreferences trip history —" first open, no driver_moving yet).
+// Treat lat/lng = 0 same as null: FusedLocationProviderClient never sends
+// real 0.0, 0.0 coords inside the Philippines (~4.5Â°N–21Â°N, 116Â°E–127Â°E).
+const FALLBACK_LAT = 14.5995;
+const FALLBACK_LNG = 120.9219;
+// !lat catches null, undefined, AND 0 (the intentional "no position" sentinel).
+const safeLat = !lat ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lat) || FALLBACK_LAT) : lat;
+const safeLng = !lng ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lng) || FALLBACK_LNG) : lng;
+
+// ������ ����… Show the driver's truck on the overview #map immediately when location is received.
+// This is the counterpart to MapTrackingPanel's _upsertMarker() —" that panel handles the
+// #trackingMap; this handler ensures the Overview map also shows the driver marker.
+updateMarker({ driverId, lat: safeLat, lng: safeLng, status: status === "offline" ? "offline" : "online", name: name || "Unknown Driver", sapDocId }, "map");
 
             // Fetch or use cached sap_assignments doc for shipment + plate
             if (sapDocId) {
@@ -1316,6 +1345,14 @@ class Dashboard {
         driverSocket.on("update_status", (data) => {
             const {driverId, status, name} = data;
             if (this.state.liveScans[driverId]) {
+                // Handle completed shipments - remove from tracking
+                if (status === "completed") {
+                    console.log("[driverSocket/update_status] ↘ removing completed shipment from tracking:", driverId);
+                    delete this.state.liveScans[driverId];
+                    this._scheduleLiveScansRender();
+                    return;
+                }
+
                 this.state.liveScans[driverId].status = status;
                 // Also grey-out the overview map marker so the truck disappears visually
                 updateMarker({ driverId, status, name: name || this.state.liveScans[driverId].name }, "map");
@@ -1867,12 +1904,12 @@ class Dashboard {
         if (!tree) return;
 
         const groups = {};
-        groups["Internal Fleet"] = [];
 
         this.state.drivers.forEach((p) => {
             const live =
                 this.state.liveTracking[p.id] || this.state.liveTracking[p.phone];
-            const company = p.truckingCompany || p.company || "Internal Fleet";
+            const company = p.truckingCompany || p.company;
+            if (!company) return;
             if (!groups[company]) groups[company] = [];
             groups[company].push({...p, ...(live || {})});
         });
@@ -1904,7 +1941,7 @@ class Dashboard {
                     .map(
                         (d) => `
                       <div class="flex items-center gap-2 py-1 cursor-pointer hover:text-sysu-red transition-colors" onclick="window.dashboard.focusOnTruck('${encodeURIComponent(d.id)}')">
-                          <div class="w-1.5 h-1.5 rounded-full ${d.status === "online" ? "bg-green-500 animate-pulse" : "bg-red-500"}"></div>
+                          <div class="w-1.5 h-1.5 rounded-full ${d.status === "online" ? "bg-green-500" : "bg-red-500"}"></div>
                           <span class="text-[11.5px] text-db-text3 truncate">${escapeHtml(d.name)}</span>
                       </div>
                   `,
@@ -1975,7 +2012,8 @@ class Dashboard {
             // (including "0000000000") means the shipment was not dispatched by us yet.
             // Only treat as "for assignment" when ForwardingAgent matches our company.
             const fwdAgent = (rec.ForwardingAgent || "").trim();
-            const isOurs = fwdAgent === "0000001102";
+//          const isOurs = fwdAgent === "0000001102";  // COMMENTED OUT PER REQUEST
+            const isOurs = true;  // TEMPORARILY SET TO TRUE TO BYPASS FORWARDINGAGENT CHECK
             const noForwardingAgent = !isOurs;
 
             return {
@@ -3131,7 +3169,7 @@ class Dashboard {
             // queue entries are marked with registrationComplete: true so they become visible
             // in Fleet Manager. Also update local state immediately for instant UI feedback.
             const queueSnapshot = await getDocs(
-                query(collection(db, "queue"), where("status", "!=", "complete"))
+                query(collection(db, "queue"), where("status", "!=", "completed"))
             );
             const updates = [];
             queueSnapshot.forEach((qDoc) => {
@@ -4122,8 +4160,45 @@ class Dashboard {
         // â"€â"€ 1. Queue drivers eligible for FIRST assignment (not yet assigned) â"€â"€â"€â"€â"€â"€â"€â"€â"€
         // isAssigned = false → driver not yet assigned any shipment → QUEUE tab.
         // isAssigned = true  → driver already has a shipment → goes to ASSIGNED tab.
+        // QUEUE-INVALIDATION rule (per customer demo, 2026-08-11):
+        //   A queue entry is invalid the moment the same driver has ANY
+        //   sap_assignment — regardless of tripStatus. The queue is for
+        //   drivers who have never been assigned. Once a driver has been
+        //   assigned, their queue entry is dead and they move to the
+        //   Assigned tab. The dispatcher can then give them more
+        //   shipments via the Assigned tab (multi-shipment flow).
+        //
+        //   This handles the visible demo bug: a driver with `isAssigned:
+        //   false` on their queue entry but who already has a (completed)
+        //   sap_assignment was showing up in BOTH tabs. The queue entry's
+        //   `isAssigned` flag is stale — the driver app never updated it
+        //   when the previous shipment finished. Trusting the assignment
+        //   doc as the source of truth eliminates the double-count.
+        //
+        // queue entries carry BOTH a doc id (`d.id`) and an Auth UID
+        // (`d.driverId`). The driverId is the canonical key the rest of the
+        // system uses to refer to a driver (see commit 8472e4d).
+        const assignments = this.state.sapAssignments;
+        const ACTIVE_TRIP_STATUSES = new Set(["loading", "loaded", "in_transit", "completed"]);
+        const activeDriverIds = new Set();
+        // Set of driverIds that have ANY sap_assignment (any status).
+        // Queue entries for these drivers are invalid.
+        const assignedDriverIds = new Set();
+        for (const asgn of Object.values(assignments)) {
+            if (!asgn || !asgn.driverId) continue;
+            assignedDriverIds.add(asgn.driverId);
+            const status = ((asgn.tripStatus || "").toLowerCase()).trim();
+            if (ACTIVE_TRIP_STATUSES.has(status)) {
+                activeDriverIds.add(asgn.driverId);
+            }
+        }
         const queueDrivers = this.state.queue.filter(
-            (d) => !d.isAssigned && d.status !== "complete" && truckMatch(d)
+            (d) => !d.isAssigned && d.status !== "completed" && truckMatch(d)
+        ).filter(
+            // Drop queue entries whose driver has any sap_assignment at all.
+            // The dispatcher must use the Assigned tab to give that driver
+            // another shipment.
+            (d) => !assignedDriverIds.has(d.driverId || d.id)
         );
 
         // â"€â"€ 2. Build assigned-driver records from sap_assignments —"â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -4133,7 +4208,7 @@ class Dashboard {
         //   —¢ For drivers no longer in queue (e.g. queue status = complete): uses the
         //     EARLIEST assignedAt across ALL their dispatches as proxy for check-in order.
         // Fullness: a driver with driverDeclaredFull: true in ANY assignment is flagged full.
-        const assignments = this.state.sapAssignments;
+        // (Reuses `assignments` declared above for the queue-invalidation set.)
         const driverAssignments = {}; // driverId → merged driver record
 
         for (const [dispatchKey, asgn] of Object.entries(assignments)) {
@@ -4208,14 +4283,11 @@ class Dashboard {
         // IMPORTANT: "assigned" must NOT be in this set. Multi-shipment requires
         // that a driver with an existing assignment in "assigned" state (not
         // yet loading) can still receive a new dispatch. Once the assignment
-        // transitions to loading/loaded/in_transit/completed, the driver is
-        // BUSY and cannot take another dispatch.
-        const ACTIVE_TRIP_STATUSES = new Set([
-            "loading",
-            "loaded",
-            "in_transit",
-        ]);
-
+        // transitions to loading/loaded/in_transit, the driver is BUSY and
+        // cannot take another dispatch.
+        //
+        // We reuse the precomputed `activeDriverIds` Set (built above for the
+        // queue-invalidation filter). O(1) lookup per assigned driver.
         const assignedDrivers = Object.values(driverAssignments)
             .filter((d) => truckMatch(d))
             .map((d) => {
@@ -4225,11 +4297,9 @@ class Dashboard {
                     (asgn) => asgn.driverId === d.id
                 );
                 const tripStatuses = driverAssignmentsList.map(
-                    (asgn) => (asgn.tripStatus || "<none>").toLowerCase()
+                    (asgn) => ((asgn.tripStatus || "<none>").toLowerCase()).trim()
                 );
-                const hasActiveLoad = driverAssignmentsList.some((asgn) =>
-                    ACTIVE_TRIP_STATUSES.has((asgn.tripStatus || "").toLowerCase())
-                );
+                const hasActiveLoad = activeDriverIds.has(d.id);
                 if (window.__SYSU_DEBUG_MULTISHIP__) {
                     console.log(
                         "[multiShip] driver:", d.id, d.driverName,
@@ -4248,17 +4318,22 @@ class Dashboard {
         const availableAssigned = assignedDrivers.filter((d) => !d._hasActiveLoad)
             .filter((d) => {
                 const queueEntry = this.state.queue.find((q) => q.id === d.id);
-                if (queueEntry) return queueEntry.status !== "complete";
+                if (queueEntry) return queueEntry.status !== "completed";
                 // Driver not in queue — if they have no active load (already
                 // filtered above), they ARE eligible.
                 return true;
             });
 
         // â"€â"€ 3. Merge —" queue first, then assigned-only drivers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // ── 3. Merge — queue first, then assigned drivers (available + busy) ──
+        // ── 3. Merge — queue first, then assigned drivers (busy drivers DROPPED) ──
+        // Per updated product rule: a driver with ANY active load
+        // (loading / loaded / in_transit) is removed from the modal
+        // entirely. Their queue role has been fulfilled — they cannot take
+        // another dispatch until the active load completes. The server
+        // (sapAssignmentController) enforces the same DRIVER_ON_ACTIVE_LOAD
+        // gate, so the modal must mirror that to keep UI and server in sync.
         const queuedIds = new Set(queueDrivers.map((d) => d.id));
-        const extraAssigned = [...availableAssigned, ...busyDrivers]
-            .filter((d) => !queuedIds.has(d.id));
+        const extraAssigned = availableAssigned.filter((d) => !queuedIds.has(d.id));
         const allDrivers = [...queueDrivers, ...extraAssigned];
 
         // â"€â"€ 4. FIFO sort —" earliest check-in first â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -4268,7 +4343,7 @@ class Dashboard {
             return ta - tb;
         });
 
-        // â"€â"€ 5. Derive display fields and return â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+        // â"€â"€ 5. Derive display fields and return â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         return allDrivers.map((d) => {
             let phone = d.phone || d.driverPhone || "";
             if (!phone) {
@@ -4282,7 +4357,12 @@ class Dashboard {
                 (x.name || "").toLowerCase().trim() === (d.driverName || "").toLowerCase().trim()
             );
             const isFull = drv?.isFull === true || d.isFull === true;
-            return { ...d, _lookupPhone: phone, _isFull: isFull };
+            return {
+                ...d,
+                _lookupPhone: phone,
+                _isFull: isFull,
+                _fromAssignment: assignedDriverIds.has(d.driverId || d.id)
+            };
         });
     }
 
@@ -4323,12 +4403,6 @@ class Dashboard {
             confirmBtn.classList.remove("opacity-50", "cursor-not-allowed");
         }
 
-             const bypassBtn = document.getElementById("requestOverrideBtn");
-        if (bypassBtn) {
-            bypassBtn.disabled = false;
-            bypassBtn.textContent = "⚠ Request Override (Admin Approval)";
-            bypassBtn.classList.remove("hidden");
-            bypassBtn.onclick = () => this._requestBypass();
         const submitBtn = document.getElementById("requestOverrideSubmit");
         if (submitBtn) submitBtn.onclick = () => this._submitBypass();
         const cancelBtn = document.getElementById("requestOverrideCancel");
@@ -4337,7 +4411,7 @@ class Dashboard {
         if (overridePanel) overridePanel.classList.add("hidden");
         const overrideSelect = document.getElementById("requestOverrideReason");
         if (overrideSelect) overrideSelect.value = "";
-        }
+
 
         // â"€â"€ Multiple shipment: include both queued and already-assigned drivers â"€â"€
         // Drivers with active assignments can still receive more shipments.
@@ -4350,6 +4424,8 @@ class Dashboard {
         const assignedDrivers = availableDrivers.filter((d) =>  d._fromAssignment);
         this.state._modalQueueCount   = queueDrivers.length;
         this.state._modalAssignedCount = assignedDrivers.length;
+        this.state._modalQueueEarliestId = queueDrivers[0]?.id || null;
+        this.state._modalAssignedEarliestId = assignedDrivers[0]?.id || null;
 
         if (availableDrivers.length === 0) {
             listEl.innerHTML = `<div class="p-10 text-center text-db-text3 italic text-sm">No available drivers found matching ${truckType || "the required"} truck type.</div>`;
@@ -4375,20 +4451,29 @@ class Dashboard {
             const queueRows    = queueDrivers.map((d, i) => ({...d, _groupPos: i + 1, _groupTotal: queueDrivers.length}));
             const assignedRows = assignedDrivers.map((d, i) => ({...d, _groupPos: i + 1, _groupTotal: assignedDrivers.length}));
 
-            const earliestId = availableDrivers[0]?.id;
+            // FIFO lock applies ONLY to the Queue tab. Each tab has its own
+            // "earliest" driver — queue-earliest for Queue rows (locked),
+            // and assigned-earliest for Assigned rows (visual cue only).
+            // Per updated product rule: Assigned rows are NOT FIFO-locked;
+            // the dispatcher may pick any assigned driver directly because
+            // they are already past the queue gate.
+            const queueEarliestId = queueDrivers[0]?.id;
+            const assignedEarliestId = assignedDrivers[0]?.id;
             // Helper: classes for the earliest (FIFO-next) row.
             // The css keyframe + halo style are already defined in src/style/main.css
             // (.driver-row.fifo-next).
             const fifoNextExtras = "fifo-next";
-            listEl.innerHTML = tabBar + queueRows.map((d) => `
-                <div class="driver-row p-4 border-b border-db-border ${d.id !== earliestId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-db-item-hover'} transition-colors flex items-center justify-between ${d.id === earliestId ? fifoNextExtras : ''}"
-                     data-id="${d.id}" data-group="queue" data-locked="${d.id !== earliestId ? '1' : '0'}" data-earliest="${d.id === earliestId ? '1' : '0'}">
+            listEl.innerHTML = tabBar + queueRows.map((d) => {
+                const isQueueEarliest = d.id === queueEarliestId;
+                return `
+                <div class="driver-row p-4 border-b border-db-border ${isQueueEarliest ? 'cursor-pointer hover:bg-db-item-hover' : 'opacity-50 cursor-not-allowed'} transition-colors flex items-center justify-between ${isQueueEarliest ? fifoNextExtras : ''}"
+                     data-id="${d.id}" data-group="queue" data-locked="${isQueueEarliest ? '0' : '1'}" data-earliest="${isQueueEarliest ? '1' : '0'}">
                     <div class="flex items-center gap-4">
                         <span class="text-[10px] font-mono text-db-text3">#${String(d._groupPos).padStart(2, "0")} / ${d._groupTotal}</span>
                         <div class="flex flex-col">
                             <div class="flex items-center gap-2">
                                 <span class="text-sm font-bold text-db-text">${escapeHtml(d.driverName || d.user?.name || "Unknown Driver")}</span>
-                                ${d.id === earliestId ? '<span class="fifo-next-tag">Next</span>' : ''}
+                                ${isQueueEarliest ? '<span class="fifo-next-tag">Next</span>' : ''}
                                 ${d._isFull ? `<span class="bg-red-600 text-white border border-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide inline-flex items-center gap-1">
                                     <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                                     LOCKED
@@ -4401,29 +4486,24 @@ class Dashboard {
                         <div class="text-[10px] text-db-text3 font-mono text-right">
                             ${d.entryTime ? new Date(d.entryTime.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
                         </div>
-                        ${d.id !== earliestId ? `<button data-action="request-override" data-driver-id="${d.id}" class="row-override-btn text-[9px] font-bold uppercase tracking-wider text-sysu-gold border border-sysu-gold/40 bg-sysu-gold/10 hover:bg-sysu-gold/20 px-2 py-1 rounded transition-colors">Override</button>` : ""}
+                        ${!isQueueEarliest ? `<button data-action="request-override" data-driver-id="${d.id}" class="row-override-btn text-[9px] font-bold uppercase tracking-wider text-sysu-gold border border-sysu-gold/40 bg-sysu-gold/10 hover:bg-sysu-gold/20 px-2 py-1 rounded transition-colors">Override</button>` : ""}
                     </div>
                 </div>
-            `).join("") + assignedRows.map((d) => {
+            `}).join("") + assignedRows.map((d) => {
                 // Drivers on an active load (loading/loaded/in_transit) cannot
                 // take another dispatch — they appear in the Assigned tab so
                 // the dispatcher can see why they're unavailable, but the row
                 // is locked and shows a BUSY badge.
-                const isBusy = d._hasActiveLoad === true;
-                const rowLocked = isBusy || d.id !== earliestId;
+                const isAssignedEarliest = d.id === assignedEarliestId;
                 return `
-                <div class="driver-row p-4 border-b border-db-border ${rowLocked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-db-item-hover'} transition-colors flex items-center justify-between ${d.id === earliestId && !isBusy ? fifoNextExtras : ''}"
-                     data-id="${d.id}" data-group="assigned" data-locked="${rowLocked ? '1' : '0'}" data-earliest="${d.id === earliestId && !isBusy ? '1' : '0'}">
+                <div class="driver-row p-4 border-b border-db-border cursor-pointer hover:bg-db-item-hover transition-colors flex items-center justify-between"
+                     data-id="${d.id}" data-group="assigned" data-locked="0" data-earliest="${isAssignedEarliest ? '1' : '0'}">
                     <div class="flex items-center gap-4">
                         <span class="text-[10px] font-mono text-db-text3">#${String(d._groupPos).padStart(2, "0")} / ${d._groupTotal}</span>
                         <div class="flex flex-col">
                             <div class="flex items-center gap-2">
                                 <span class="text-sm font-bold text-db-text">${escapeHtml(d.driverName || d.user?.name || "Unknown Driver")}</span>
-                                ${d.id === earliestId && !isBusy ? '<span class="fifo-next-tag">Next</span>' : ''}
-                                ${isBusy ? `<span class="bg-amber-500 text-black border border-amber-600 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide inline-flex items-center gap-1">
-                                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                    BUSY
-                                </span>` : ''}
+                                ${isAssignedEarliest ? '<span class="bg-db-accent/15 text-db-accent border border-db-accent/40 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">Earliest</span>' : ''}
                                 ${d._isFull ? `<span class="bg-red-600 text-white border border-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide inline-flex items-center gap-1">
                                     <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                                     LOCKED
@@ -4436,7 +4516,6 @@ class Dashboard {
                         <div class="text-[10px] text-db-text3 font-mono text-right">
                             ${d.entryTime ? new Date(d.entryTime.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
                         </div>
-                        ${!isBusy && d.id !== earliestId ? `<button data-action="request-override" data-driver-id="${d.id}" class="row-override-btn text-[9px] font-bold uppercase tracking-wider text-sysu-gold border border-sysu-gold/40 bg-sysu-gold/10 hover:bg-sysu-gold/20 px-2 py-1 rounded transition-colors">Override</button>` : ""}
                         <span class="text-[9px] text-db-accent opacity-60 font-mono">âœ" assigned</span>
                     </div>
                 </div>
@@ -4473,12 +4552,14 @@ class Dashboard {
                 row.style.display = (row.dataset.group === "queue") ? "" : "none";
             });
 
-            // Click on driver row. Non-earliest rows are ignored unless we
-            // have an approved override token. The server is the final gate.
-            //
-            // Exception: clicks on the per-row "Override" button bypass the
-            // FIFO gate, because the whole point of that button is to start
-            // an admin-approved override request for that specific driver.
+            // Click on driver row. Per updated product rule:
+            //   • Assigned rows are always selectable (no FIFO lock) — the
+            //     driver is already past the queue gate, the only gate is
+            //     the server's DRIVER_ON_ACTIVE_LOAD check.
+            //   • Queue rows: only the queue-earliest is clickable without
+            //     an approved override token. Per-row "Override" button
+            //     still starts the admin-approval flow.
+            // The server is the final gate for all of these.
             listEl.querySelectorAll(".driver-row").forEach((row) => {
                 row.addEventListener("click", (evt) => {
                     const target = evt.target.closest("[data-action]");
@@ -4489,7 +4570,13 @@ class Dashboard {
                         this._requestBypass();
                         return;
                     }
-                    if (row.dataset.id !== earliestId && !this.state.overrideTokenId) return;
+                    // Assigned rows bypass FIFO — always selectable.
+                    if (row.dataset.group === "assigned") {
+                        this.selectDriver(row.dataset.id);
+                        return;
+                    }
+                    // Queue rows: gated by queue-earliest + override token.
+                    if (row.dataset.id !== this.state._modalQueueEarliestId && !this.state.overrideTokenId) return;
                     this.selectDriver(row.dataset.id);
                 });
             });
@@ -4506,26 +4593,23 @@ class Dashboard {
         const drv = this.state._modalAvailableDrivers?.find(d => d.id === driverId);
         const isFull = drv?._isFull === true;
 
-        // FIFO enforcement: only the earliest driver may be confirmed
-        // without an approved override token. If the dispatcher picked a
-        // non-earliest driver and we don't yet have an approved token,
-        // disable the confirm button and surface the override CTA instead.
-        const availableDrivers = this.state._modalAvailableDrivers || [];
-        const earliestId = availableDrivers[0]?.id;
+        // FIFO enforcement: only the queue-earliest driver may be confirmed
+        // without an approved override token. Per updated product rule,
+        // Assigned-tab drivers are NOT FIFO-gated — they may be picked
+        // directly because they are already past the queue gate.
+        const queueEarliestId = this.state._modalQueueEarliestId;
+        const isAssignedDriver = !!drv?._fromAssignment;
         const hasOverrideToken = !!this.state.overrideTokenId;
-        const isEarliest = driverId === earliestId;
-        const canConfirm = !isFull && (isEarliest || hasOverrideToken);
+        const isQueueEarliest = !isAssignedDriver && driverId === queueEarliestId;
+        const canConfirm = !isFull && (isAssignedDriver || isQueueEarliest || hasOverrideToken);
 
         const confirmBtn = document.getElementById("assignConfirmBtn");
-        const bypassBtn = document.getElementById("requestOverrideBtn");
 
         if (isFull) {
             if (confirmBtn) {
                 confirmBtn.disabled = true;
-                confirmBtn.textContent = "🚫 Driver Full — Cannot Assign";
                 confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
             }
-            if (bypassBtn) bypassBtn.classList.add("hidden");
         } else if (!canConfirm) {
             // Non-earliest and no override token: lock confirm, show bypass.
             if (confirmBtn) {
@@ -4533,7 +4617,6 @@ class Dashboard {
                 confirmBtn.textContent = "🔒 Not Earliest — Request Override";
                 confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
             }
-            if (bypassBtn) bypassBtn.classList.remove("hidden");
         } else {
             if (confirmBtn) {
                 confirmBtn.disabled = false;
@@ -4893,14 +4976,8 @@ class Dashboard {
         this._clearOverrideApprovedMark();
         // Hide the reason dropdown panel; restore the trigger button.
         const panel = document.getElementById("requestOverridePanel");
-        const btn = document.getElementById("requestOverrideBtn");
         const select = document.getElementById("requestOverrideReason");
         if (panel) panel.classList.add("hidden");
-        if (btn) {
-            btn.classList.remove("hidden");
-            btn.disabled = false;
-            btn.textContent = "⚠ Request Override (Admin Approval)";
-        }
         if (select) select.value = "";
     }
 
@@ -4949,10 +5026,8 @@ class Dashboard {
 
         // Reveal the reason dropdown. Submission happens in _submitBypass().
         const panel = document.getElementById("requestOverridePanel");
-        const btn = document.getElementById("requestOverrideBtn");
         const select = document.getElementById("requestOverrideReason");
         if (panel) panel.classList.remove("hidden");
-        if (btn) btn.classList.add("hidden");
         if (select) {
             select.value = "";
             select.focus();
@@ -5281,9 +5356,9 @@ class Dashboard {
             return;
         }
 
-        const panel = document.getElementById("requestOverridePanel");
-        const bypassBtn = document.getElementById("requestOverrideBtn");
+        let panel = null;
         try {
+            panel = document.getElementById("requestOverridePanel");
             if (panel) panel.classList.add("hidden");
             console.log("[bypass] submitting request", {dispatchKey, driverId, reason});
             const result = await SAPAssignmentService.requestOverride({
@@ -5305,16 +5380,13 @@ class Dashboard {
             console.error("[bypass] request failed:", err.code, err.message, err);
             this._showAssignBanner("Failed to submit bypass request: " + (err.message || err.code || "unknown"));
             if (panel) panel.classList.remove("hidden");
-            if (bypassBtn) bypassBtn.classList.add("hidden");
         }
     }
 
     _cancelBypassPanel() {
         const panel = document.getElementById("requestOverridePanel");
-        const btn = document.getElementById("requestOverrideBtn");
         const select = document.getElementById("requestOverrideReason");
         if (panel) panel.classList.add("hidden");
-        if (btn) btn.classList.remove("hidden");
         if (select) select.value = "";
     }
 
