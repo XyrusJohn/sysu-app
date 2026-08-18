@@ -58,9 +58,16 @@ const authLimiter = rateLimit({
     legacyHeaders: false,
 });
 
+const adminLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 app.use(globalLimiter);
 app.use("/api/auth", authLimiter);
-app.use("/api/users", authLimiter);
+app.use("/api/users", adminLimiter);
 
 const allowedOrigins = [
     "https://sysu-web-5a25d.web.app",
@@ -123,6 +130,18 @@ qrNs.on("connection", () => {
 global._io = io;
 global._qrNs = qrNs;
 
+const {
+    getWarehouseBaseConfig,
+    saveWarehouseBaseConfig,
+} = require("./controllers/admin/warehouseBaseController.js");
+
+const {
+    getRoleRequests,
+    createRoleRequest,
+    approveRoleRequest,
+    rejectRoleRequest,
+} = require("./controllers/admin/roleRequestController.js");
+
 io.on("connection", async (socket) => {
     try {
         const token = socket.handshake.auth?.token;
@@ -132,6 +151,120 @@ io.on("connection", async (socket) => {
     } catch {
         return socket.disconnect("Invalid token");
     }
+
+    // ── Get current warehouse base setting ──
+    socket.on("get_warehouse_base", async (ack) => {
+        try {
+            const baseConfig = await getWarehouseBaseConfig();
+            if (typeof ack === "function") {
+                ack({success: true, data: baseConfig});
+            } else {
+                socket.emit("warehouse_base_data", baseConfig);
+            }
+        } catch (err) {
+            console.error("[get_warehouse_base] error:", err.message);
+            if (typeof ack === "function") ack({success: false, message: err.message});
+        }
+    });
+
+    // ── Save warehouse base location & radius (super_admin only) ──
+    socket.on("save_warehouse_base", async (data, ack) => {
+        try {
+            console.log("[save_warehouse_base] Received request from uid:", socket.data.uid, data);
+            const userDoc = await admin.firestore().collection("users").doc(socket.data.uid).get();
+            const userData = userDoc.data();
+
+            if (!userData || userData.role !== "super_admin") {
+                console.warn("[save_warehouse_base] Forbidden attempt by non-super_admin:", socket.data.uid, userData?.role);
+                const res = {success: false, message: "Forbidden: Only super_admin can configure warehouse base location."};
+                if (typeof ack === "function") ack(res);
+                return socket.emit("warehouse_base_error", res);
+            }
+
+            const saved = await saveWarehouseBaseConfig(data, socket.data.uid, userData.email || userData.name);
+            console.log("[save_warehouse_base] Successfully saved warehouse base:", saved);
+
+            // Broadcast to all connected clients
+            io.emit("warehouse_base_updated", saved);
+
+            if (typeof ack === "function") {
+                ack({success: true, data: saved});
+            }
+        } catch (err) {
+            console.error("[save_warehouse_base] error:", err.message);
+            const res = {success: false, message: err.message || "Failed to save warehouse base."};
+            if (typeof ack === "function") ack(res);
+            socket.emit("warehouse_base_error", res);
+        }
+    });
+
+    // ── Get role change requests via Socket.IO ──
+    socket.on("get_role_requests", async (params, ack) => {
+        try {
+            const status = (typeof params === "string" ? params : params?.status) || "all";
+            const requests = await getRoleRequests(status);
+            if (typeof ack === "function") ack({success: true, data: requests});
+            else socket.emit("role_requests_data", requests);
+        } catch (err) {
+            console.error("[get_role_requests] error:", err.message);
+            if (typeof ack === "function") ack({success: false, message: err.message});
+        }
+    });
+
+    // ── Submit a role change request via Socket.IO ──
+    socket.on("create_role_request", async (data, ack) => {
+        try {
+            const userDoc = await admin.firestore().collection("users").doc(socket.data.uid).get();
+            const userData = userDoc.data();
+            const created = await createRoleRequest({
+                requesterId: socket.data.uid,
+                requesterName: userData?.displayName || userData?.name || "User",
+                requesterEmail: userData?.email || "",
+                currentRole: userData?.role || "viewer",
+                requestedRole: data.requestedRole,
+            });
+            if (typeof ack === "function") ack({success: true, data: created});
+        } catch (err) {
+            console.error("[create_role_request] error:", err.message);
+            if (typeof ack === "function") ack({success: false, message: err.message});
+        }
+    });
+
+    // ── Approve role request via Socket.IO (admin/super_admin only) ──
+    socket.on("approve_role_request", async (data, ack) => {
+        try {
+            const userDoc = await admin.firestore().collection("users").doc(socket.data.uid).get();
+            const userData = userDoc.data();
+            if (!userData || (userData.role !== "super_admin" && userData.role !== "admin")) {
+                const res = {success: false, message: "Forbidden: Admin privileges required."};
+                if (typeof ack === "function") ack(res);
+                return;
+            }
+            const approved = await approveRoleRequest(data.requestId, socket.data.uid);
+            if (typeof ack === "function") ack({success: true, data: approved});
+        } catch (err) {
+            console.error("[approve_role_request] error:", err.message);
+            if (typeof ack === "function") ack({success: false, message: err.message});
+        }
+    });
+
+    // ── Reject role request via Socket.IO (admin/super_admin only) ──
+    socket.on("reject_role_request", async (data, ack) => {
+        try {
+            const userDoc = await admin.firestore().collection("users").doc(socket.data.uid).get();
+            const userData = userDoc.data();
+            if (!userData || (userData.role !== "super_admin" && userData.role !== "admin")) {
+                const res = {success: false, message: "Forbidden: Admin privileges required."};
+                if (typeof ack === "function") ack(res);
+                return;
+            }
+            const rejected = await rejectRoleRequest(data.requestId, socket.data.uid, data.reason);
+            if (typeof ack === "function") ack({success: true, data: rejected});
+        } catch (err) {
+            console.error("[reject_role_request] error:", err.message);
+            if (typeof ack === "function") ack({success: false, message: err.message});
+        }
+    });
 
     socket.on("driver_moving", (data) => {
         console.log("[driver_moving] ★ RECEIVED from socket:", JSON.stringify(data));

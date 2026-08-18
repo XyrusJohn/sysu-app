@@ -1,0 +1,1712 @@
+<!doctype html>
+<html lang="en" class="bg-db-bg">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>SYSU International Inc.</title>
+    <link rel="icon" type="image/png" href="/SYSU.png?v=newIcon123"/>
+    <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+            rel="stylesheet"
+    />
+    <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
+    />
+    <script>
+        const SOCKET_URL = "http://localhost:8080";
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <link rel="stylesheet" href="src/style/main.css"/>
+</head>
+<body
+        class="bg-db-bg text-db-text h-screen flex overflow-hidden font-sans min-w-full"
+>
+<!-- Gatekeeper Overlay -->
+<div
+        id="gatekeeper"
+        class="fixed inset-0 bg-db-bg z-[9999] flex flex-col items-center justify-center transition-opacity duration-500"
+>
+    <div class="relative w-20 h-20 mb-6">
+        <div
+                class="absolute inset-0 border-4 border-white/5 rounded-full"
+        ></div>
+        <div
+                class="absolute inset-0 border-4 border-t-sysu-red rounded-full animate-spin"
+        ></div>
+    </div>
+    <div class="flex flex-col items-center gap-3">
+        <h2 class="text-white text-lg font-black tracking-[0.2em] uppercase">
+            SYSU APPLICATION
+        </h2>
+        <div
+                class="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10"
+        >
+            <div
+                    class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"
+            ></div>
+            <p
+                    class="text-db-text3 text-[10px] font-black uppercase tracking-widest"
+                    id="loaderStatus"
+            >
+                Synchronizing with SAP ERP...
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════ ICON RAIL ══════════ -->
+<nav
+        class="w-rail-w shrink-0 h-screen bg-db-rail border-r border-db-border flex flex-col items-center py-3 z-[700] relative"
+>
+    <!-- SYSU Logo -->
+    <div
+            class="w-8 h-8 shrink-0 mb-4 flex items-center justify-center"
+            id="rAv"
+    >
+        <img src="./public/SYSU.png" alt="SYSU" class="w-full h-full object-contain" />
+    </div>
+
+    <!-- Theme Toggle -->
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="themeToggle"
+            aria-label="Toggle dark/light mode"
+    >
+        <!-- Sun icon (show in dark mode → switch to light) -->
+        <svg id="iconLight" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-[18px] h-[18px] stroke-[1.8]">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <!-- Moon icon (show in light mode → switch to dark) -->
+        <svg id="iconDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-[18px] h-[18px] stroke-[1.8] hidden">
+            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+        </svg>
+        <span class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]">Toggle Theme</span>
+    </button>
+
+    <!-- Rail Icons -->
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group on"
+            id="rOverview"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >Overview</span
+        >
+    </button>
+
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="rOrders"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <path
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"
+            />
+            <rect x="9" y="3" width="6" height="4" rx="1"/>
+            <path d="M9 12h6M9 16h4"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >Orders</span
+        >
+    </button>
+
+    <!-- Driver Location Tracking -->
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="rTracking"
+    >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-[18px] h-[18px] stroke-[1.8]">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+        </svg>
+        <span class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]">Live Tracking</span>
+    </button>
+
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="rDrivers"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >Drivers</span
+        >
+    </button>
+
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="rDocs"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >Documents</span
+        >
+    </button>
+
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="rSAP"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+            <line x1="6" y1="6" x2="6.01" y2="6"/>
+            <line x1="6" y1="18" x2="6.01" y2="18"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >SAP Shipments</span>
+    </button>
+
+    <a
+            href="/qr-generator"
+            target="_blank"
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group no-underline"
+            id="rQR"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >QR Generator</span
+        >
+    </a>
+
+    <div class="w-5 h-[1px] bg-db-border my-2 shrink-0"></div>
+
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="rUsers"
+            style="display: none"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 01-3.46 0"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >Admin Portal</span
+        >
+    </button>
+
+    <div class="w-5 h-[1px] bg-db-border my-2 shrink-0"></div>
+
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
+            id="rSettings"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <circle cx="12" cy="12" r="3"/>
+            <path
+                    d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+            />
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >Settings</span
+        >
+    </button>
+
+    <div class="flex-1"></div>
+
+    <button
+            class="relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-[#f04444] flex items-center justify-center cursor-pointer transition-colors mb-0.5 hover:bg-[#f0444415] group"
+            id="logoutBtn"
+    >
+        <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                class="w-[18px] h-[18px] stroke-[1.8]"
+        >
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+        <span
+                class="absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel border border-db-border text-db-text text-[11.5px] font-medium px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_4px_16px_rgba(0,0,0,0.6)]"
+        >Logout</span
+        >
+    </button>
+</nav>
+
+<!-- ══════════ FLY-OUT PANEL ══════════ -->
+<aside
+        class="w-0 h-screen overflow-hidden bg-db-panel border-r border-db-border shrink-0 flex flex-col transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] z-[400] relative pointer-events-none [&.open]:w-panel-w [&.open]:pointer-events-auto open"
+        id="sidePanel"
+>
+    <div
+            class="flex items-center gap-3 px-3 pt-4 pb-3 shrink-0 whitespace-nowrap overflow-hidden"
+    >
+        <div
+                class="w-9 h-9 rounded-full bg-gradient-to-br from-sysu-red to-sysu-red-dark ring-2 ring-white/10 ring-offset-2 ring-offset-db-panel shrink-0 overflow-hidden flex items-center justify-center shadow-[0_2px_12px_rgba(200,16,46,0.3)]"
+                id="pTopAv"
+        ></div>
+        <div
+                class="flex-1 min-w-0 overflow-hidden"
+        >
+            <div class="text-[13px] font-bold text-db-text min-w-0 overflow-hidden text-ellipsis leading-tight" id="pTopName">
+                Admin User
+            </div>
+            <div class="text-[10px] font-bold text-db-text3 tracking-wider uppercase mt-0.5" id="pTopRole">
+                USER
+            </div>
+        </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none">
+        <!-- Links -->
+        <div class="px-2 pt-1.5 pb-0.5">
+            <button
+                    class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-db-item-active text-db-text font-semibold text-[13px] cursor-pointer transition-all text-left whitespace-nowrap active"
+                    id="lOverview"
+            >
+                <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        class="w-4 h-4 shrink-0"
+                >
+                    <rect x="3" y="3" width="7" height="7" rx="1"/>
+                    <rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="3" y="14" width="7" height="7" rx="1"/>
+                    <rect x="14" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                <span>Overview</span>
+            </button>
+            <button
+                    class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text"
+                    id="lOrders"
+            >
+                <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        class="w-4 h-4 shrink-0 opacity-70"
+                >
+                    <path
+                            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"
+                    />
+                    <rect x="9" y="3" width="6" height="4" rx="1"/>
+                    <path d="M9 12h6M9 16h4"/>
+                </svg>
+                <span>Orders</span>
+            </button>
+            <button
+                    class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text"
+                    id="lTracking"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4 shrink-0 opacity-70">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                    <circle cx="12" cy="10" r="3"/>
+                </svg>
+                <span>Driver Tracking</span>
+            </button>
+            <button
+                    class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text"
+                    id="lFleet"
+            >
+                <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        class="w-4 h-4 shrink-0 opacity-70"
+                >
+                    <rect x="1" y="3" width="15" height="13"/>
+                    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                    <circle cx="5.5" cy="18.5" r="2.5"/>
+                    <circle cx="18.5" cy="18.5" r="2.5"/>
+                </svg>
+                <span>Fleet Manager</span>
+            </button>
+        </div>
+
+        <div class="h-[1px] bg-db-border mx-3 my-2"></div>
+
+        <!-- Tree View Module (Dynamically populated) -->
+        <div class="px-2 pb-0.5">
+            <div class="flex items-center justify-between px-1 pt-3 pb-1">
+            <span
+                    class="text-[10.5px] font-semibold text-db-text3 uppercase tracking-[0.05em]"
+            >Fleet Regions</span
+            >
+                <button
+                        class="w-5 h-5 rounded-md border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all hover:bg-db-item-hover hover:text-db-text2"
+                >
+                    <svg viewBox="0 0 24 24" class="w-3.5 h-3.5">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="fleetTree"></div>
+        </div>
+    </div>
+</aside>
+
+<!-- ══════════ MAIN AREA ══════════ -->
+<main class="flex-1 w-full min-w-0 flex flex-col overflow-hidden relative">
+    <!-- Top Bar -->
+    <header
+            class="h-12 bg-db-panel border-b border-db-border flex items-center px-4 gap-3 shrink-0 z-30"
+    >
+        <h2 class="text-sm font-bold text-db-text flex-1 tracking-tight" id="viewTitle">
+            Overview
+        </h2>
+
+        <div
+                class="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[11px] font-bold text-emerald-400"
+        >
+            <div
+                    class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"
+            ></div>
+            Live
+        </div>
+
+        <div
+                class="flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-lg cursor-pointer transition-all hover:bg-db-item-hover"
+                id="uPill"
+        >
+            <div
+                    class="w-7 h-7 rounded-full bg-gradient-to-br from-sysu-red to-sysu-red-dark ring-2 ring-white/10 ring-offset-1 ring-offset-db-panel shrink-0 overflow-hidden flex items-center justify-center shadow-[0_2px_8px_rgba(200,16,46,0.25)]"
+                    id="uAv"
+            >
+                A
+            </div>
+            <div class="flex flex-col leading-tight min-w-0">
+                <span class="text-[12px] font-bold text-db-text min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" id="uName">Admin User</span>
+                <span class="text-[9px] font-bold text-sysu-gold tracking-wider uppercase" id="uRole">USER</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Content Area -->
+    <div class="flex-1 w-full flex flex-col overflow-hidden" id="mainContent">
+        <!-- Map Container -->
+        <div
+                class="flex-1 relative overflow-hidden min-h-[350px] bg-db-bg"
+                id="mapSection"
+        >
+            <div id="map" class="w-full h-full z-0"></div>
+        </div>
+
+        <!-- Stats/Shipments Drawer -->
+        <section
+                id="resizePanel"
+                class="h-[240px] bg-db-panel border-t border-db-border flex flex-col overflow-hidden relative transition-[height] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] shrink-0"
+        >
+            <div
+                    class="flex items-center justify-between px-5 py-3 border-b border-db-border shrink-0 bg-db-bg/40"
+            >
+                <div class="flex items-center gap-3">
+              <span class="text-[15px] font-black text-white tracking-tight"
+              >Live Scans</span
+              >
+                    <div
+                            class="flex items-center gap-1.5 px-2 py-0.5 bg-green-500/10 border border-green-500/20 rounded-full text-[10px] font-black text-green-400"
+                    >
+                        <div
+                                class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"
+                        ></div>
+                        Live Monitoring
+                    </div>
+                    <div
+                            class="flex items-center gap-1 text-[10px] text-db-text3 font-bold uppercase tracking-wider"
+                    >
+                        <span class="text-green-500">●</span> Connected
+                    </div>
+                </div>
+                <div class="flex gap-1" id="shipmentTabs">
+                    <button
+                            class="px-3 py-1 text-[10px] font-black rounded bg-db-panel/80 text-white border border-db-border cursor-pointer transition-all active"
+                            data-tab="all"
+                    >
+                        All
+                    </button>
+                    <button
+                            class="px-3 py-1 text-[10px] font-bold rounded text-db-text3 hover:text-db-text cursor-pointer transition-all"
+                            data-tab="transit"
+                    >
+                        Scans
+                    </button>
+                    <button
+                            class="px-3 py-1 text-[10px] font-bold rounded text-db-text3 hover:text-db-text cursor-pointer transition-all"
+                            data-tab="delivered"
+                    >
+                        Incidents
+                    </button>
+                </div>
+            </div>
+
+            <div id="tableWrap"></div>
+        </section>
+    </div>
+
+    <!-- ══════════ ADMIN PORTAL (USER MANAGEMENT) ══════════ -->
+    <div
+            id="usersContent"
+            class="flex-1 w-full flex flex-col p-4 sm:p-8 overflow-y-auto hidden animate-[fadeIn_0.4s_ease_both] bg-db-bg"
+    >
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-db-text mb-1">User Management</h1>
+                <p class="text-[13px] text-db-text2">
+                    Manage enterprise access and security roles.
+                </p>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="relative">
+                    <input
+                            type="text"
+                            placeholder="Search employees..."
+                            class="bg-db-panel border border-db-border rounded-lg pl-9 pr-4 py-2 text-[13px] text-db-text w-64 focus:border-sysu-red outline-none transition-all"
+                    />
+                    <svg
+                            class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-db-text3"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                    >
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pending Role Requests -->
+        <div id="roleRequestsSection" class="mb-6 flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+                <h2 class="text-[14px] font-bold text-db-text tracking-tight">Pending Role Requests</h2>
+                <span
+                        id="pendingRoleReqBadge"
+                        class="hidden items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-sysu-gold/20 text-sysu-gold border border-sysu-gold/30"
+                >0</span>
+            </div>
+            <div
+                    id="roleRequestsContainer"
+                    class="flex flex-col gap-2"
+            >
+                <!-- Real-time: rendered by _renderRoleRequestsInAdminPortal -->
+            </div>
+        </div>
+
+        <div
+                class="bg-db-panel border border-db-border rounded-xl overflow-hidden flex-1 flex flex-col"
+        >
+            <div class="overflow-auto flex-1">
+                <table class="w-full text-left border-collapse">
+                    <thead
+                            class="sticky top-0 bg-db-panel z-10 border-b border-db-border"
+                    >
+                    <tr>
+                        <th
+                                class="px-6 py-4 text-[11px] font-bold text-db-text3 uppercase tracking-wider"
+                        >
+                            User / Employee
+                        </th>
+                        <th
+                                class="px-6 py-4 text-[11px] font-bold text-db-text3 uppercase tracking-wider"
+                        >
+                            Position
+                        </th>
+                        <th
+                                class="px-6 py-4 text-[11px] font-bold text-db-text3 uppercase tracking-wider"
+                        >
+                            Current Role
+                        </th>
+                        <th
+                                class="px-6 py-4 text-[11px] font-bold text-db-text3 uppercase tracking-wider"
+                        >
+                            Status
+                        </th>
+                        <th
+                                class="px-6 py-4 text-[11px] font-bold text-db-text3 uppercase tracking-wider text-right"
+                        >
+                            Actions
+                        </th>
+                    </tr>
+                    </thead>
+                    <tbody
+                            id="userTableBody"
+                            class="divide-y divide-db-border text-sm"
+                    >
+                    <tr>
+                        <td colspan="5" class="text-center py-8 text-db-text3">
+                            Loading users...
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ SAP SHIPMENTS ══════════ -->
+    <div
+            id="sapContent"
+            class="flex-1 w-full flex flex-col p-4 sm:p-5 overflow-hidden hidden animate-[fadeIn_0.4s_ease_both] bg-db-bg"
+    >
+        <div class="mb-6 flex items-center justify-between">
+            <h1 class="text-xl font-bold text-db-text tracking-tight">
+                SAP Shipments
+            </h1>
+            <div class="flex items-center gap-2">
+                <div
+                        class="flex items-center gap-1.5 px-2.5 py-1 bg-green-500/10 border border-green-500/20 rounded text-[10px] font-bold text-green-400"
+                >
+                    <div class="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                    0 today
+                </div>
+                <div
+                        class="flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] font-bold text-blue-400"
+                >
+                    <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            class="w-3 h-3"
+                    >
+                        <path d="M5 18h14M5 10l7-7 7 7M12 3v15"/>
+                    </svg>
+                    0 in transit
+                </div>
+            </div>
+        </div>
+
+        <!-- Compact Metric Cards (Pic 2 Style) -->
+        <div class="flex gap-3 mb-6">
+            <div
+                    class="flex-1 bg-db-panel/40 border border-db-border rounded-xl p-3 flex flex-col items-center justify-center min-w-[100px]"
+            >
+                <div class="text-xl font-bold text-db-text" id="sapStatAll">0</div>
+                <div class="text-[10px] font-bold text-db-text3 uppercase">
+                    Total
+                </div>
+            </div>
+            <div
+                    class="flex-1 bg-db-panel/40 border border-db-border rounded-xl p-3 flex flex-col items-center justify-center min-w-[100px]"
+            >
+                <div class="text-xl font-bold text-db-text" id="sapStatDel">
+                    0
+                </div>
+                <div class="text-[10px] font-bold text-db-text3 uppercase">
+                    Delivered
+                </div>
+            </div>
+            <div
+                    class="flex-1 bg-db-panel/40 border border-db-border rounded-xl p-3 flex flex-col items-center justify-center min-w-[100px]"
+            >
+                <div class="text-xl font-bold text-db-text" id="sapStatTransit">
+                    0
+                </div>
+                <div class="text-[10px] font-bold text-db-text3 uppercase">
+                    In Transit
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="flex items-center justify-between mb-4 text-[11px]">
+            <div class="flex items-center gap-4 text-db-text3">
+                <div class="flex items-center gap-1.5">
+                    <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            class="w-3.5 h-3.5"
+                    >
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    Last updated:
+                    <span class="text-db-text2 font-bold" id="sapLastUpdate"
+                    >Syncing...</span
+                    >
+                </div>
+                <button
+                        onclick="window.dashboard._syncSAP()"
+                        class="flex items-center gap-1 px-2 py-0.5 rounded border border-db-border hover:bg-db-item-hover text-db-text2 transition-colors cursor-pointer"
+                >
+                    <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            class="w-3 h-3"
+                    >
+                        <path
+                                d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"
+                        />
+                    </svg>
+                    Refresh
+                </button>
+                <div class="flex items-center gap-1.5 font-bold" id="sapConnBadge">
+                    <div class="w-1.5 h-1.5 rounded-full bg-green-500 pulse-dot"></div>
+                    <span class="text-[11px] text-green-500">Connected</span>
+                </div>
+            </div>
+            <div class="text-db-text3 font-medium italic" id="sapResultCount">
+                Showing 100 latest records
+            </div>
+        </div>
+
+        <!-- Full Width Search -->
+        <div class="mb-4 relative">
+            <svg
+                    class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-db-text3"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+            >
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+            </svg>
+            <input
+                    type="text"
+                    id="sapSearch"
+                    oninput="window.dashboard._renderSapTable()"
+                    placeholder="Search shipment #, customer, route..."
+                    class="w-full bg-db-panel/30 border border-db-border rounded-lg pl-10 pr-4 py-2 text-[13px] text-db-text focus:border-sysu-red focus:bg-db-panel/60 outline-none transition-all placeholder:text-db-text3"
+            />
+        </div>
+
+        <!-- Filter Tabs -->
+        <div class="flex gap-2 mb-4">
+            <button
+                    onclick="window.dashboard.filterSap('all')"
+                    id="sapTabAll"
+                    class="px-4 py-1.5 rounded-md bg-db-item-active text-white text-[11px] font-bold border border-db-border cursor-pointer transition-all active"
+            >
+                All
+            </button>
+            <button
+                    onclick="window.dashboard.filterSap('delivered')"
+                    id="sapTabDelivered"
+                    class="px-4 py-1.5 rounded-md bg-db-panel/40 text-db-text3 text-[11px] font-bold border border-db-border cursor-pointer hover:text-db-text2 transition-all flex items-center gap-1.5"
+            >
+                <div
+                        class="w-3 h-3 rounded bg-green-500/20 border border-green-500/40 flex items-center justify-center text-[8px] text-green-500"
+                >
+                    ✓
+                </div>
+                Delivered
+            </button>
+            <button
+                    onclick="window.dashboard.filterSap('in_transit')"
+                    id="sapTabTransit"
+                    class="px-4 py-1.5 rounded-md bg-db-panel/40 text-db-text3 text-[11px] font-bold border border-db-border cursor-pointer hover:text-db-text2 transition-all flex items-center gap-1.5"
+            >
+                <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        class="w-3 h-3 text-blue-400"
+                >
+                    <rect x="1" y="3" width="15" height="13"/>
+                    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                    <circle cx="5.5" cy="18.5" r="2.5"/>
+                    <circle cx="18.5" cy="18.5" r="2.5"/>
+                </svg>
+                In Transit
+            </button>
+            <button
+                    onclick="window.dashboard.filterSap('fully_loaded')"
+                    id="sapTabFullyLoaded"
+                    class="px-4 py-1.5 rounded-md bg-db-panel/40 text-db-text3 text-[11px] font-bold border border-db-border cursor-pointer hover:text-db-text2 transition-all flex items-center gap-1.5"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-3 h-3 text-amber-400">
+                    <rect x="1" y="3" width="15" height="13"/>
+                    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                    <circle cx="5.5" cy="18.5" r="2.5"/>
+                    <circle cx="18.5" cy="18.5" r="2.5"/>
+                    <polyline points="9 10 12 13 22 3"/>
+                </svg>
+                Fully Loaded
+            </button>
+            <button
+                onclick="window.dashboard.filterSap('loading')"
+                id="sapTabLoading"
+                class="px-4 py-1.5 rounded-md bg-db-panel/40 text-db-text3 text-[11px] font-bold border border-db-border cursor-pointer hover:text-db-text2 transition-all flex items-center gap-1.5"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-3 h-3 text-yellow-400">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Loading
+            </button>
+            <button
+                    onclick="window.dashboard.filterSap('forAssignment')"
+                    id="sapTabForAssignment"
+                    class="px-4 py-1.5 rounded-md bg-db-panel/40 text-db-text3 text-[11px] font-bold border border-db-border cursor-pointer hover:text-db-text2 transition-all flex items-center gap-1.5"
+            >
+                <div class="w-3 h-3 rounded-full bg-sysu-red animate-pulse"></div>
+                For Assignment
+            </button>
+            <button
+                    onclick="window.dashboard.filterSap('assigned')"
+                    id="sapTabAssigned"
+                    class="px-4 py-1.5 rounded-md bg-db-panel/40 text-db-text3 text-[11px] font-bold border border-db-border cursor-pointer hover:text-db-text2 transition-all flex items-center gap-1.5"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-3 h-3 text-green-400">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                Assigned
+            </button>
+        </div>
+
+        <div
+                class="bg-db-panel/40 border border-db-border rounded-xl overflow-hidden flex-1 flex flex-col shadow-2xl"
+        >
+            <div class="overflow-auto flex-1" id="sapTableWrap">
+                <table class="w-full text-left border-collapse">
+                    <thead
+                            class="sticky top-0 bg-db-panel z-10 border-b border-db-border shadow-[0_4px_10px_rgba(0,0,0,0.2)]"
+                    >
+                    <tr>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider text-center w-12"
+                        >
+                            #
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                                onclick="window.dashboard.sortSap('SAPDispatchNumber')"
+                        >
+                            Shipment #
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                                onclick="window.dashboard.sortSap('TruckType')"
+                        >
+                            Truck Type
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                                onclick="window.dashboard.sortSap('Route')"
+                        >
+                            Route
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                                onclick="window.dashboard.sortSap('PlanningDate')"
+                        >
+                            Planned Date
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                                onclick="window.dashboard.sortSap('PlanningDate')"
+                        >
+                            Planned Delivery Date
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                                onclick="window.dashboard.sortSap('PgiStatus')"
+                        >
+                            Status
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider"
+                        >
+                            Assignment
+                        </th>
+                        <th
+                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider text-right"
+                        >
+                            Actions
+                        </th>
+                    </tr>
+                    </thead>
+                    <tbody id="sapBody" class="divide-y divide-db-border text-sm">
+                    <tr>
+                        <td colspan="9" class="text-center py-12 text-db-text3">
+                            <div class="flex flex-col items-center gap-3">
+                                <div
+                                        class="w-8 h-8 border-2 border-db-border border-t-sysu-red rounded-full animate-spin"
+                                ></div>
+                                <span>Connecting to SAP OData Service...</span>
+                            </div>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <!-- Fleet Manager Content -->
+    <div
+            id="fleetContent"
+            class="flex-1 w-full flex flex-col hidden bg-[#0d0f12]"
+    >
+        <!-- Top Bar -->
+        <div class="px-7 py-0 h-[56px] flex items-center justify-between bg-[#13161b] border-b border-[rgba(255,255,255,0.07)] shrink-0">
+            <div class="flex items-center gap-5">
+                <span class="text-[13px] font-bold text-db-text uppercase tracking-widest">Fleet Manager</span>
+                <div class="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-full px-3 py-1 text-[10px] font-bold text-green-400 uppercase tracking-widest">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                    Live
+                </div>
+            </div>
+
+            <div class="flex items-center gap-5">
+                <div class="flex gap-3">
+                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                        <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">In queue</span>
+                        <span id="fleetStatTotal" class="text-[13px] font-bold text-blue-400 font-mono">0</span>
+                    </div>
+                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                        <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">Truck types</span>
+                        <span id="fleetStatTypes" class="text-[13px] font-bold text-db-text font-mono">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-3 py-2 w-52 transition-all focus-within:border-[rgba(255,255,255,0.12)]">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-db-text3 shrink-0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" id="fleetSearch" oninput="window.dashboard.renderFleet()" placeholder="Search driver, plate..." class="bg-transparent border-none outline-none text-[11px] text-db-text font-medium w-full placeholder:text-db-text3/50" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Body -->
+        <div id="fleetBody" class="flex-1 overflow-y-auto px-7 py-6 flex flex-col gap-8 scrollbar-thin scrollbar-thumb-[rgba(255,255,255,0.06)] scrollbar-track-transparent">
+            <!-- Fleet Manager rendered by window.dashboard.renderFleet() -->
+        </div>
+    </div>
+
+    <!-- ══════════ CONFIRMED ASSIGNMENTS / ORDERS ══════════ -->
+    <div
+            id="ordersContent"
+            class="flex-1 w-full flex flex-col hidden bg-[#0d0f12]"
+    >
+        <!-- Top Bar -->
+        <div class="px-7 py-0 h-[56px] flex items-center justify-between bg-[#13161b] border-b border-[rgba(255,255,255,0.07)] shrink-0">
+            <div class="flex items-center gap-5">
+                <span class="text-[13px] font-bold text-db-text uppercase tracking-widest">Confirmed Assignments</span>
+                <div class="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-full px-3 py-1 text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+                    <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                    Live
+                </div>
+            </div>
+
+            <div class="flex items-center gap-5">
+                <!-- Stats chips -->
+                <div class="flex gap-3">
+                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                        <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">Total</span>
+                        <span id="ordersStatTotal" class="text-[13px] font-bold text-db-text font-mono">0</span>
+                    </div>
+                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                        <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">Today</span>
+                        <span id="ordersStatToday" class="text-[13px] font-bold text-blue-400 font-mono">0</span>
+                    </div>
+                </div>
+
+                <!-- Truck type filter chips -->
+                <div id="ordersTruckTypeFilter" class="flex items-center gap-2 flex-wrap"></div>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-3 py-2 w-52 transition-all focus-within:border-[rgba(255,255,255,0.12)]">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-db-text3 shrink-0">
+                        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" id="ordersSearch" oninput="window.dashboard.renderOrders()" placeholder="Search driver, dispatch, route..." class="bg-transparent border-none outline-none text-[11px] text-db-text font-medium w-full placeholder:text-db-text3/50" />
+                </div>
+
+                <!-- Export to Excel button -->
+                <button
+                        onclick="window.dashboard.exportOrdersExcel()"
+                        class="flex items-center gap-2 bg-green-600 hover:bg-green-700 border border-green-500/30 rounded-xl px-4 py-2 text-[11px] font-bold text-white transition-all cursor-pointer"
+                >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Export Excel
+                </button>
+            </div>
+        </div>
+
+        <!-- Body -->
+        <div id="ordersBody" class="flex-1 overflow-y-auto px-7 py-6 flex flex-col gap-6 scrollbar-thin scrollbar-thumb-[rgba(255,255,255,0.06)] scrollbar-track-transparent">
+            <!-- Orders rendered by window.dashboard.renderOrders() -->
+        </div>
+    </div>
+
+    <!-- ══════════ DRIVER LIVE TRACKING ══════════ -->
+    <div
+            id="trackingContent"
+            class="flex-1 w-full flex overflow-hidden hidden bg-[#0d0f12]"
+    >
+        <!-- Map (flex-grow, fills remaining space) -->
+        <div class="flex-1 relative overflow-hidden" id="trackingMapWrap">
+            <div id="trackingMap" class="absolute inset-0 w-full h-full z-0"></div>
+            <!-- Overlay controls -->
+            <div class="absolute top-4 right-4 z-[500] flex flex-col gap-2">
+                <div class="flex items-center gap-2 bg-db-panel/90 border border-db-border rounded-xl px-3 py-2 shadow-xl backdrop-blur-sm">
+                    <div id="trackingConnDot" class="w-2 h-2 rounded-full bg-db-text3"></div>
+                    <span id="trackingConnLabel" class="text-[11px] font-bold text-db-text3">● Not connected</span>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="window.dashboard.fitTrackingBounds()"
+                            class="flex items-center gap-2 bg-db-panel/90 border border-db-border rounded-xl px-3 py-2 text-[11px] font-bold text-db-text shadow-xl backdrop-blur-sm hover:bg-db-item-hover transition-colors cursor-pointer">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                        Fit All
+                    </button>
+                    <button onclick="window.dashboard.clearOfflineMarkers()"
+                            class="flex items-center gap-2 bg-db-panel/90 border border-db-border rounded-xl px-3 py-2 text-[11px] font-bold text-db-text shadow-xl backdrop-blur-sm hover:bg-db-item-hover transition-colors cursor-pointer">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                        Clear Offline
+                    </button>
+                </div>
+            </div>
+            <!-- Driver count badge -->
+            <div class="absolute bottom-4 left-4 z-[500]">
+                <div class="flex items-center gap-2 bg-db-panel/90 border border-db-border rounded-xl px-3 py-2 shadow-xl backdrop-blur-sm">
+                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <span class="text-[11px] font-bold text-db-text"><span id="trackingDriverCount">0</span> drivers online</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Driver List Sidebar (fixed 280px wide) -->
+        <div class="w-[280px] shrink-0 flex flex-col bg-db-panel border-l border-db-border overflow-hidden">
+            <!-- Sidebar header -->
+            <div class="h-[56px] flex items-center justify-between px-4 border-b border-db-border shrink-0 bg-[#13161b]">
+                <div class="flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-db-text3">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    <span class="text-[12px] font-bold text-db-text uppercase tracking-widest">Drivers</span>
+                </div>
+                <span id="trackingDriverCount" class="text-[10px] font-bold text-db-text3 bg-db-item-hover px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <!-- Driver list (scrollable) -->
+            <div id="trackingDriverList" class="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[rgba(255,255,255,0.06)] scrollbar-track-transparent">
+                <!-- Populated dynamically by MapTrackingPanel.js -->
+            </div>
+        </div>
+    </div>
+
+</main>
+
+<!-- Security Enforcement Overlay -->
+<div
+        id="securityOverlay"
+        class="fixed inset-0 bg-[#c8102e]/90 backdrop-blur-xl z-[10000] flex flex-col items-center justify-center opacity-0 pointer-events-none transition-all duration-500"
+>
+    <div class="flex flex-col items-center text-center">
+        <div
+                class="w-16 h-16 border-4 border-white/20 border-t-white rounded-full animate-spin mb-6"
+        ></div>
+        <h2
+                class="text-2xl font-bold text-db-text uppercase tracking-widest mb-2 font-display"
+        >
+            Security Enforcement
+        </h2>
+        <p class="text-white/70 text-sm max-w-xs font-medium">
+            Synchronizing enterprise-grade permissions and re-validating security
+            tokens...
+        </p>
+    </div>
+</div>
+
+<div
+        id="toast"
+        class="fixed bottom-4.5 left-1/2 -translate-x-1/2 translate-y-[60px] bg-db-panel border border-db-border rounded-lg px-4 py-2 text-[12.5px] text-db-text z-[9999] opacity-0 transition-all shadow-[0_8px_24px_rgba(0,0,0,0.6)] whitespace-nowrap"
+></div>
+
+<!-- Driver Modal -->
+<div
+        id="drvMov"
+        class="fixed inset-0 bg-db-bg/80 backdrop-blur-md z-[8000] hidden items-center justify-center p-4"
+>
+    <div
+            class="bg-db-panel border border-db-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+    >
+        <div
+                class="p-6 border-b border-db-border flex items-center justify-between bg-db-bg/50"
+        >
+            <div>
+                <h2
+                        id="drvModalTtl"
+                        class="text-xl font-display font-black text-db-text tracking-tight uppercase"
+                >
+                    Add Driver
+                </h2>
+                <p class="text-db-text3 text-[10px] font-bold tracking-widest mt-1">
+                    FLEET MANAGEMENT SYSTEM
+                </p>
+            </div>
+            <button
+                    onclick="window.dashboard.closeDrvModal()"
+                    class="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-db-item-hover text-db-text3 transition-all"
+            >
+                <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        class="w-6 h-6"
+                >
+                    <path d="M18 6L6 18M6 6l12 12" stroke-width="2.5"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="p-8 overflow-y-auto space-y-6">
+            <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-1.5">
+                    <label
+                            class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                    >First Name</label
+                    >
+                    <input
+                            type="text"
+                            id="drvFName"
+                            class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                            placeholder="e.g. Juan"
+                    />
+                </div>
+                <div class="space-y-1.5">
+                    <label
+                            class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                    >Last Name</label
+                    >
+                    <input
+                            type="text"
+                            id="drvLName"
+                            class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                            placeholder="e.g. Dela Cruz"
+                    />
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-1.5">
+                    <label
+                            class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                    >Phone Number</label
+                    >
+                    <input
+                            type="text"
+                            id="drvPhone"
+                            class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                            placeholder="0917XXXXXXX"
+                    />
+                </div>
+                <div class="space-y-1.5">
+                    <label
+                            class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                    >License Number</label
+                    >
+                    <input
+                            type="text"
+                            id="drvLicense"
+                            class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                            placeholder="N01-XX-XXXXXX"
+                    />
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-1.5">
+                    <label
+                            class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                    >Truck Type</label
+                    >
+                    <input
+                            type="text"
+                            id="drvTruckType"
+                            class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                            placeholder="e.g. 6-Wheeler"
+                    />
+                </div>
+                <div class="space-y-1.5">
+                    <label
+                            class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                    >Plate Number</label
+                    >
+                    <input
+                            type="text"
+                            id="drvPlate"
+                            class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                            placeholder="ABC 1234"
+                    />
+                </div>
+            </div>
+
+            <div class="space-y-1.5">
+                <label
+                        class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                >Trucking Company</label
+                >
+                <input
+                        type="text"
+                        id="drvCompany"
+                        class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                        placeholder="e.g. SYSU Internal"
+                />
+            </div>
+
+            <div class="space-y-1.5">
+                <label
+                        class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                >Helper Name (Optional)</label
+                >
+                <input
+                        type="text"
+                        id="drvHelper"
+                        class="w-full h-11 bg-db-bg border border-db-border rounded-xl px-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50"
+                        placeholder="Companion name"
+                />
+            </div>
+
+            <div class="space-y-1.5">
+                <label
+                        class="text-[10px] font-bold text-db-text3 uppercase tracking-wider ml-1"
+                >Notes</label
+                >
+                <textarea
+                        id="drvNotes"
+                        rows="3"
+                        class="w-full bg-db-bg border border-db-border rounded-xl p-4 text-sm text-db-text focus:border-sysu-red outline-none transition-all placeholder:text-db-text3/50 resize-none"
+                        placeholder="Additional fleet notes..."
+                ></textarea>
+            </div>
+        </div>
+
+        <div class="p-6 bg-db-bg/50 border-t border-db-border flex gap-3">
+            <button
+                    onclick="window.dashboard.closeDrvModal()"
+                    class="flex-1 h-12 bg-db-item-hover hover:bg-db-border text-db-text font-bold rounded-xl transition-all uppercase tracking-wider text-sm"
+            >
+                Cancel
+            </button>
+            <button
+                    id="drvSaveBtn"
+                    onclick="window.dashboard.saveDriver()"
+                    class="flex-[2] h-12 bg-sysu-red hover:bg-[#b00f28] text-white font-bold rounded-xl transition-all shadow-[0_4px_14px_rgba(200,16,46,0.3)] uppercase tracking-wider text-sm"
+            >
+                Save Driver Profile
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- SAP Dispatch Detail Modal -->
+<div id="sapDispatchDetail"
+     class="fixed inset-0 bg-db-bg/80 backdrop-blur-sm z-[8000] hidden items-center justify-center p-4">
+    <div class="bg-db-panel border border-db-border rounded-2xl w-full max-w-7xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="p-6 border-b border-db-border flex items-center justify-between bg-db-bg/50 shrink-0">
+            <div>
+                <h2 class="text-xl font-display font-black text-db-text tracking-tight">Dispatch Detail</h2>
+                <p class="text-db-text3 text-[10px] font-bold tracking-widest mt-1 uppercase">SAP Shipment Details</p>
+            </div>
+            <button onclick="window.dashboard.closeSapDispatchModal()"
+                    class="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-db-item-hover text-db-text3 transition-all">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-6 h-6">
+                    <path d="M18 6L6 18M6 6l12 12" stroke-width="2.5"/>
+                </svg>
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 space-y-5">
+            <div class="grid grid-cols-3 gap-4">
+                <div class="bg-db-bg/60 border border-db-border rounded-xl p-4">
+                    <div class="text-[10px] font-bold text-db-text3 uppercase tracking-wider mb-1">Dispatch #</div>
+                    <div class="text-db-text font-bold font-mono text-lg" id="sapDtlDispatchNum">—</div>
+                </div>
+                <div class="bg-db-bg/60 border border-db-border rounded-xl p-4">
+                    <div class="text-[10px] font-bold text-db-text3 uppercase tracking-wider mb-1">Status</div>
+                    <div class="font-bold text-sm" id="sapDtlStatus">—</div>
+                </div>
+                <div class="bg-db-bg/60 border border-db-border rounded-xl p-4">
+                    <div class="text-[10px] font-bold text-db-text3 uppercase tracking-wider mb-1">Delivery</div>
+                    <div class="text-db-text2 font-bold" id="sapDtlDelivery">—</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-db-bg/60 border border-db-border rounded-xl p-4">
+                    <div class="text-[10px] font-bold text-db-text3 uppercase tracking-wider mb-1">Planning Date</div>
+                    <div class="text-db-text font-bold" id="sapDtlPlanDate">—</div>
+                </div>
+                <div class="bg-db-bg/60 border border-db-border rounded-xl p-4">
+                    <div class="text-[10px] font-bold text-db-text3 uppercase tracking-wider mb-1">Planned Delivery Date</div>
+                    <div class="text-db-text font-bold" id="sapDtlActualDate">—</div>
+                </div>
+            </div>
+            <div class="bg-db-bg/60 border border-db-border rounded-xl p-5">
+                <div class="text-[10px] font-bold text-sysu-red uppercase tracking-widest mb-3">Outbound Information
+                </div>
+                <div class="grid grid-cols-2 gap-x-8 gap-y-3">
+                    <div>
+                        <div class="text-[10px] text-db-text3 uppercase mb-0.5">SO Number</div>
+                        <div class="text-db-text font-mono font-semibold" id="sapDtlSONum">—</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-db-text3 uppercase mb-0.5">PO Number</div>
+                        <div class="text-db-text font-mono" id="sapDtlPONum">—</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-db-text3 uppercase mb-0.5">Document #</div>
+                        <div class="text-db-text font-mono" id="sapDtlDocNum">—</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Truck Type standalone section -->
+            <div class="bg-db-bg/60 border border-db-border rounded-xl p-5">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-[10px] font-bold text-db-text3 uppercase tracking-wider mb-1">Truck Type</div>
+                        <div class="text-db-text font-bold text-base" id="sapDtlTruckType">—</div>
+                    </div>
+                    <div class="w-8 h-8 rounded-full bg-sysu-red/10 flex items-center justify-center">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4 text-sysu-red">
+                            <rect x="1" y="3" width="15" height="13"/>
+                            <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                            <circle cx="5.5" cy="18.5" r="2.5"/>
+                            <circle cx="18.5" cy="18.5" r="2.5"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            <!-- OBD Line Items Table -->
+            <div class="bg-db-bg/60 border border-db-border rounded-xl p-5">
+                <div class="text-[10px] font-bold text-sysu-red uppercase tracking-widest mb-3">Outbound Line Items (All
+                    OBDs)
+                </div>
+                <div class="overflow-hidden">
+                    <table class="w-full text-left border-collapse text-sm table-fixed">
+                        <colgroup>
+                            <col class="w-[9%]">
+                            <col class="w-[12%]">
+                            <col class="w-[9%]">
+                            <col class="w-[10%]">
+                            <col class="w-[8%]">
+                            <col class="w-[10%]">
+                            <col class="w-[14%]">
+                            <col class="w-[20%]">
+                            <col class="w-[8%]">
+                            <col class="w-[8%]">
+                            <col class="w-[8%]">
+                        </colgroup>
+                        <thead>
+                        <tr class="border-b border-db-border">
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">OBD Number</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Amount</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Volume (m³)</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Weight (kg)</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Quantity</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Ship-To</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Customer Name</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Delivery Address</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Latitude</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Longitude</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-4 text-center whitespace-nowrap w-[80px]">POD Preview</th>
+                        </tr>
+                        </thead>
+                        <tbody id="sapDtlOBDLines">
+                        </tbody>
+                        <tfoot class="border-t-2 border-db-border">
+                        <tr class="bg-db-panel/60">
+                            <td class="pt-3 pr-3 text-[10px] text-db-text3 uppercase font-bold tracking-wider text-center whitespace-nowrap">Total</td>
+                            <td class="pt-3 pr-3 text-center font-mono text-[13px] text-db-text font-bold tabular-nums whitespace-nowrap" id="sapDtlTotalAmount">—</td>
+                            <td class="pt-3 pr-3 text-center font-mono text-[13px] text-db-text font-bold tabular-nums whitespace-nowrap" id="sapDtlTotalVolume">—</td>
+                            <td class="pt-3 pr-3 text-center font-mono text-[13px] text-db-text font-bold tabular-nums whitespace-nowrap" id="sapDtlTotalWeight">—</td>
+                            <td class="pt-3 pr-3 text-center font-mono text-[13px] text-db-text font-bold tabular-nums whitespace-nowrap" id="sapDtlTotalQty">—</td>
+                            <td class="pt-3 pr-3"></td>
+                            <td class="pt-3 pr-3"></td>
+                            <td class="pt-3 pr-3"></td>
+                            <td class="pt-3 pr-3"></td>
+                            <td class="pt-3"></td>
+                            <td class="pt-3"></td>
+                        </tr>
+                        </tfoot>
+                    </table>
+                    <!-- POD Preview Modal -->
+                    <div id="podPreviewModal" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-[9999]">
+                      <div class="max-w-4xl w-full">
+                        <div class="modal-content">
+                          <div class="modal-header">
+                            <h2 class="modal-title">
+                              POD Preview <span class="modal-subtitle">(Proof of Delivery)</span>��������</span> POD Preview <span class="modal-icon">�� ������ ���� ���� 📄 ������ ���� ���� ���� �� ���� �� �� �� 📋</span>
+                            </h2>
+                            <button class="modal-close" onclick="window.dashboard.closePodPreview()">����</button>
+                          </div>
+                          <div class="modal-body">
+                            <div class="image-container">
+                              <img id="podPreviewImg" src="" alt="POD image" class="pod-image"/>
+                            </div>
+                            <div class="zoom-controls">
+                              <label class="zoom-label">Zoom Level</label>
+                              <div class="zoom-slider-container">
+                                <input type="range" id="podZoomSlider" min="10" max="500" value="100" class="zoom-slider"/>
+                                <span id="podZoomValue" class="zoom-value">100%</span>
+                              </div>
+                            </div>
+                            <div class="timestamp-section">
+                              <span class="timestamp-label">Captured at:</span>
+                              <span id="podTimestamp" class="timestamp-value">&mdash;</span>
+                            </div>
+                            <div class="signature-section">
+                              <div id="podPreviewSignature" class="signature-container"></div>
+                            </div>
+                          </div>
+                          <div class="modal-footer">
+                            <button class="modal-action-btn" onclick="window.dashboard.togglePodZoom()">
+                              <span class="btn-icon">��������</span> Toggle Zoom
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-db-bg/60 border border-db-border rounded-xl p-5">
+                <div class="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-3">Route Information</div>
+                <div class="grid grid-cols-2 gap-x-8 gap-y-3">
+                    <div class="col-span-2">
+                        <div class="text-[10px] text-db-text3 uppercase mb-0.5">Route</div>
+                        <div class="text-db-text font-bold text-base" id="sapDtlRoute">—</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-db-text3 uppercase mb-0.5">Plate Number</div>
+                        <div class="text-db-text font-mono font-semibold" id="sapDtlPlate">—</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-db-text3 uppercase mb-0.5">Driver</div>
+                        <div class="text-db-text font-semibold" id="sapDtlDriver">—</div>
+                    </div>
+                    <div class="col-span-2">
+                        <div class="text-[10px] text-db-text3 uppercase mb-0.5">Shipment Start</div>
+                        <div class="text-db-text2 font-mono text-sm" id="sapDtlShipStart">—</div>
+                    </div>
+                </div>
+            </div>
+                        <div class="bg-db-bg/60 border border-db-border rounded-xl p-5">
+                <div class="text-[10px] font-bold text-green-400 uppercase tracking-widest mb-3">Cargo Totals (All OBDs
+                    Combined)
+                </div>
+                <div class="grid grid-cols-4 gap-4">
+                    <div class="text-center">
+                        <div class="text-[10px] text-db-text3 uppercase mb-1">Total Amount</div>
+                        <div class="text-db-text font-bold text-base" id="sapDtlAmount">—</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-[10px] text-db-text3 uppercase mb-1">Total Volume (m³)</div>
+                        <div class="text-db-text font-bold" id="sapDtlVolume">—</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-[10px] text-db-text3 uppercase mb-1">Total Weight (kg)</div>
+                        <div class="text-db-text font-bold" id="sapDtlWeight">—</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-[10px] text-db-text3 uppercase mb-1">Total Quantity</div>
+                        <div class="text-db-text font-bold" id="sapDtlQty">—</div>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-db-bg/60 border border-db-border rounded-xl p-4">
+                <div class="text-[10px] font-bold text-db-text3 uppercase tracking-wider mb-2">Planning Remarks</div>
+                <div class="text-db-text2 italic text-sm" id="sapDtlRemarks">—</div>
+            </div>
+        </div>
+        <div class="p-5 bg-db-bg/50 border-t border-db-border flex justify-end shrink-0">
+            <button onclick="window.dashboard.closeSapDispatchModal()"
+                    class="px-8 h-11 bg-sysu-red hover:bg-[#b00f28] text-white font-bold rounded-xl transition-all uppercase tracking-wider text-sm">
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Assign Driver Modal -->
+<div
+        id="assignDriverModal"
+        class="fixed inset-0 bg-db-bg/80 backdrop-blur-md z-[8000] hidden items-center justify-center p-4"
+>
+    <div
+            class="bg-db-panel border border-db-border rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+    >
+        <!-- Header -->
+        <div
+                class="p-5 border-b border-db-border flex items-center justify-between bg-db-bg/50 shrink-0"
+        >
+            <div>
+                <h2
+                        class="text-lg font-display font-black text-db-text tracking-tight uppercase"
+                >
+                    Assign Driver
+                </h2>
+                <p class="text-db-text3 text-[10px] font-bold tracking-widest mt-1">
+                    FLEET ASSIGNMENT — DISPATCH <span id="assignModalDispatchNum" class="text-sysu-red font-mono"></span>
+                </p>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="px-3 py-1.5 bg-db-bg/60 border border-db-border rounded-lg text-[11px] text-db-text3 font-bold">
+                    Truck Type: <span id="assignModalTruckType" class="text-db-text font-mono uppercase"></span>
+                </div>
+                <button
+                        onclick="window.dashboard.closeAssignModal()"
+                        class="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-db-item-hover text-db-text3 transition-all"
+                >
+                    <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            class="w-5 h-5"
+                    >
+                        <path d="M18 6L6 18M6 6l12 12" stroke-width="2.5"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Filter hint -->
+        <div class="px-5 py-2 bg-db-bg/30 border-b border-db-border shrink-0">
+            <p class="text-[10px] text-db-text3 italic">
+                Sorted by FIFO — earliest check-in first.
+            </p>
+        </div>
+
+        <!-- Driver List -->
+        <div class="flex-1 overflow-y-auto" id="assignModalDriverList">
+            <!-- Dynamic content -->
+        </div>
+
+        <!-- Footer -->
+        <div class="p-5 bg-db-bg/50 border-t border-db-border flex gap-3 shrink-0">
+            <button
+                    onclick="window.dashboard.closeAssignModal()"
+                    class="flex-1 h-11 bg-db-item-hover hover:bg-db-border text-db-text font-bold rounded-xl transition-all uppercase tracking-wider text-xs"
+            >
+                Cancel
+            </button>
+            <button
+                    id="assignConfirmBtn"
+                    onclick="window.dashboard.confirmAssignment()"
+                    class="flex-[2] h-11 bg-sysu-red hover:bg-[#b00f28] text-white font-bold rounded-xl transition-all shadow-[0_4px_14px_rgba(200,16,46,0.3)] uppercase tracking-wider text-xs"
+            >
+                Confirm Assignment
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════ PROFILE EDIT MODAL ══════════ -->
+<div
+        id="profileModal"
+        class="fixed inset-0 z-[9999] hidden items-center justify-center"
+>
+    <div
+            class="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
+            id="profileModalBackdrop"
+    ></div>
+    <div
+            class="relative bg-db-panel border border-db-border rounded-2xl w-[380px] shadow-[0_24px_80px_rgba(0,0,0,0.7)] overflow-hidden flex flex-col"
+            style="animation:fadeIn 0.2s ease-out"
+    >
+        <!-- Header -->
+        <div class="flex items-center justify-between px-5 pt-5 pb-4 border-b border-db-border">
+            <h3 class="text-[15px] font-bold text-db-text tracking-tight">Edit Profile</h3>
+            <button
+                    class="w-7 h-7 rounded-lg border border-db-border bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all hover:text-db-text hover:bg-db-item-hover"
+                    id="profileModalClose"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-3.5 h-3.5">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Body -->
+        <div class="px-5 pt-5 pb-2 flex flex-col gap-4">
+            <!-- Avatar preview -->
+            <div class="flex flex-col items-center gap-3 pb-2">
+                <div
+                        class="w-[72px] h-[72px] rounded-full overflow-hidden ring-2 ring-white/10 ring-offset-2 ring-offset-db-panel shadow-[0_4px_20px_rgba(200,16,46,0.3)]"
+                        id="profileModalAvatar"
+                >
+                    <img
+                            id="profileModalAvatarImg"
+                            class="w-full h-full object-cover"
+                            alt="Profile"
+                    />
+                </div>
+                <label class="text-[11px] text-db-text3 hover:text-db-text2 cursor-pointer transition-colors underline underline-offset-2">
+                    <input
+                            type="text"
+                            id="profileModalPhotoUrl"
+                            placeholder="Paste photo URL..."
+                            class="hidden"
+                    />
+                    Change photo
+                </label>
+            </div>
+
+            <!-- Display Name -->
+            <div class="flex flex-col gap-1.5">
+                <label class="text-[10.5px] font-bold text-db-text3 uppercase tracking-wider">Display Name</label>
+                <input
+                        type="text"
+                        id="profileModalName"
+                        class="w-full bg-db-bg border border-db-border rounded-lg px-3 py-2 text-[13px] text-db-text outline-none transition-all focus:border-sysu-red/50 focus:shadow-[0_0_0_2px_rgba(200,16,46,0.1)] placeholder:text-db-text3"
+                        placeholder="Your name"
+                />
+            </div>
+
+            <!-- Role -->
+            <div class="flex flex-col gap-1.5" id="profileModalRoleSelectWrapper">
+                <label class="text-[10.5px] font-bold text-db-text3 uppercase tracking-wider">Role</label>
+                <select
+                        id="profileModalRole"
+                        class="w-full bg-db-bg border border-db-border rounded-lg px-3 py-2 text-[13px] text-db-text outline-none transition-all focus:border-sysu-red/50 focus:shadow-[0_0_0_2px_rgba(200,16,46,0.1)] cursor-pointer appearance-none"
+                >
+                    <option value="super_admin">Super Admin</option>
+                    <option value="admin">Admin</option>
+                    <option value="dispatcher">Dispatcher</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+            </div>
+
+            <!-- Non-Super Admin: read-only role + request change trigger -->
+            <div class="hidden flex flex-col gap-1.5" id="profileModalRoleStaticWrapper">
+                <label class="text-[10.5px] font-bold text-db-text3 uppercase tracking-wider">Role</label>
+                <div class="flex items-center justify-between">
+                    <span class="text-[13px] text-db-text" id="profileModalRoleStatic">—</span>
+                    <button
+                            type="button"
+                            id="profileModalRequestRoleBtn"
+                            class="text-[11px] font-semibold text-sysu-gold hover:text-sysu-gold/80 transition-colors cursor-pointer"
+                    >Request Change</button>
+                </div>
+            </div>
+
+            <!-- Request Role Change inline panel (hidden by default) -->
+            <div class="hidden flex-col gap-2" id="profileModalRoleRequestPanel">
+                <label class="text-[10.5px] font-bold text-db-text3 uppercase tracking-wider">Select New Role</label>
+                <select
+                        id="profileModalRequestedRole"
+                        class="w-full bg-db-bg border border-db-border rounded-lg px-3 py-2 text-[13px] text-db-text outline-none transition-all focus:border-sysu-red/50 cursor-pointer appearance-none"
+                >
+                    <option value="admin">Admin</option>
+                    <option value="fleet_manager">Fleet Manager</option>
+                </select>
+                <p class="text-[11px] text-db-text3 leading-snug">Your request will be sent to an admin for approval. You can only have one pending request at a time.</p>
+            </div>
+
+            <!-- Pending Banner -->
+            <div class="hidden" id="profileModalPendingBanner"></div>
+
+            <!-- Email -->
+            <div class="flex flex-col gap-1.5">
+                <label class="text-[10.5px] font-bold text-db-text3 uppercase tracking-wider">Email</label>
+                <input
+                        type="email"
+                        id="profileModalEmail"
+                        readonly
+                        class="w-full bg-db-bg/50 border border-db-border rounded-lg px-3 py-2 text-[13px] text-db-text3 outline-none cursor-not-allowed"
+                />
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex items-center gap-2 px-5 py-4 border-t border-db-border mt-2">
+            <button
+                    class="flex-1 py-2 px-4 bg-db-item-hover border border-db-border rounded-lg text-[13px] font-semibold text-db-text cursor-pointer transition-all hover:bg-db-item-active"
+                    id="profileModalCancel"
+            >
+                Cancel
+            </button>
+            <button
+                    class="hidden flex-1 py-2 px-4 bg-sysu-gold border border-sysu-gold rounded-lg text-[13px] font-bold text-[#1a1d23] cursor-pointer transition-all hover:bg-[#d4870e]"
+                    id="profileModalRequest"
+            >
+                Submit Request
+            </button>
+            <button
+                    class="flex-1 py-2 px-4 bg-sysu-red border border-sysu-red rounded-lg text-[13px] font-bold text-white cursor-pointer transition-all hover:bg-[#a80e25] active:scale-[0.98]"
+                    id="profileModalSave"
+            >
+                Save Changes
+            </button>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+
+<script type="module" src="src/pages/dashboard.js"></script>
+</body>
+</html>

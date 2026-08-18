@@ -508,7 +508,11 @@ ${d.truckCompany?`<div class="qcard-co">${esc(d.truckCompany)}</div>`:""}
                 if(ch.type==="added"&&!seen.has(ch.doc.id)){
                     seen.add(ch.doc.id);
                     if(!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites){
-                        const d=ch.doc.data();toast(d.driverName,d.truckType,d.plateNumber);
+                        const d=ch.doc.data();
+                        // Only show toast for drivers actually eligible for queue (not yet assigned)
+                        if (d.isAssigned !== true) {
+                            toast(d.driverName,d.truckType,d.plateNumber);
+                        }
                     }
                 }
             });

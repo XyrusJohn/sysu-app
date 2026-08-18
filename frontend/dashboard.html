@@ -262,7 +262,6 @@
     <button
             class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rUsers"
-            style="display: none"
     >
         <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
             <svg
@@ -554,18 +553,19 @@
             id="usersContent"
             class="flex-1 w-full flex flex-col p-4 sm:p-8 overflow-y-auto hidden animate-[fadeIn_0.4s_ease_both] bg-db-bg"
     >
-        <div class="flex items-center justify-between mb-8">
+        <div class="flex items-center justify-between mb-6">
             <div>
                 <h1 class="text-2xl font-bold text-db-text mb-1">User Management</h1>
                 <p class="text-[13px] text-db-text2">
-                    Manage enterprise access and security roles.
+                    Manage executive roles, employees, and driver accounts.
                 </p>
             </div>
             <div class="flex items-center gap-3">
                 <div class="relative">
                     <input
+                            id="userSearchInput"
                             type="text"
-                            placeholder="Search employees..."
+                            placeholder="Search by name, email, or role..."
                             class="bg-db-panel border border-db-border rounded-lg pl-9 pr-4 py-2 text-[13px] text-db-text w-64 focus:border-sysu-red outline-none transition-all"
                     />
                     <svg
@@ -582,21 +582,26 @@
             </div>
         </div>
 
-        <!-- Pending Role Requests -->
-        <div id="roleRequestsSection" class="mb-6 flex flex-col gap-3">
-            <div class="flex items-center justify-between">
-                <h2 class="text-[14px] font-bold text-db-text tracking-tight">Pending Role Requests</h2>
-                <span
-                        id="pendingRoleReqBadge"
-                        class="hidden items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-sysu-gold/20 text-sysu-gold border border-sysu-gold/30"
-                >0</span>
-            </div>
-            <div
-                    id="roleRequestsContainer"
-                    class="flex flex-col gap-2"
+        <!-- User Management Sub-Tabs: Employees vs Drivers -->
+        <div class="flex gap-2 mb-6 border-b border-db-border pb-3">
+            <button
+                    id="userTabEmployeesBtn"
+                    class="user-management-tab px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-sysu-red text-white transition-all flex items-center gap-2 shadow-sm"
+                    data-user-tab="employees"
             >
-                <!-- Real-time: rendered by _renderRoleRequestsInAdminPortal -->
-            </div>
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                Employees & Staff
+                <span id="userCountEmployees" class="px-2 py-0.5 rounded-full text-[10px] bg-white/20 text-white font-mono">0</span>
+            </button>
+            <button
+                    id="userTabDriversBtn"
+                    class="user-management-tab px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-db-panel hover:bg-db-item-hover text-db-text3 hover:text-db-text border border-db-border transition-all flex items-center gap-2"
+                    data-user-tab="drivers"
+            >
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                Drivers
+                <span id="userCountDrivers" class="px-2 py-0.5 rounded-full text-[10px] bg-db-item-hover text-db-text3 font-mono">0</span>
+            </button>
         </div>
 
         <div
@@ -1118,8 +1123,10 @@
             <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="rejected">Rejected</button>
             <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="expired">Expired</button>
             <button class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2" data-tab="completed">Completed</button>
+            <button id="docsRoleRequestsTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="role-requests">Role Requests <span id="docsBadgeRoleRequests" class="ml-1 hidden text-[10px] bg-sysu-gold/20 text-sysu-gold border border-sysu-gold/30 px-1.5 py-0.5 rounded-full font-mono font-bold">0</span></button>
             <button id="docsGuardsTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="guards">Guards</button>
             <button id="docsTruckCompaniesTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="truck-companies">Truck Companies</button>
+            <button id="docsWarehouseTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="warehouse">Warehouse Base</button>
         </div>
 
         <div id="docsListContainer" class="flex-1 overflow-y-auto p-6">
@@ -1222,6 +1229,30 @@
         <p class="text-white/70 text-sm max-w-xs font-medium">
             Synchronizing enterprise-grade permissions and re-validating security
             tokens...
+        </p>
+    </div>
+</div>
+
+<!-- Under Development Overlay -->
+<div
+        id="underDevOverlay"
+        class="fixed inset-0 bg-db-bg/90 backdrop-blur-sm z-[500] flex flex-col items-center justify-center opacity-0 pointer-events-none transition-all duration-500"
+>
+    <div class="flex flex-col items-center text-center">
+        <div
+                class="w-20 h-20 bg-db-text/10 rounded-full flex items-center justify-center mb-6"
+        >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+            </svg>
+        </div>
+        <h2
+                class="text-2xl font-bold text-db-text uppercase tracking-widest mb-4"
+        >
+            This page is under development
+        </h2>
+        <p class="text-white/70 text-lg max-w-xl text-center">
+            Please thank you.
         </p>
     </div>
 </div>
@@ -1657,7 +1688,7 @@
         <!-- Filter hint -->
         <div class="px-5 py-2 bg-db-bg/30 border-b border-db-border shrink-0">
             <p class="text-[10px] text-db-text3 italic">
-                Sorted by FIFO — earliest check-in first.
+                Queue shows drivers with no prior assignment (FIFO). Drivers who already have a shipment — active or completed — are hidden from Queue; use the Assigned tab to give them another.
             </p>
         </div>
 
@@ -1685,11 +1716,8 @@
                 Confirm Assignment
             </button>
         </div>
-        <!-- Request Override Button (shown after FIFO block) -->
+        <!-- Request Override Panel (revealed when a row-level Override button is clicked) -->
         <div class="px-5 pb-5 bg-db-bg/50 shrink-0">
-            <button id="requestOverrideBtn" class="hidden w-full bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold border border-sysu-gold/30 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all">
-                ⚠ Request Override (Admin Approval)
-            </button>
             <div id="requestOverridePanel" class="hidden mt-2 bg-db-bg/70 border border-sysu-gold/20 rounded-lg p-3">
                 <label class="block text-[10px] font-bold uppercase tracking-wider text-sysu-gold mb-1.5">Reason</label>
                 <select id="requestOverrideReason" class="w-full bg-db-bg border border-db-border rounded-md px-2 py-1.5 text-xs text-db-text focus:outline-none focus:border-sysu-gold/50">

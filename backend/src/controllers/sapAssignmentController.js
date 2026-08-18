@@ -240,11 +240,17 @@ exports.assignDriver = async (req, res) => {
             }
 
             // Multi-shipment check: a driver may take a NEW dispatch only if
-            // every one of their existing assignments is still in the
-            // "assigned" state (i.e., not yet loading). Once any assignment
-            // reaches loading / loaded / in_transit / completed, the
-            // driver is considered BUSY and cannot take another dispatch
-            // until that load completes.
+            // none of their existing assignments is currently in flight.
+            // "loading" / "loaded" / "in_transit" = BUSY (true active load).
+            //
+            // "completed" is INTENTIONALLY NOT in this set. Per the 2026-08-11
+            // customer-demo product rule: once a driver's prior shipment is
+            // completed, that shipment no longer blocks them from taking a
+            // new one. The dispatcher issues the new dispatch via the
+            // Assigned tab (the queue entry is invalidated on completion).
+            // Block on a "completed" status here breaks multi-shipment after
+            // the first delivery — which is the entire point of the Assigned
+            // tab flow.
             //
             // We deliberately do NOT block on `isAssigned === true` — that
             // flag is a historical marker set on first assignment and stays
@@ -258,7 +264,6 @@ exports.assignDriver = async (req, res) => {
                 "loading",
                 "loaded",
                 "in_transit",
-                "completed",
             ]);
             const activeLoads = existingAssignmentsSnap.docs
                 .map((d) => d.data())
@@ -276,7 +281,7 @@ exports.assignDriver = async (req, res) => {
                 return {
                     status: 409,
                     code: "DRIVER_ON_ACTIVE_LOAD",
-                    message: "Requested driver already has a load in progress (loading / loaded / in_transit / completed). They cannot take another dispatch until it completes.",
+                    message: "Requested driver already has a load in progress (loading / loaded / in_transit). They cannot take another dispatch until it completes.",
                     meta: {
                         requestedDriverId,
                         activeDispatchKeys,

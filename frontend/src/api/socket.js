@@ -50,6 +50,16 @@ socket.on("disconnect", () => {
 export const EVENTS = {
     DRIVER_MOVING: "update_admin_map",
     STATUS_UPDATE: "vendor_status_update",
+    WAREHOUSE_BASE_UPDATED: "warehouse_base_updated",
+    SAVE_WAREHOUSE_BASE: "save_warehouse_base",
+    GET_WAREHOUSE_BASE: "get_warehouse_base",
+    ROLE_REQUEST_CREATED: "role_request_created",
+    ROLE_REQUEST_UPDATED: "role_request_updated",
+    GET_ROLE_REQUESTS: "get_role_requests",
+    CREATE_ROLE_REQUEST: "create_role_request",
+    APPROVE_ROLE_REQUEST: "approve_role_request",
+    REJECT_ROLE_REQUEST: "reject_role_request",
+    USER_ROLE_CHANGED: "user_role_changed",
 };
 
 // ── Driver-Location Socket ─────────────────────────────────────────────────
