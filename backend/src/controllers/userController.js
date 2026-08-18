@@ -60,6 +60,14 @@ exports.deleteUser = async (req, res) => {
         const {uid} = req.body;
         const currentUserId = req.user.uid;
 
+        if (!uid) {
+            return res.status(400).json({message: "uid is required"});
+        }
+
+        if (uid === currentUserId) {
+            return res.status(400).json({message: "Cannot delete your own account"});
+        }
+
         const currentUserDoc = await admin.firestore().collection("users").doc(currentUserId).get();
         const currentUserData = currentUserDoc.data();
 
@@ -67,6 +75,15 @@ exports.deleteUser = async (req, res) => {
             return res.status(403).json({message: "Forbidden: Only super-admins can delete users"});
         }
 
+        // Delete from Firebase Auth if exists
+        try {
+            await admin.auth().deleteUser(uid);
+        } catch (authErr) {
+            // User might not exist in Auth (e.g. legacy/mock document), continue to delete Firestore doc
+            console.warn("Auth delete warning (proceeding with Firestore delete):", authErr.message);
+        }
+
+        // Delete from Firestore
         await admin.firestore().collection("users").doc(uid).delete();
         res.json({success: true, message: "User deleted successfully"});
     } catch (error) {

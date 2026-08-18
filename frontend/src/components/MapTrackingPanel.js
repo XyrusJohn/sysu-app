@@ -127,6 +127,12 @@ function _onConnectError(err) {
 function _onDriverMoving(data) {
   console.log("[update_admin_map] ★ received from socket:", JSON.stringify(data));
   const { driverId, lat, lng, status, name } = data ?? {};
+
+  // Handle completed shipments - ignore location updates
+  if (status === "completed") {
+    console.log("[update_admin_map] ↘ ignoring location update for completed shipment:", driverId);
+    return;
+  }
   if (!driverId || lat == null || lng == null) {
     console.warn("[update_admin_map] ✗ DROPPED — missing required fields:", { driverId, lat, lng });
     return;
@@ -147,6 +153,16 @@ function _onDriverMoving(data) {
 function _onDriverStatus(data) {
   const { driverId, status, name, lat, lng } = data ?? {};
   if (!driverId) return;
+
+  // Handle completed shipments - remove marker entirely (driver returned to warehouse)
+  if (status === "completed") {
+    removeMarker(driverId, "trackingMap");
+    delete _markerStore[driverId];
+    window[MARKER_STORE_KEY] = _markerStore;
+    _driverMeta.delete(driverId);
+    _refreshDriverList();
+    return;
+  }
 
   if (status === "offline") {
     const meta = _driverMeta.get(driverId);
