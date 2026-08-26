@@ -83,8 +83,15 @@ exports.deleteUser = async (req, res) => {
             console.warn("Auth delete warning (proceeding with Firestore delete):", authErr.message);
         }
 
-        // Delete from Firestore
+        // Delete from Firestore (both users and drivers collections)
         await admin.firestore().collection("users").doc(uid).delete();
+        await admin.firestore().collection("drivers").doc(uid).delete();
+
+        // Broadcast real-time account deletion event to force immediate logout across all devices
+        if (global._io) {
+            global._io.emit("account_deleted", {uid});
+        }
+
         res.json({success: true, message: "User deleted successfully"});
     } catch (error) {
         console.error("deleteUser error:", error.message);

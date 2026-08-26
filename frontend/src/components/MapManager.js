@@ -313,17 +313,18 @@ export const seedMarker = (input, containerId = _defaultId) => {
     const realLng = typeof lng === "number" && lng !== 0 ? lng : null;
     const hasRealGps = realLat != null && realLng != null;
 
-    const useLat = hasRealGps ? realLat : FALLBACK_LAT;
-    const useLng = hasRealGps ? realLng : FALLBACK_LNG;
-    const useStatus = hasRealGps ? "offline" : "pending";
+    // Do NOT draw ghost marker at fallback coords if the truck has not sent real GPS
+    if (!hasRealGps) {
+        return false;
+    }
 
     updateMarker(
         {
             driverId,
-            lat: useLat,
-            lng: useLng,
+            lat: realLat,
+            lng: realLng,
             name: name || "Unknown Driver",
-            status: useStatus,
+            status: "offline",
             shipmentId: shipmentId || null,
         },
         containerId,

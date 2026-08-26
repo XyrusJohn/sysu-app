@@ -231,57 +231,27 @@ exports.assignDriver = async (req, res) => {
                     meta: {requestedDriverId},
                 };
             }
-            if (requested.status === "complete") {
-                return {
-                    status: 409,
-                    code: "DRIVER_INACTIVE",
-                    message: "Requested driver has already finished their shift.",
-                };
-            }
-
-            // Multi-shipment check: a driver may take a NEW dispatch only if
-            // none of their existing assignments is currently in flight.
-            // "loading" / "loaded" / "in_transit" = BUSY (true active load).
-            //
-            // "completed" is INTENTIONALLY NOT in this set. Per the 2026-08-11
-            // customer-demo product rule: once a driver's prior shipment is
-            // completed, that shipment no longer blocks them from taking a
-            // new one. The dispatcher issues the new dispatch via the
-            // Assigned tab (the queue entry is invalidated on completion).
-            // Block on a "completed" status here breaks multi-shipment after
-            // the first delivery — which is the entire point of the Assigned
-            // tab flow.
-            //
-            // We deliberately do NOT block on `isAssigned === true` — that
-            // flag is a historical marker set on first assignment and stays
-            // true for the rest of the driver's queue lifetime. The block
-            // here is driven by active tripStatus on existing assignments.
+            
+            // Multi-shipment check:
+            // A driver may take additional dispatches (consolidated multi-drop OBDs)
+            // as long as the truck is NOT FULL (isFull !== true) and NOT ON THE ROAD (tripStatus !== 'in_transit').
+            // "in_transit" = TRUCK HAS LEFT THE WAREHOUSE -> BUSY (cannot take new dispatches).
             const driverIdForLookup = requested.driverId || requestedDriverId;
             const existingAssignmentsSnap = await tx.get(
                 DB().collection(SAP_COLLECTION).where("driverId", "==", driverIdForLookup),
             );
-            const BLOCKING_TRIP_STATUSES = new Set([
-                "loading",
-                "loaded",
-                "in_transit",
-            ]);
-            const activeLoads = existingAssignmentsSnap.docs
+            const inTransitLoads = existingAssignmentsSnap.docs
                 .map((d) => d.data())
-                .filter((a) => BLOCKING_TRIP_STATUSES.has((a.tripStatus || "").toLowerCase()));
-            console.log(
-                "[sapAssignment] multi-shipment check driverId:", driverIdForLookup,
-                "existingAssignments:", existingAssignmentsSnap.docs.map((d) => ({
-                    dispatchKey: d.id,
-                    tripStatus: d.data().tripStatus || null,
-                })),
-                "activeLoadsCount:", activeLoads.length,
-            );
-            if (activeLoads.length > 0) {
-                const activeDispatchKeys = activeLoads.map((a) => a.dispatchKey || a.id || null);
+                .filter((a) => (a.tripStatus || "").toLowerCase() === "in_transit");
+
+            if (inTransitLoads.length > 0 || requested.isFull === true) {
+                const activeDispatchKeys = inTransitLoads.map((a) => a.dispatchKey || a.id || null);
                 return {
                     status: 409,
                     code: "DRIVER_ON_ACTIVE_LOAD",
-                    message: "Requested driver already has a load in progress (loading / loaded / in_transit). They cannot take another dispatch until it completes.",
+                    message: requested.isFull === true 
+                        ? "Requested truck is already fully loaded." 
+                        : "Requested driver is already in transit (on the road). They cannot take another dispatch until the trip completes.",
                     meta: {
                         requestedDriverId,
                         activeDispatchKeys,
@@ -289,26 +259,15 @@ exports.assignDriver = async (req, res) => {
                 };
             }
 
-            const earliestCheck = validateEarliest(queue, truckType, requestedDriverId);
-            if (earliestCheck) {
-                console.warn(
-                    "[sapAssignment] NOT_EARLIEST — earliestDriverId:",
-                    earliestCheck.meta.earliestDriverId,
-                    "requestedDriverId:",
-                    requestedDriverId,
-                    "queue length:",
-                    queue.length,
-                    "queue docIds + entryTime + isAssigned:",
-                    queue.map((q) => ({
-                        id: q.id,
-                        driverId: q.driverId || null,
-                        entryTime: q.entryTime,
-                        isAssigned: q.isAssigned,
-                        truckType: q.truckType,
-                    })),
-                );
-                // Need a token if the driver is not earliest.
-                if (!overrideTokenId) {
+            // If the driver already has active pre-transit assignments (consolidated load),
+            // bypass NOT_EARLIEST check so dispatcher can add multiple OBDs to the same truck.
+            const hasExistingPreTransit = existingAssignmentsSnap.docs
+                .map((d) => d.data())
+                .some((a) => ["assigned", "loading", "loaded", "fully_loaded"].includes((a.tripStatus || "").toLowerCase()));
+
+            if (!hasExistingPreTransit) {
+                const earliestCheck = validateEarliest(queue, truckType, requestedDriverId);
+                if (earliestCheck && !overrideTokenId) {
                     return {
                         status: 409,
                         code: "NOT_EARLIEST",
@@ -319,43 +278,20 @@ exports.assignDriver = async (req, res) => {
                         },
                     };
                 }
+            }
 
-                // Verify the override token matches this dispatch + driver.
-                const verify = await tokenService.verify(overrideTokenId, {
+            if (overrideTokenId) {
+                const tokenResult = await tokenService.consumeTokenInTransaction(tx, overrideTokenId, {
                     dispatchKey,
-                    requestedDriverId,
+                    driverId: requestedDriverId,
+                    usedBy: assignedBy,
                 });
-                if (!verify.ok) {
-                    const statusFor = {
-                        TOKEN_NOT_FOUND: 404,
-                        TOKEN_CONSUMED: 409,
-                        TOKEN_EXPIRED: 410,
-                        TOKEN_DISPATCH_MISMATCH: 403,
-                        TOKEN_DRIVER_MISMATCH: 403,
-                    };
+                if (!tokenResult.valid) {
                     return {
-                        status: statusFor[verify.code] || 403,
-                        code: verify.code,
-                        message: "Override token rejected: " + verify.code,
-                    };
-                }
-
-                // Atomically consume the token inside the same transaction.
-                const tokenRef = DB().collection("overrideTokens").doc(overrideTokenId);
-                const consume = tokenService.consumeInTransaction(tx, tokenRef, {
-                    consumedBy: assignedBy,
-                    consumedForAssignment: dispatchKey,
-                });
-                if (!consume.ok) {
-                    const statusFor = {
-                        TOKEN_NOT_FOUND: 404,
-                        TOKEN_CONSUMED: 409,
-                        TOKEN_EXPIRED: 410,
-                    };
-                    return {
-                        status: statusFor[consume.code] || 409,
-                        code: consume.code,
-                        message: "Token consumption failed: " + consume.code,
+                        status: 403,
+                        code: tokenResult.code,
+                        message: tokenResult.message,
+                        meta: {overrideTokenId},
                     };
                 }
             }
@@ -394,11 +330,26 @@ exports.assignDriver = async (req, res) => {
                 tripStatus: "assigned",
             });
 
+            // Build new assignment summary for queue document
+            const newAssignmentEntry = {
+                dispatchKey,
+                obdNumber: normalizedLineItems[0]?.obdNumber || dispatchKey,
+                customerName: normalizedLineItems[0]?.customerName || "Customer",
+                tripStatus: "assigned",
+                assignedAt: new Date().toISOString(),
+            };
+
+            const existingAssignedList = Array.isArray(requested.assignedShipments) ? requested.assignedShipments : [];
+            const updatedAssignedShipments = [...existingAssignedList, newAssignmentEntry];
+
             const queueRef = DB().collection(QUEUE_COLLECTION).doc(requested.id);
             tx.update(queueRef, {
                 isAssigned: true,
                 status: "loading",
+                overallTripStatus: "loading",
                 assignedShipment: dispatchKey,
+                assignedShipments: updatedAssignedShipments,
+                activeShipmentsCount: updatedAssignedShipments.length,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
 
@@ -667,10 +618,20 @@ exports.decideCancelAssignment = async (req, res) => {
             };
 
             if (queueDoc) {
+                const qData = queueDoc.data() || {};
+                const currentList = Array.isArray(qData.assignedShipments) ? qData.assignedShipments : [];
+                const remainingShipments = currentList.filter(
+                    (s) => (s.dispatchKey || s.id || s.obdNumber) !== reqDoc.dispatchKey
+                );
+                const hasRemaining = remainingShipments.length > 0;
+
                 tx.update(queueDoc.ref, {
-                    isAssigned: false,
-                    status: "available",
-                    assignedShipment: null,
+                    assignedShipments: remainingShipments,
+                    activeShipmentsCount: remainingShipments.length,
+                    isAssigned: hasRemaining,
+                    status: hasRemaining ? (qData.status || "loading") : "available",
+                    overallTripStatus: hasRemaining ? (qData.overallTripStatus || "loading") : "available",
+                    assignedShipment: hasRemaining ? remainingShipments[0].dispatchKey : null,
                     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                     cancelAudit: audit,
                 });
@@ -746,25 +707,29 @@ exports.getActiveDriverLocations = async (req, res) => {
     try {
         const snap = await DB()
             .collection(SAP_COLLECTION)
-            .where("tripStatus", "in", ["loading", "loaded", "in_transit"])
+            .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit"])
             .get();
 
         const results = [];
         for (const doc of snap.docs) {
             const data = doc.data();
             const ll = data.lastLocation;
-            const lat = ll && typeof ll.lat === "number" ? ll.lat : null;
-            const lng = ll && typeof ll.lng === "number" ? ll.lng : null;
-            results.push({
-                dispatchKey: doc.id,
-                driverId: data.driverId || null,
-                driverName: data.driverName || null,
-                truckPlate: data.truckPlate || null,
-                tripStatus: data.tripStatus || null,
-                lat,
-                lng,
-                at: ll && ll.at ? ll.at.toMillis ? ll.at.toMillis() : null : null,
-            });
+            const lat = ll && typeof ll.lat === "number" && ll.lat !== 0 ? ll.lat : null;
+            const lng = ll && typeof ll.lng === "number" && ll.lng !== 0 ? ll.lng : null;
+
+            // Only return to map seeder if it has actual GPS coordinates
+            if (lat != null && lng != null) {
+                results.push({
+                    dispatchKey: doc.id,
+                    driverId: data.driverId || null,
+                    driverName: data.driverName || null,
+                    truckPlate: data.truckPlate || null,
+                    tripStatus: data.tripStatus || null,
+                    lat,
+                    lng,
+                    at: ll && ll.at ? (ll.at.toMillis ? ll.at.toMillis() : null) : null,
+                });
+            }
         }
 
         return ok(res, {locations: results});

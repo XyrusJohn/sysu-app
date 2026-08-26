@@ -266,6 +266,34 @@ io.on("connection", async (socket) => {
         }
     });
 
+    // ── Driver Full Capacity Toggle via Socket.IO ──
+    socket.on("driver_is_full", async (data) => {
+        try {
+            const driverId = data?.driverId || socket.data.uid;
+            const isFull = Boolean(data?.isFull);
+            console.log(`[driver_is_full] Driver ${driverId} capacity updated: isFull=${isFull}`);
+
+            // Update active queue doc for this driver
+            const queueSnap = await admin.firestore().collection("queue")
+                .where("driverId", "==", driverId)
+                .where("status", "in", ["waiting", "called", "assigned", "loading"])
+                .limit(1)
+                .get();
+
+            if (!queueSnap.empty) {
+                await queueSnap.docs[0].ref.update({
+                    isFull,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+
+            // Broadcast to dispatchers
+            io.emit("driver_capacity_updated", {driverId, isFull});
+        } catch (err) {
+            console.error("[driver_is_full] error:", err.message);
+        }
+    });
+
     socket.on("driver_moving", (data) => {
         console.log("[driver_moving] ★ RECEIVED from socket:", JSON.stringify(data));
         if (data.driverId !== socket.data.uid) {
@@ -288,7 +316,7 @@ io.on("connection", async (socket) => {
         const db = admin.firestore();
         db.collection("sap_assignments")
             .where("driverId", "==", data.driverId)
-            .where("tripStatus", "in", ["loaded", "in_transit", "loading"])
+            .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit"])
             .limit(1)
             .get()
             .then((snap) => {
@@ -318,6 +346,47 @@ io.on("connection", async (socket) => {
             .catch((err) => {
                 console.error("[driver_moving] ✗ persist error:", err?.message ?? err);
             });
+    });
+
+    // ── Driver Status Updates (completed / stopped / offline / online) ──
+    socket.on("update_status", (data) => {
+        try {
+            console.log("[update_status] ★ RECEIVED:", JSON.stringify(data));
+            const driverId = data?.driverId || socket.data.uid;
+            const status = data?.status;
+            if (!driverId || !status) return;
+
+            // Broadcast to dispatchers / admin map for immediate UI reaction
+            io.emit("update_status", {...data, driverId});
+
+            if (status === "stopped") {
+                io.emit("driver_stopped", {...data, driverId});
+            }
+        } catch (err) {
+            console.error("[update_status] error:", err.message);
+        }
+    });
+
+    // ── Driver Stopped (traffic signal / idle) ──
+    socket.on("driver_stopped", (data) => {
+        try {
+            console.log("[driver_stopped] ★ RECEIVED:", JSON.stringify(data));
+            const driverId = data?.driverId || socket.data.uid;
+            io.emit("driver_stopped", {...data, driverId});
+            io.emit("update_status", {...data, driverId, status: "stopped"});
+        } catch (err) {
+            console.error("[driver_stopped] error:", err.message);
+        }
+    });
+
+    // ── Driver POD Updated (photo / signature uploaded) ──
+    socket.on("pod_updated", (data) => {
+        try {
+            console.log("[pod_updated] ★ RECEIVED:", JSON.stringify(data));
+            io.emit("pod_updated", data);
+        } catch (err) {
+            console.error("[pod_updated] error:", err.message);
+        }
     });
 });
 

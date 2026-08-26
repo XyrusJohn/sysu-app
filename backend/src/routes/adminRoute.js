@@ -24,6 +24,6 @@ router.post("/truck-companies", protectRoute, requireAdmin, createTruckCompany);
 router.patch("/truck-companies/:code", protectRoute, requireAdmin, updateTruckCompany);
 router.patch("/truck-companies/:code/active", protectRoute, requireAdmin, setTruckCompanyActive);
 router.get("/warehouse-base", protectRoute, getWarehouseBase);
-router.put("/warehouse-base", protectRoute, updateWarehouseBase);
+router.put("/warehouse-base", protectRoute, requireAdmin, updateWarehouseBase);
 
 module.exports = router;

@@ -82,48 +82,54 @@ module.exports = {
 
             // ── Atomic transaction: check used + create queue entry — prevents race condition
             // where two drivers scan the same token at the exact same moment.
-            const queueSnapshot = await DB().collection(QUEUE_COLLECTION)
-                .where("token", "==", token)
-                .get();
-
-            if (!queueSnapshot.empty) {
-                return res.status(400).json({success: false, message: "Token already used to join queue"});
-            }
-
-            // Double-check the token isn't already marked used (covers verifyToken path)
-            const tokenDoc = await DB().collection(QR_TOKENS_COLLECTION).doc(token).get();
-            if (!tokenDoc.exists) {
-                return res.status(401).json({success: false, message: "Invalid or expired token"});
-            }
-            if (tokenDoc.data().used) {
-                return res.status(410).json({success: false, message: "Token has already been used"});
-            }
-
             const SANITIZE = (str, max) => (str || "").replace(/[<>]/g, "").substring(0, max);
 
-            const queueEntry = {
-                driverId: SANITIZE(driverId, 100),
-                driverName: SANITIZE(driverName, 100),
-                token,
-                truckType: SANITIZE(truckType, 50),
-                plateNumber: SANITIZE(plateNumber, 20),
-                truckCompany: SANITIZE(truckCompany, 100),
-                helperName: SANITIZE(helperName, 100),
-                status: "waiting",
-                joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-                // Gate: driver not yet visibility in Fleet Manager until they complete Edit Driver (trip registration)
-                registrationComplete: false,
-            };
+            const result = await DB().runTransaction(async (tx) => {
+                const tokenRef = DB().collection(QR_TOKENS_COLLECTION).doc(token);
+                const tokenDoc = await tx.get(tokenRef);
 
-            const docRef = await DB().collection(QUEUE_COLLECTION).add(queueEntry);
+                if (!tokenDoc.exists) {
+                    return {status: 401, message: "Invalid or expired token"};
+                }
+                const tokenData = tokenDoc.data();
+                if (tokenData.used || tokenData.isUsed) {
+                    return {status: 410, message: "Token has already been used"};
+                }
 
-            // Mark token as used — do this AFTER successful queue entry so command center
-            // restarts QR immediately when a driver joins
-            await DB().collection(QR_TOKENS_COLLECTION).doc(token).update({
-                used: true,
-                isUsed: true,
-                queueId: docRef.id,
+                const newQueueRef = DB().collection(QUEUE_COLLECTION).doc();
+                const now = admin.firestore.FieldValue.serverTimestamp();
+
+                const queueEntry = {
+                    driverId: SANITIZE(driverId, 100),
+                    driverName: SANITIZE(driverName, 100),
+                    token,
+                    truckType: SANITIZE(truckType, 50),
+                    plateNumber: SANITIZE(plateNumber, 20),
+                    truckCompany: SANITIZE(truckCompany, 100),
+                    helperName: SANITIZE(helperName, 100),
+                    status: "waiting",
+                    entryTime: now,
+                    joinedAt: now,
+                    registrationComplete: false,
+                    isAssigned: false,
+                    isFull: false,
+                };
+
+                tx.set(newQueueRef, queueEntry);
+                tx.update(tokenRef, {
+                    used: true,
+                    isUsed: true,
+                    queueId: newQueueRef.id,
+                    usedAt: now,
+                    usedBy: SANITIZE(driverId, 100),
+                });
+
+                return {status: 200, queueId: newQueueRef.id};
             });
+
+            if (result.status !== 200) {
+                return res.status(result.status).json({success: false, message: result.message});
+            }
 
             // Emit to public /qr namespace — command center (no auth) is listening there
             if (global._qrNs) global._qrNs.emit("qr_token_used", {token});
@@ -131,7 +137,7 @@ module.exports = {
             return res.status(200).json({
                 success: true,
                 message: "Successfully joined the queue",
-                queueId: docRef.id,
+                queueId: result.queueId,
             });
         } catch (error) {
             console.error("[QR Controller] Scan Error:", error);

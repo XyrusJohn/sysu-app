@@ -10,7 +10,7 @@ async function cleanupQueue() {
   const cutoff = new Date(Date.now() - DAY_30_MS);
 
   const snapshot = await QUEUE()
-    .where("status", "==", "complete")
+    .where("status", "in", ["complete", "completed"])
     .where("joinedAt", "<", cutoff)
     .get();
 

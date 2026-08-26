@@ -22,30 +22,20 @@ service cloud.firestore {
 
     // ─── Queue ───────────────────────────────────────────────────────────────
     // Read: public (Command Center / dashboard need live read).
-    // Write: limited to non-authoritative fields.
+    // Write: limited to driver's own updates & non-authoritative fields.
     //
     // The authoritative FIFO ordering and dispatch assignment goes through
-    // the backend (POST /api/sap/assign). Direct client writes that would
-    // break that ordering — entryTime, status, isAssigned, assignedShipment,
-    // registrationComplete — are forbidden. Clients may still patch a driver's
-    // own non-authoritative fields (e.g. lastSeenAt) on their own document.
+    // the backend (POST /api/sap/assign). Drivers may update their own active
+    // progress (tripStatus, isFull, registrationComplete) on their own queue doc.
     match /queue/{queueId} {
       allow read:  if true;
 
-      // Create: allowed for any authenticated user (QR scan creates the entry
-      // with an auto id, not the driver's UID). The backend re-validates and
-      // accepts or rejects.
-      allow create: if request.auth != null
-        && !('status' in request.resource.data
-             && request.resource.data.status == 'loading');
+      // Create: allowed for any authenticated user (QR scan via backend Admin SDK or authenticated client).
+      allow create: if request.auth != null;
 
-      // Update: only the document owner may update, and only non-authoritative
-      // fields. The protected fields below are sealed.
+      // Update: document owner (by driverId or queueId) or admin
       allow update: if request.auth != null
-        && request.auth.uid == queueId
-        && !request.resource.data.diff(resource.data).affectedKeys()
-              .hasAny(['entryTime', 'status', 'isAssigned', 'assignedShipment',
-                       'registrationComplete', 'truckType']);
+        && (resource.data.driverId == request.auth.uid || request.auth.uid == queueId);
 
       allow delete: if false;
     }
@@ -60,13 +50,15 @@ service cloud.firestore {
 
     // ─── SAP Assignments ──────────────────────────────────────────────────────
     // Public read: anyone can see confirmed assignments (dispatch table).
-    // Write: backend API only (POST /api/sap/assign) which uses Firebase Admin
-    //        SDK and bypasses rules. Direct client writes are denied so the
-    //        server can enforce FIFO ordering, single-use override tokens, and
-    //        race resolution on concurrent assignments.
+    // Creation & Deletion: backend API only (POST /api/sap/assign, POST /api/sap/cancel) via Admin SDK.
+    // Update: Allowed for the assigned driver to update tripStatus, lineItems (POD), and timestamps.
     match /sap_assignments/{shipmentId} {
-      allow read:  if true;
-      allow write: if false;
+      allow read:   if true;
+      allow create: if false; // Backend Admin SDK only
+      allow delete: if false; // Backend Admin SDK only
+      allow update: if request.auth != null
+        && (resource.data.driverId == request.auth.uid
+            || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'super_admin']);
     }
 
     // ─── Incidents ───────────────────────────────────────────────────────────

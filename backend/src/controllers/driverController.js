@@ -41,6 +41,28 @@ exports.updateDriverFull = async (req, res) => {
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
+        // Also update any active queue document for this driver
+        const queueSnap = await DB().collection("queue")
+            .where("driverId", "==", driverId)
+            .where("status", "in", ["waiting", "called", "assigned", "loading"])
+            .get();
+
+        const batch = DB().batch();
+        queueSnap.forEach((doc) => {
+            batch.update(doc.ref, {
+                isFull,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        });
+        if (!queueSnap.empty) {
+            await batch.commit();
+        }
+
+        // Broadcast to dispatchers via socket if available
+        if (global._io) {
+            global._io.emit("driver_capacity_updated", {driverId, isFull});
+        }
+
         return res.json({success: true, driverId, isFull});
     } catch (error) {
         console.error("[Driver Controller] updateDriverFull error:", error);

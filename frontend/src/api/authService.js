@@ -68,6 +68,17 @@ export const AuthService = {
                         currentUserProfile = profile;
                         callback(profile);
                     } else {
+                        // User document was deleted from Firestore (or never created)
+                        if (currentUserProfile) {
+                            // User was previously logged in and document was deleted in realtime!
+                            console.warn("User document deleted while logged in. Logging out...");
+                            currentUserProfile = null;
+                            await signOut(auth);
+                            localStorage.removeItem("userData");
+                            sessionStorage.setItem("auth_error_message", "Your account has been deleted by an administrator.");
+                            window.location.href = "index.html?reason=account_deleted";
+                            return;
+                        }
                         callback(null, new Error("NOT_REGISTERED"));
                     }
                 },
