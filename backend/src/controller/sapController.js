@@ -20,7 +20,7 @@ exports.getSapData = async (req, res) => {
         if (!sapUrl) throw new Error("SAP_URL environment variable is not set");
 
         const response = await axios.get(sapUrl, {
-            timeout: 15000,
+            timeout: 60000,
             headers: {Accept: "application/json"},
         });
 
