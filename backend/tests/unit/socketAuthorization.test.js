@@ -3,11 +3,13 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../../src/server.js'),'utf8');
-const connectionSource=source.slice(source.indexOf('io.on("connection"'),source.indexOf('\nserver.listen('));
+const middlewareStart=source.indexOf('io.use(async');
+const connectionSource=source.slice(middlewareStart >= 0 ? middlewareStart : source.indexOf('io.on("connection"'),source.indexOf('\nserver.listen('));
 async function connect(profile={role:'driver',status:'active'}) {
   const handlers={}; const emissions=[]; let writes=0; let disconnected=false;
   let onConnection;
-  const io={on(_event,callback){onConnection=callback;},emit(...args){emissions.push(args);},to(){return this;}};
+  const middleware=[];
+  const io={use(handler){middleware.push(handler);},on(_event,callback){onConnection=callback;},emit(...args){emissions.push(args);},to(){return this;}};
   const ref={update:async()=>{writes++;},set:async()=>{writes++;}};
   const query={where(){return this;},limit(){return this;},doc(){return {get:async()=>({exists:Boolean(profile),data:()=>profile})};},get:async()=>({empty:false,docs:[{id:'assignment-a',ref,data:()=>({driverId:'driver-a',tripStatus:'in_transit'})}]})};
   const firestore=()=>({collection:()=>query}); firestore.FieldValue={serverTimestamp:()=>0};
@@ -15,8 +17,12 @@ async function connect(profile={role:'driver',status:'active'}) {
   vm.runInNewContext(connectionSource,{io,admin,require:()=>admin,console:{log(){},warn(){},error(){}},
     lastDriverLocationPersist:new Map(),getDistanceMeters:()=>1000,LOCATION_PERSIST_THROTTLE_MS:600000,MIN_PERSIST_DISTANCE_METERS:100});
   const socket={handshake:{auth:{token:'synthetic'}},data:{},join(){},disconnect(){disconnected=true;},on(event,handler){handlers[event]=handler;},emit(...args){emissions.push(args);}};
-  await onConnection(socket);
-  return {handlers,emissions,get writes(){return writes;},get disconnected(){return disconnected;}};
+  for(const handler of middleware) {
+    const error=await new Promise(resolve=>handler(socket,resolve));
+    if(error) {disconnected=true; break;}
+  }
+  if(!disconnected) await onConnection(socket);
+  return {handlers,emissions,authenticatedBeforeConnection:middleware.length>0,get writes(){return writes;},get disconnected(){return disconnected;}};
 }
 test('R10: capacity socket cannot impersonate a different driver',async()=>{
   const session=await connect(); await session.handlers.driver_is_full({driverId:'driver-b',isFull:true});
@@ -42,4 +48,7 @@ test('R10/R22: disabled and missing profiles register no handlers',async()=>{
 test('R10: legitimate own capacity change still persists and notifies',async()=>{
   const session=await connect(); await session.handlers.driver_is_full({driverId:'driver-a',isFull:true});
   assert.equal(session.writes,1); assert.equal(session.emissions.length,1);
+});
+test('R10: auth finishes in middleware before connection handlers can register',async()=>{
+  const session=await connect(); assert.equal(session.authenticatedBeforeConnection,true);
 });
