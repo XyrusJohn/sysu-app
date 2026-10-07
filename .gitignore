@@ -16,6 +16,8 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+.worktrees/
+.worktrees_backup/
 
 # Secrets & Security
 .env

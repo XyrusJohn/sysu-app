@@ -42,8 +42,12 @@ const { startCleanupScheduler: startIncidentCleanup } = require("./utils/inciden
 const app = express();
 app.use(helmet({contentSecurityPolicy: false}));
 
+// ── Global Middleware ──
+const { errorHandler } = require("./middleware/errorHandler");
+
 // ── Rate limiting ──
 app.set("trust proxy", parseInt(process.env.TRUST_PROXY, 10));
+
 
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -110,7 +114,10 @@ app.use("/api/qr", qrRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/admin", adminRoutes);
 
+app.use(errorHandler);
+
 const server = http.createServer(app);
+
 const io = new Server(server, {
     cors: {
         origin: allowedOrigins,
@@ -141,6 +148,23 @@ const {
     approveRoleRequest,
     rejectRoleRequest,
 } = require("./controllers/admin/roleRequestController.js");
+
+// ── Location persistence throttle (10 minutes) & Smart Movement Check (>=100m) to save Firestore quota ──
+const LOCATION_PERSIST_THROTTLE_MS = 10 * 60 * 1000;
+const MIN_PERSIST_DISTANCE_METERS = 100;
+const lastDriverLocationPersist = new Map(); // driverId -> { time, lat, lng }
+
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 io.on("connection", async (socket) => {
     try {
@@ -313,6 +337,23 @@ io.on("connection", async (socket) => {
             console.log("[driver_moving] (skip persist: invalid coords)");
             return;
         }
+
+        // Smart Movement Check: Throttle Firestore write to once every 10 mins AND >=100m moved
+        const now = Date.now();
+        const lastRecord = lastDriverLocationPersist.get(data.driverId);
+        if (lastRecord) {
+            // Must be at least 10 minutes since last Firestore write
+            if (now - lastRecord.time < LOCATION_PERSIST_THROTTLE_MS) {
+                return;
+            }
+            // Must have moved at least 100 meters (skip if parked or stuck in traffic)
+            const distance = getDistanceMeters(lastRecord.lat, lastRecord.lng, lat, lng);
+            if (distance < MIN_PERSIST_DISTANCE_METERS) {
+                return;
+            }
+        }
+        lastDriverLocationPersist.set(data.driverId, { time: now, lat, lng });
+
         const db = admin.firestore();
         db.collection("sap_assignments")
             .where("driverId", "==", data.driverId)

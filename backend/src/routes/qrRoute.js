@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const qrController = require("../controllers/qrController");
 const {protectRoute} = require("../middleware/protectRoute.js");
+const {authorize} = require("../middleware/authorize.js");
 
 // generate is public (command center QR display page has no auth)
 // verify is public (read-only token status check)
@@ -9,6 +10,6 @@ const {protectRoute} = require("../middleware/protectRoute.js");
 router.get("/generate", qrController.generateToken);
 router.get("/verify", qrController.verifyToken);
 router.post("/scan", protectRoute, qrController.scanToken);
-router.patch("/queue-status", protectRoute, qrController.updateQueueStatus);
+router.patch("/queue-status", protectRoute, authorize(["admin", "super_admin"]), qrController.updateQueueStatus);
 
 module.exports = router;
