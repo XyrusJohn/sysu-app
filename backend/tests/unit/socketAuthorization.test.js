@@ -14,7 +14,7 @@ async function connect(profile={role:'driver',status:'active'}, options={}) {
   let failWrites=false;
   const ref={update:async()=>{writes++;},set:async()=>{writes++;if(failWrites) throw new Error('Synthetic database outage');}};
   const query={where(){return this;},limit(){return this;},doc(){return {onSnapshot(listener){profileListener=listener;return ()=>{stoppedProfile=true;};},get:async()=>({exists:Boolean(profile),data:()=>profile})};},get:async()=>({empty:false,docs:Array.from({length:options.assignmentCount || 1},(_,n)=>({id:`assignment-${n}`,ref,data:()=>({driverId:'driver-a',tripStatus:'in_transit'})}))})};
-  const firestore=()=>({collection:()=>query}); firestore.FieldValue={serverTimestamp:()=>0};
+  const firestore=()=>({collection:name=>name === 'sap_assignments' ? {...query,doc:()=>({get:async()=>({exists:true,data:()=>({driverId:options.assignmentOwner || 'driver-a'})})})} : query}); firestore.FieldValue={serverTimestamp:()=>0};
   const admin={firestore,auth:()=>({verifyIdToken:async()=>({uid:'driver-a',exp:Math.floor(Date.now()/1000)+3600})})};
   const capture=(...args)=>logs.push(args.join(' '));
   vm.runInNewContext(connectionSource,{io,admin,require:()=>admin,console:{log:capture,warn:capture,error:capture},
@@ -82,4 +82,18 @@ test('R27: driver events do not log payload tokens email or POD URLs',async()=>{
   assert.equal(session.logs.join('\n').includes('SYNTHETIC-SECRET'),false);
   assert.equal(session.logs.join('\n').includes('private@example.invalid'),false);
   assert.equal(session.logs.join('\n').includes('private-photo'),false);
+});
+test('R10: driver cannot announce a POD for another driver assignment',async()=>{
+  const session=await connect({role:'driver',status:'active'},{assignmentOwner:'driver-b'});
+  await session.handlers.pod_updated({shipmentDocId:'shipment-b'});
+  assert.equal(session.emissions.length,0);
+});
+test('R10/R27: owned mobile POD notification contains no arbitrary private payload',async()=>{
+  const session=await connect();
+  await session.handlers.pod_updated({shipmentDocId:'shipment-a',source:'driver_app',podUrl:'https://example.invalid/private-photo',token:'SYNTHETIC-SECRET'});
+  assert.equal(session.emissions.length,1);
+  assert.equal(session.emissions[0][1].shipmentDocId,'shipment-a');
+  assert.equal(session.emissions[0][1].podUrl,undefined);
+  assert.equal(session.emissions[0][1].token,undefined);
+  assert.equal(session.logs.join('\n').includes('SYNTHETIC-SECRET'),false);
 });
