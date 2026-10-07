@@ -90,6 +90,11 @@ body {
   overflow: hidden;
 }
 
+/* Gawing silver/grayscale ang default map */
+.leaflet-tile-pane {
+  filter: grayscale(50%) brightness(100%) contrast(90%);
+}
+
 /* Allow text selection in inputs */
 input,
 textarea,

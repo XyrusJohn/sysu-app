@@ -34,12 +34,13 @@ export const initLeafletMap = (containerId = _defaultId) => {
         attributionControl: false,
     });
 
-    const initialTileUrl = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+    const initialTileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
     console.log(`[MapManager:${containerId}] Creating L.tileLayer with URL:`, initialTileUrl);
 
     e.tileLayer = L.tileLayer(initialTileUrl, {
         maxZoom: 19,
-        subdomains: "abcd",
+        subdomains: ["a", "b", "c"],
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     });
 
     e.tileLayer.on("loading", () => {
@@ -399,9 +400,8 @@ export const removeMarker = (driverId, containerId = _defaultId) => {
 export const switchMapTheme = (theme, containerId = _defaultId) => {
     const e = _e(containerId);
     if (!e.map || !e.tileLayer) return;
-    const targetUrl = theme === "light"
-        ? "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-        : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+    // OSM tiles used for all themes; visual theme (dark/light) handled via CSS filter
+    const targetUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
     console.log(`[MapManager:${containerId}] switchMapTheme to "${theme}". Setting TileLayer URL to:`, targetUrl);
     e.tileLayer.setUrl(targetUrl);
 };
