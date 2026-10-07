@@ -37,6 +37,7 @@ import {
     addDoc,
     serverTimestamp,
     getDocs,
+    getDoc,
     limit,
 } from "firebase/firestore";
 
@@ -4588,7 +4589,7 @@ class Dashboard {
                         <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center">
-                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && podMatch?.podImageUrl && podMatch?.podCapturedAt ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
+                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
                         </td>
                     </tr>`;
             }).join("");
@@ -4624,21 +4625,36 @@ class Dashboard {
     }
 
     // POD preview for a specific OBD item
-    openObdPodPreview(obdNumber) {
+    async openObdPodPreview(obdNumber) {
         const key = this._currentDispatchKey;
         if (!key) return;
         // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
         const asgn = this.state.sapAssignments[key];
         const match = asgn?.lineItems?.find(li => li.obdNumber === obdNumber);
-        if (!match || !match.podImageUrl) {
-            console.warn('No POD data for OBD', obdNumber);
-            return;
+
+        let imageUrl = match?.podImageUrl;
+        // If image is stored in pod_images subcollection or empty, fetch it directly
+        if (!imageUrl || imageUrl === 'saved_in_subcollection') {
+            try {
+                const podDocSnap = await getDoc(doc(db, "sap_assignments", key, "pod_images", obdNumber));
+                if (podDocSnap.exists()) {
+                    imageUrl = podDocSnap.data()?.base64Image || podDocSnap.data()?.imageUrl || podDocSnap.data()?.podImageUrl;
+                }
+            } catch (err) {
+                console.warn('Failed to fetch pod image from subcollection:', err);
+            }
         }
+
         const modal = document.getElementById('podPreviewModal');
         if (!modal) return;
         const imgEl = modal.querySelector('#podPreviewImg');
         const tsEl = modal.querySelector('#podTimestamp');
         const signatureContainer = modal.querySelector('#podPreviewSignature');
+
+        if (!imageUrl && (!match?.guardSignatureBase64 && !asgn?.guardSignatureBase64)) {
+            console.warn('No POD data or guard signature for OBD', obdNumber);
+            return;
+        }
 
         // Reset zoom and drag state when opening new POD
         this.state.podZoomLevel = 1;
@@ -4665,7 +4681,8 @@ class Dashboard {
         this.state._lastDragY = 0;
 
         if (imgEl) {
-            imgEl.src = match.podImageUrl;
+            imgEl.src = imageUrl || '';
+            imgEl.style.display = imageUrl ? 'block' : 'none';
             // Reset transform and cursor
             imgEl.style.transform = `scale(${this.state.podZoomLevel})`;
             imgEl.style.cursor = 'zoom-in';
