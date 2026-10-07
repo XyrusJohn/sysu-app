@@ -43,7 +43,15 @@ export const AuthService = {
     },
 
     subscribe(callback) {
-        return onAuthStateChanged(auth, async (user) => {
+        let stopProfile = null;
+        let generation = 0;
+        let closed = false;
+        const stopAuth = onAuthStateChanged(auth, async (user) => {
+            if (closed) return;
+            const activeGeneration = ++generation;
+            stopProfile?.();
+            stopProfile = null;
+            currentUserProfile = null;
             if (!user) {
                 callback(null, new Error("Unauthorized"));
                 return;
@@ -51,9 +59,10 @@ export const AuthService = {
 
             const userDocRef = doc(db, "users", user.uid);
 
-            onSnapshot(
+            stopProfile = onSnapshot(
                 userDocRef,
                 async (snapshot) => {
+                    if (closed || generation !== activeGeneration) return;
                     if (snapshot.exists()) {
                         const profile = {
                             id: snapshot.id,
@@ -83,11 +92,20 @@ export const AuthService = {
                     }
                 },
                 (err) => {
+                    if (closed || generation !== activeGeneration) return;
                     console.error("Auth listener error:", err);
                     callback(null, new Error("NOT_REGISTERED"));
                 },
             );
         });
+        return () => {
+            if (closed) return;
+            closed = true;
+            generation++;
+            stopProfile?.();
+            stopProfile = null;
+            stopAuth();
+        };
     },
 
     async logout() {

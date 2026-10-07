@@ -16,12 +16,12 @@ test('R32: missing project fails instead of defaulting to production', () => {
   assert.throws(initializeFirebase, /FIREBASE_PROJECT_ID/);
   assert.equal(initialized,undefined);
 });
-test('R26: production rejects accidental emulator configuration', () => {
+test('R18/R32: production rejects accidental emulator configuration', () => {
   Object.assign(process.env,{NODE_ENV:'production',FIREBASE_PROJECT_ID:'test-staging',FIRESTORE_EMULATOR_HOST:'127.0.0.1:8085'});
   assert.throws(initializeFirebase,/emulator/i);
   assert.equal(initialized,undefined);
 });
-test('R26: malformed credentials fail without exposing their prefix', () => {
+test('R18/R27: malformed credentials fail without exposing their prefix', () => {
   process.env.FIREBASE_PROJECT_ID='test-staging';
   process.env.FIREBASE_SERVICE_ACCOUNT_JSON='SECRET-PREFIX-invalid-json';
   const logs=[];

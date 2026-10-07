@@ -40,3 +40,12 @@ test('R48: guard full name collapses repeated whitespace',async () => {
   const result=await invoke(ctrl.createGuard,{firstName:'  Ana   Maria  ',lastName:'  Dela\tCruz  ',middleInitial:'  B  '});
   assert.equal(result.body.fullName,'Ana Maria B Dela Cruz');
 });
+test('R51: an imported ID collision is skipped without overwriting it',async () => {
+  const ctrl=require('../../src/controllers/admin/truckCompanyController');
+  await invoke(ctrl.createTruckCompany,{forwarderCode:'TEST-A',name:'First'});
+  await db.collection('truck_company').doc('02').set({legacy:true});
+  const result=await invoke(ctrl.createTruckCompany,{forwarderCode:'TEST-B',name:'Next'});
+  assert.equal(result.body.id,'03');
+  assert.deepEqual((await db.collection('truck_company').doc('02').get()).data(),{legacy:true});
+  assert.equal((await db.collection('id_sequences').doc('truck_company').get()).data().maximum,3);
+});
