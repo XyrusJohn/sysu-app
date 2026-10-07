@@ -48,6 +48,25 @@ export const initLeafletMap = (containerId = _defaultId) => {
 
     e.tileLayer.on("load", () => {
         console.log(`[MapManager:${containerId}] TileLayer finished loading all visible tiles successfully!`);
+        // Diagnostic: Scan DOM and image tiles to detect where 'API KEY' is coming from
+        setTimeout(() => {
+            const allImgs = Array.from(document.querySelectorAll(`#${containerId} img`));
+            console.log(`[MapManager:${containerId}] Loaded tile image count in container:`, allImgs.length);
+            if (allImgs.length > 0) {
+                console.log(`[MapManager:${containerId}] Sample active tile URL:`, allImgs[0].src);
+            }
+            const errorNodes = [];
+            document.querySelectorAll('*').forEach(el => {
+                if (el.children.length === 0 && (el.textContent || '').includes('API KEY')) {
+                    errorNodes.push({ tag: el.tagName, text: el.textContent, class: el.className, id: el.id, parent: el.parentElement?.tagName });
+                }
+            });
+            if (errorNodes.length > 0) {
+                console.error(`[MapManager:${containerId}] FOUND "API KEY" in DOM:`, errorNodes);
+            } else {
+                console.log(`[MapManager:${containerId}] NO "API KEY" text node found anywhere in the DOM tree.`);
+            }
+        }, 500);
     });
 
     e.tileLayer.on("tileerror", (errorEvent) => {
