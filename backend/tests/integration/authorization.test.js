@@ -7,13 +7,18 @@ const profiles = {
   inactive: { role: 'fleet_manager', status: 'inactive' }, staff: { role: 'fleet_manager', status: 'active' },
 };
 let capacityWrites = 0;
-const fakeDb = { batch: () => ({update() {}, commit: async () => {}}), collection: (name) => ({ where: () => ({where: () => ({get: async () => ({empty: true, forEach() {}})})}), doc: (uid) => ({update: async () => {capacityWrites++;}, get: async () => ({
+const fakeDb = {runTransaction: async callback => callback({get: async ref => ref.collectionName === 'qr_tokens'
+  ? {exists:true,data:()=>({used:false,expiresAt:{toMillis:()=>Date.now()+60000}})} : {empty:true,exists:false},set(){},update(){}}),
+  batch: () => ({update() {}, commit: async () => {}}), collection: (name) => ({ where: () => ({where: () => ({limit: () => ({}),get: async () => ({empty: true, forEach() {}})})}), doc: (uid) => ({collectionName:name,id:uid || 'generated',update: async () => {capacityWrites++;}, get: async () => ({
   exists: Boolean(profiles[uid]), data: () => name === 'users' ? profiles[uid] : { driverName: 'Synthetic', privateNote: 'private' },
 }) }) }) };
 const firestore = () => fakeDb;
 firestore.FieldValue = {serverTimestamp: () => 'time'};
 require.cache[configPath] = { id: configPath, filename: configPath, loaded: true, exports: { admin: {
-  auth: () => ({ verifyIdToken: async (token) => ({ uid: token }) }), firestore,
+  auth: () => ({ verifyIdToken: async (token, checkRevoked) => {
+    if(token === 'revoked' && checkRevoked) throw new Error('Token revoked');
+    return {uid:token === 'revoked' ? 'staff' : token};
+  } }), firestore,
 } } };
 // Isolate business handlers: this test proves the real route/middleware boundary,
 // independent of unrelated assignment and SAP I/O failures.
@@ -27,6 +32,7 @@ const app = express();
 app.use(express.json());
 app.use('/api/sap', require('../../src/routes/sapAssignmentRoute'));
 app.use('/api/drivers', require('../../src/routes/driverRoute'));
+app.use('/api/qr', require('../../src/routes/qrRoute'));
 let server, url;
 test.before(async () => {
   server = app.listen(0, '127.0.0.1');
@@ -68,4 +74,13 @@ test('R10: driver cannot change another driver capacity', async () => {
   });
   assert.equal(response.status, 403);
   assert.equal(capacityWrites, 0);
+});
+test('R11 regression: active driver HTTP scan receives its authorized profile',async()=>{
+  const response=await fetch(`${url}/api/qr/scan`,{method:'POST',headers:{Authorization:'Bearer driver','Content-Type':'application/json'},
+    body:JSON.stringify({token:'synthetic',driverId:'driver',truckType:'truck',plateNumber:'TEST'})});
+  assert.equal(response.status,200);
+});
+test('R22: revoked HTTP token is rejected even when profile remains active',async()=>{
+  const response=await fetch(`${url}/api/drivers/staff`,{headers:{Authorization:'Bearer revoked'}});
+  assert.equal(response.status,401);
 });
