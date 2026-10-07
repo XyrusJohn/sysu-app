@@ -17,11 +17,15 @@ const _e = (id = _defaultId) => (_reg[id] ??= { map: null, tileLayer: null, mark
 export const markers         = _e(_defaultId).markers;
 export const trackingMarkers = _e("trackingMap").markers;
 
-// ── Map Init ───────────────────────────────────────────────────────────────────
-
 export const initLeafletMap = (containerId = _defaultId) => {
     const e = _e(containerId);
-    if (e.map) return e.map;
+    if (e.map) {
+        console.log(`[MapManager:${containerId}] reusing existing Leaflet map instance. Tile URL:`, e.tileLayer?._url);
+        return e.map;
+    }
+
+    const containerEl = document.getElementById(containerId);
+    console.log(`[MapManager:${containerId}] Initializing Leaflet map. DOM element found:`, !!containerEl, containerEl);
 
     e.map = L.map(containerId, {
         center: [14.5995, 120.9842],
@@ -30,10 +34,31 @@ export const initLeafletMap = (containerId = _defaultId) => {
         attributionControl: false,
     });
 
-    e.tileLayer = L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        { maxZoom: 19, subdomains: "abcd" }
-    ).addTo(e.map);
+    const initialTileUrl = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+    console.log(`[MapManager:${containerId}] Creating L.tileLayer with URL:`, initialTileUrl);
+
+    e.tileLayer = L.tileLayer(initialTileUrl, {
+        maxZoom: 19,
+        subdomains: "abcd",
+    });
+
+    e.tileLayer.on("loading", () => {
+        console.log(`[MapManager:${containerId}] TileLayer started loading tiles from:`, e.tileLayer._url);
+    });
+
+    e.tileLayer.on("load", () => {
+        console.log(`[MapManager:${containerId}] TileLayer finished loading all visible tiles successfully!`);
+    });
+
+    e.tileLayer.on("tileerror", (errorEvent) => {
+        console.error(`[MapManager:${containerId}] Tile FAILED to load:`, {
+            tileSrc: errorEvent.tile?.src,
+            coords: errorEvent.coords,
+            error: errorEvent.error,
+        });
+    });
+
+    e.tileLayer.addTo(e.map);
 
     _injectCSS();
 
@@ -355,9 +380,9 @@ export const removeMarker = (driverId, containerId = _defaultId) => {
 export const switchMapTheme = (theme, containerId = _defaultId) => {
     const e = _e(containerId);
     if (!e.map || !e.tileLayer) return;
-    e.tileLayer.setUrl(
-        theme === "light"
-            ? "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-            : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-    );
+    const targetUrl = theme === "light"
+        ? "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+        : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+    console.log(`[MapManager:${containerId}] switchMapTheme to "${theme}". Setting TileLayer URL to:`, targetUrl);
+    e.tileLayer.setUrl(targetUrl);
 };
