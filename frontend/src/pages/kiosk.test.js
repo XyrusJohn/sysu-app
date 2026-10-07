@@ -30,7 +30,8 @@ describe('R02 anonymous kiosk contract', () => {
     const {dom, win, privateRead} = await boot(async () => ({ok: true, json: async () => ({success: true,
       data: {queues: {'4W': [{position: 1}]}, truncated: false, asOf: '2026-10-08T00:00:00Z'}})}));
     expect(privateRead).not.toHaveBeenCalled();
-    expect(win.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/qr/queue-display'));
+    expect(win.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/qr/queue-display'),
+      expect.objectContaining({signal: expect.anything()}));
     expect(win.document.getElementById('body-4W').textContent).toContain('#001');
     expect(win.document.getElementById('cnt-4W').textContent).toBe('1');
     dom.window.close();
