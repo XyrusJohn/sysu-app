@@ -5,14 +5,15 @@ const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../../src/server.js'),'utf8');
 const middlewareStart=source.indexOf('io.use(async');
 const connectionSource=source.slice(middlewareStart >= 0 ? middlewareStart : source.indexOf('io.on("connection"'),source.indexOf('\nserver.listen('));
-async function connect(profile={role:'driver',status:'active'}) {
+async function connect(profile={role:'driver',status:'active'}, options={}) {
   const handlers={}; const emissions=[]; let writes=0; let disconnected=false;
   let profileListener, stoppedProfile=false;
   let onConnection;
   const middleware=[];
   const io={use(handler){middleware.push(handler);},on(_event,callback){onConnection=callback;},emit(...args){emissions.push(args);},to(){return this;}};
-  const ref={update:async()=>{writes++;},set:async()=>{writes++;}};
-  const query={where(){return this;},limit(){return this;},doc(){return {onSnapshot(listener){profileListener=listener;return ()=>{stoppedProfile=true;};},get:async()=>({exists:Boolean(profile),data:()=>profile})};},get:async()=>({empty:false,docs:[{id:'assignment-a',ref,data:()=>({driverId:'driver-a',tripStatus:'in_transit'})}]})};
+  let failWrites=false;
+  const ref={update:async()=>{writes++;},set:async()=>{writes++;if(failWrites) throw new Error('Synthetic database outage');}};
+  const query={where(){return this;},limit(){return this;},doc(){return {onSnapshot(listener){profileListener=listener;return ()=>{stoppedProfile=true;};},get:async()=>({exists:Boolean(profile),data:()=>profile})};},get:async()=>({empty:false,docs:Array.from({length:options.assignmentCount || 1},(_,n)=>({id:`assignment-${n}`,ref,data:()=>({driverId:'driver-a',tripStatus:'in_transit'})}))})};
   const firestore=()=>({collection:()=>query}); firestore.FieldValue={serverTimestamp:()=>0};
   const admin={firestore,auth:()=>({verifyIdToken:async()=>({uid:'driver-a',exp:Math.floor(Date.now()/1000)+3600})})};
   vm.runInNewContext(connectionSource,{io,admin,require:()=>admin,console:{log(){},warn(){},error(){}},
@@ -23,7 +24,7 @@ async function connect(profile={role:'driver',status:'active'}) {
     if(error) {disconnected=true; break;}
   }
   if(!disconnected) await onConnection(socket);
-  return {handlers,emissions,authenticatedBeforeConnection:middleware.length>0,changeProfile(data){assert.equal(typeof profileListener,'function');profileListener({exists:Boolean(data),data:()=>data});},get stoppedProfile(){return stoppedProfile;},get writes(){return writes;},get disconnected(){return disconnected;}};
+  return {handlers,emissions,authenticatedBeforeConnection:middleware.length>0,set failWrites(value){failWrites=value;},changeProfile(data){assert.equal(typeof profileListener,'function');profileListener({exists:Boolean(data),data:()=>data});},get stoppedProfile(){return stoppedProfile;},get writes(){return writes;},get disconnected(){return disconnected;}};
 }
 test('R10: capacity socket cannot impersonate a different driver',async()=>{
   const session=await connect(); await session.handlers.driver_is_full({driverId:'driver-b',isFull:true});
@@ -58,4 +59,17 @@ test('R22: established socket disconnects and cleans listener when account chang
     const session=await connect();session.changeProfile(data);
     assert.equal(session.disconnected,true);assert.equal(session.stoppedProfile,true);
   }
+});
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+test('R39: failed GPS persistence does not suppress the next retry',async()=>{
+  const session=await connect();session.failWrites=true;
+  session.handlers.driver_moving({driverId:'driver-a',lat:14,lng:121});await flush();
+  session.failWrites=false;
+  session.handlers.driver_moving({driverId:'driver-a',lat:14,lng:121});await flush();
+  assert.equal(session.writes,2);
+});
+test('R39: GPS persists for every active assignment and accepts zero coordinates',async()=>{
+  const session=await connect({role:'driver',status:'active'},{assignmentCount:2});
+  session.handlers.driver_moving({driverId:'driver-a',lat:0,lng:0});await flush();
+  assert.equal(session.writes,2);
 });
