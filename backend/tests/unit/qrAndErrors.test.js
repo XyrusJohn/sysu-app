@@ -28,7 +28,7 @@ test('R11: expired QR verification is rejected before cleanup', async () => {
   assert.equal((await invoke(qr.verifyToken, { query: { token: 'token' } })).status, 410);
 });
 test('R11: authenticated user cannot scan as another driver', async () => {
-  const response = await invoke(qr.scanToken, { user: { uid: 'driver-a' }, body: { token: 'token', driverId: 'driver-b', truckType: 'truck', plateNumber: 'TEST' } });
+  const response = await invoke(qr.scanToken, { user: { uid: 'driver-a' }, userData: {role: 'driver', status: 'active'}, body: { token: 'token', driverId: 'driver-b', truckType: 'truck', plateNumber: 'TEST' } });
   assert.equal(response.status, 403);
   assert.equal(writes, 0);
 });
@@ -48,4 +48,14 @@ test('R21: production server error does not expose internal paths', async () => 
   process.env.NODE_ENV = 'production';
   const response = await invoke((req, res) => errorHandler(new Error('private internal SAP password path'), req, res), {});
   assert.equal(response.body.error, 'Internal Server Error');
+});
+test('R27: error logs exclude exception secrets and correlate the response',async()=>{
+  const logs=[]; const prior=console.error;
+  console.error=(...args)=>logs.push(args.join(' '));
+  let response;
+  try {response=await invoke((req,res)=>errorHandler(new Error('SYNTHETIC-PRIVATE-TOKEN'),req,res),{});}
+  finally {console.error=prior;}
+  assert.equal(logs.join('\n').includes('SYNTHETIC-PRIVATE-TOKEN'),false);
+  assert.match(response.body.requestId,/^[a-f0-9-]{36}$/);
+  assert.equal(logs.join('\n').includes(response.body.requestId),true);
 });

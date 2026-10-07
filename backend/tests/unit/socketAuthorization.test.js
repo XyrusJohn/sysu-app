@@ -6,7 +6,7 @@ const source=fs.readFileSync(require.resolve('../../src/server.js'),'utf8');
 const middlewareStart=source.indexOf('io.use(async');
 const connectionSource=source.slice(middlewareStart >= 0 ? middlewareStart : source.indexOf('io.on("connection"'),source.indexOf('\nserver.listen('));
 async function connect(profile={role:'driver',status:'active'}, options={}) {
-  const handlers={}; const emissions=[]; let writes=0; let disconnected=false;
+  const handlers={}; const emissions=[]; const logs=[]; let writes=0; let disconnected=false;
   let profileListener, stoppedProfile=false;
   let onConnection;
   const middleware=[];
@@ -16,7 +16,8 @@ async function connect(profile={role:'driver',status:'active'}, options={}) {
   const query={where(){return this;},limit(){return this;},doc(){return {onSnapshot(listener){profileListener=listener;return ()=>{stoppedProfile=true;};},get:async()=>({exists:Boolean(profile),data:()=>profile})};},get:async()=>({empty:false,docs:Array.from({length:options.assignmentCount || 1},(_,n)=>({id:`assignment-${n}`,ref,data:()=>({driverId:'driver-a',tripStatus:'in_transit'})}))})};
   const firestore=()=>({collection:()=>query}); firestore.FieldValue={serverTimestamp:()=>0};
   const admin={firestore,auth:()=>({verifyIdToken:async()=>({uid:'driver-a',exp:Math.floor(Date.now()/1000)+3600})})};
-  vm.runInNewContext(connectionSource,{io,admin,require:()=>admin,console:{log(){},warn(){},error(){}},
+  const capture=(...args)=>logs.push(args.join(' '));
+  vm.runInNewContext(connectionSource,{io,admin,require:()=>admin,console:{log:capture,warn:capture,error:capture},
     setTimeout:()=>({unref(){}}),clearTimeout(){},lastDriverLocationPersist:new Map(),getDistanceMeters:()=>1000,LOCATION_PERSIST_THROTTLE_MS:600000,MIN_PERSIST_DISTANCE_METERS:100});
   const socket={handshake:{auth:{token:'synthetic'}},data:{},join(){},disconnect(){disconnected=true;handlers.disconnect?.();},once(event,handler){handlers[event]=handler;},on(event,handler){handlers[event]=handler;},emit(...args){emissions.push(args);}};
   for(const handler of middleware) {
@@ -24,7 +25,7 @@ async function connect(profile={role:'driver',status:'active'}, options={}) {
     if(error) {disconnected=true; break;}
   }
   if(!disconnected) await onConnection(socket);
-  return {handlers,emissions,authenticatedBeforeConnection:middleware.length>0,set failWrites(value){failWrites=value;},changeProfile(data){assert.equal(typeof profileListener,'function');profileListener({exists:Boolean(data),data:()=>data});},get stoppedProfile(){return stoppedProfile;},get writes(){return writes;},get disconnected(){return disconnected;}};
+  return {handlers,emissions,logs,authenticatedBeforeConnection:middleware.length>0,set failWrites(value){failWrites=value;},changeProfile(data){assert.equal(typeof profileListener,'function');profileListener({exists:Boolean(data),data:()=>data});},get stoppedProfile(){return stoppedProfile;},get writes(){return writes;},get disconnected(){return disconnected;}};
 }
 test('R10: capacity socket cannot impersonate a different driver',async()=>{
   const session=await connect(); await session.handlers.driver_is_full({driverId:'driver-b',isFull:true});
@@ -72,4 +73,13 @@ test('R39: GPS persists for every active assignment and accepts zero coordinates
   const session=await connect({role:'driver',status:'active'},{assignmentCount:2});
   session.handlers.driver_moving({driverId:'driver-a',lat:0,lng:0});await flush();
   assert.equal(session.writes,2);
+});
+test('R27: driver events do not log payload tokens email or POD URLs',async()=>{
+  const session=await connect();
+  session.handlers.driver_moving({driverId:'driver-a',lat:14,lng:121,token:'SYNTHETIC-SECRET',email:'private@example.invalid',podUrl:'https://example.invalid/private-photo'});
+  session.handlers.update_status({driverId:'driver-a',status:'online',token:'SYNTHETIC-SECRET'});
+  await flush();
+  assert.equal(session.logs.join('\n').includes('SYNTHETIC-SECRET'),false);
+  assert.equal(session.logs.join('\n').includes('private@example.invalid'),false);
+  assert.equal(session.logs.join('\n').includes('private-photo'),false);
 });
