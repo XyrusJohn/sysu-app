@@ -6,11 +6,14 @@ const profiles = {
   driver: { role: 'driver', status: 'active' }, pending: { role: 'pending', status: 'inactive' },
   inactive: { role: 'fleet_manager', status: 'inactive' }, staff: { role: 'fleet_manager', status: 'active' },
 };
-const fakeDb = { collection: (name) => ({ doc: (uid) => ({ get: async () => ({
+let capacityWrites = 0;
+const fakeDb = { batch: () => ({update() {}, commit: async () => {}}), collection: (name) => ({ where: () => ({where: () => ({get: async () => ({empty: true, forEach() {}})})}), doc: (uid) => ({update: async () => {capacityWrites++;}, get: async () => ({
   exists: Boolean(profiles[uid]), data: () => name === 'users' ? profiles[uid] : { driverName: 'Synthetic', privateNote: 'private' },
 }) }) }) };
+const firestore = () => fakeDb;
+firestore.FieldValue = {serverTimestamp: () => 'time'};
 require.cache[configPath] = { id: configPath, filename: configPath, loaded: true, exports: { admin: {
-  auth: () => ({ verifyIdToken: async (token) => ({ uid: token }) }), firestore: () => fakeDb,
+  auth: () => ({ verifyIdToken: async (token) => ({ uid: token }) }), firestore,
 } } };
 // Isolate business handlers: this test proves the real route/middleware boundary,
 // independent of unrelated assignment and SAP I/O failures.
@@ -46,4 +49,23 @@ test('R09: active staff can access the dispatch boundary', async () => {
 test('R02: driver document endpoint requires authentication', async () => {
   const response = await fetch(`${url}/api/drivers/driver`);
   assert.equal(response.status, 401);
+});
+test('R02: own driver response excludes unapproved fields', async () => {
+  const response = await fetch(`${url}/api/drivers/driver`, {headers:{Authorization:'Bearer driver'}});
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).data.privateNote,undefined);
+});
+test('R02: driver cannot read another driver document', async () => {
+  const response = await fetch(`${url}/api/drivers/staff`, {headers:{Authorization:'Bearer driver'}});
+  assert.equal(response.status,403);
+});
+
+test('R10: driver cannot change another driver capacity', async () => {
+  capacityWrites = 0;
+  const response = await fetch(`${url}/api/drivers/staff/full`, {
+    method: 'PATCH', headers: {Authorization: 'Bearer driver', 'Content-Type': 'application/json'},
+    body: JSON.stringify({isFull: true}),
+  });
+  assert.equal(response.status, 403);
+  assert.equal(capacityWrites, 0);
 });
