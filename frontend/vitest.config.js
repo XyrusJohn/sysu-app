@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
+    // Bound concurrent jsdom/Vite initialization on developer machines and CI.
+    maxWorkers: 2,
     environment: "jsdom",
     env: {
       VITE_RELEASE_TARGET: 'local',

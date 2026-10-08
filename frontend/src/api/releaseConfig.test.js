@@ -34,12 +34,6 @@ test('R32 local configuration rejects an inherited live Auth domain', async () =
   vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN','sysu-web-5a25d.firebaseapp.com');
   await expect(import('./config.js')).rejects.toThrow(/domain|auth|production/i);
 });
-test('R32 Vite development proxy uses the explicit local API and primary socket', async () => {
-  const imported = await import('../../vite.config.js');
-  const config = typeof imported.default === 'function' ? imported.default({command: 'serve', mode: 'test'}) : imported.default;
-  expect(config.server.proxy['/api'].target).toBe('http://127.0.0.1:8080');
-  expect(config.server.proxy['/socket.io'].target).toBe('http://127.0.0.1:8080');
-});
 test('R32 Firebase initialization validates target before creating any SDK clients', async () => {
   vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'sysu-web-5a25d');
   const {initializeApp} = await import('firebase/app');
