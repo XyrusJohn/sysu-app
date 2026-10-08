@@ -1,6 +1,10 @@
 import {initializeApp} from "firebase/app";
-import {getAuth, GoogleAuthProvider} from "firebase/auth";
-import {getFirestore} from "firebase/firestore";
+import {getAuth, GoogleAuthProvider, connectAuthEmulator} from "firebase/auth";
+import {getFirestore, connectFirestoreEmulator} from "firebase/firestore";
+import {resolveReleaseConfig, resolveLocalEmulators} from './releaseConfig.js';
+
+resolveReleaseConfig(import.meta.env);
+const emulators = import.meta.env.VITE_RELEASE_TARGET === 'local' ? resolveLocalEmulators(import.meta.env) : null;
 
 // Your web app's Firebase configuration for sysu-app
 const firebaseConfig = {
@@ -16,4 +20,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+if (emulators) {
+    connectAuthEmulator(auth, emulators.authUrl, {disableWarnings: true});
+    connectFirestoreEmulator(db, emulators.firestoreHost, emulators.firestorePort);
+}
 export const googleProvider = new GoogleAuthProvider();

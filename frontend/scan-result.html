@@ -167,7 +167,7 @@
   <body>
     <div class="logo">SYSU <span>Queue</span></div>
 
-    <div class="card">
+    <div class="card" role="status" aria-live="polite">
       <!-- Scanning state -->
       <div id="state-scanning" class="state active">
         <div class="scan-icon">
@@ -193,8 +193,8 @@
             </svg>
           </div>
         </div>
-        <div class="success-title">You're in the queue!</div>
-        <div class="success-sub">The yard team has received your spot.<br>Please proceed to the loading zone.</div>
+        <div class="success-title">QR verification</div>
+        <div class="success-sub">Complete queue admission in the authenticated driver app.</div>
         <div id="verified-token" class="token-tag"></div>
       </div>
 
@@ -212,72 +212,6 @@
       </div>
     </div>
 
-    <script>
-      const BACKEND_URL = 'https://sysu-app-production.up.railway.app/api/qr';
-      const token = new URLSearchParams(window.location.search).get('token');
-
-      const stateScanning = document.getElementById('state-scanning');
-      const stateSuccess  = document.getElementById('state-success');
-      const stateError    = document.getElementById('state-error');
-      const errTitle      = document.getElementById('err-title');
-      const errMsg        = document.getElementById('err-msg');
-      const verifiedToken = document.getElementById('verified-token');
-      const pulse         = document.getElementById('pulse');
-
-      if (!token) {
-        showError('No Token', 'No token found in URL. Please scan the QR code again.');
-        return;
-      }
-
-      function switchTo(id) {
-        [stateScanning, stateSuccess, stateError].forEach(s => s.classList.remove('active'));
-        document.getElementById(id).classList.add('active');
-      }
-
-      function showSuccess() {
-        verifiedToken.textContent = token;
-        // pulse animation
-        if (pulse) { pulse.style.display = 'block'; }
-        switchTo('state-success');
-        // auto-dismiss after 5 seconds (driver can just close the page)
-      }
-
-      function showError(title, msg) {
-        errTitle.textContent = title || 'Verification Failed';
-        errMsg.textContent  = msg || 'An unexpected error occurred.';
-        switchTo('state-error');
-      }
-
-      document.getElementById('retryBtn').addEventListener('click', () => {
-        // Re-verify the same token
-        switchTo('state-scanning');
-        verifyToken();
-      });
-
-      async function verifyToken() {
-        try {
-          const res = await fetch(BACKEND_URL + '/verify?token=' + encodeURIComponent(token), {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' }
-          });
-
-          if (res.ok) {
-            showSuccess();
-          } else if (res.status === 410) {
-            const data = await res.json().catch(() => ({}));
-            showError('QR Expired', data.message || 'This QR has expired. Please get a new one from the yard TV.');
-          } else if (res.status === 404) {
-            showError('Invalid QR', 'This QR code is not recognized. Please scan the QR from the yard TV.');
-          } else {
-            const data = await res.json().catch(() => ({}));
-            showError('Verification Failed', data.message || 'Could not verify this QR code. Please try again.');
-          }
-        } catch (e) {
-          showError('Connection Error', 'Cannot reach the server. Make sure you have internet connection and try again.');
-        }
-      }
-
-      verifyToken();
-    </script>
+    <script type="module" src="/src/pages/scanResult.js"></script>
   </body>
 </html>
