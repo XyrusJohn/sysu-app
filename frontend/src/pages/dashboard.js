@@ -121,13 +121,9 @@ class Dashboard {
 
         AuthService.subscribe((user, error) => {
             if (error) {
-                // Only redirect on actual NOT_REGISTERED (missing profile) errors,
-                // NOT on Firestore permission issues (those still allow the UX to show)
-                if (error.message === "NOT_REGISTERED") {
+                if (["NOT_REGISTERED", "Unauthorized", "ACCOUNT_DISABLED"].includes(error.message)) {
                     window.location.href = "index.html";
                 }
-                // Don't redirect on permission errors —" let the dashboard render
-                // with restricted features (drivers/queue will just show empty)
                 return;
             }
 

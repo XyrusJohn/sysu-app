@@ -74,6 +74,15 @@ export const AuthService = {
                         if (currentUserProfile && currentUserProfile.role !== profile.role) {
                             profile.roleChanged = true;
                         }
+                        if (profile.status === 'disabled' || (profile.status === 'inactive' && profile.role !== 'pending')) {
+                            currentUserProfile = null;
+                            try { await signOut(auth); } catch {
+                                // A persistence failure must never publish a disabled profile.
+                            }
+                            localStorage.removeItem('userData');
+                            if (!closed && generation === activeGeneration) callback(null, new Error('ACCOUNT_DISABLED'));
+                            return;
+                        }
                         currentUserProfile = profile;
                         callback(profile);
                     } else {

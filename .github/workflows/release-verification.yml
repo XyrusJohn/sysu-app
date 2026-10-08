@@ -44,6 +44,12 @@ jobs:
         run: node backend/node_modules/firebase-tools/lib/bin/firebase.js emulators:exec --project demo-sysu-security --config firebase.test.json --only auth,firestore "node --test --test-concurrency=1 backend/tests/rules/*.spec.mjs"
       - name: Build minimal production container
         run: docker build --tag sysu-app:verification .
+      - name: Install Chromium
+        run: node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Desktop, mobile browser and real socket acceptance
+        env:
+          SYSU_E2E_DIST: frontend/dist
+        run: node backend/node_modules/firebase-tools/lib/bin/firebase.js emulators:exec --project demo-sysu-security --config firebase.test.json --only auth,firestore "node frontend/node_modules/playwright/cli.js test --config frontend/playwright.config.js"
       - name: Container user and secret inventory
         run: |
           test "$(docker inspect --format '{{.Config.User}}' sysu-app:verification)" = node

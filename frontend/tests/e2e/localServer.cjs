@@ -5,7 +5,8 @@ const work=path.join(root,'.tools/e2e-work');fs.mkdirSync(work,{recursive:true})
 const rows=[{SAPDispatchNumber:'e2e-dispatch',OBDNumber:'000001',OBDItem:'001',Quantity:'10',ShipToPartyName:'Synthetic',ShipToParty:'1',Address:'Synthetic Address',TruckType:'4W',Driver:'',Delivery:'',PgiStatus:'X'}];
 const sap=http.createServer((_req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({d:{results:rows}}));}).listen(18081,'127.0.0.1');
 const backend=spawn(process.execPath,[path.join(root,'backend/src/server.js')],{cwd:work,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,NODE_ENV:'development',PORT:'8080',RELEASE_VERSION:'local-e2e',FIREBASE_PROJECT_ID:'demo-sysu-security',FIRESTORE_EMULATOR_HOST:'127.0.0.1:8085',FIREBASE_AUTH_EMULATOR_HOST:'127.0.0.1:9099',ALLOWED_ORIGINS:'http://127.0.0.1:5173',SAP_URL:'http://127.0.0.1:18081',RATE_LIMIT_MAX:'10000'},stdio:'ignore'});
-const dist=path.join(root,'.tools/clean-release-1/frontend/dist');
+const dist=path.resolve(root,process.env.SYSU_E2E_DIST||'.tools/clean-release-1/frontend/dist');
+if(!dist.startsWith(root+path.sep))throw new Error('E2E artifact must be inside the workspace');
 const staticServer=http.createServer((req,res)=>{
  let filename;try{filename=decodeURIComponent(new URL(req.url,'http://127.0.0.1').pathname);}catch{res.writeHead(400).end();return;}
  const file=path.resolve(dist,'.'+(filename==='/'?'/index.html':filename));
