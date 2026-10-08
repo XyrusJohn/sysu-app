@@ -60,6 +60,7 @@ vi.mock('../api/socket.js', () => ({
   socket: { on: vi.fn(), off: vi.fn() },
   EVENTS: { POD_UPDATED: 'pod_updated' },
   getDriverSocket: vi.fn(),
+  connectDriverSocket: vi.fn(),
 }));
 
 describe('R48 elapsed timestamp display', () => {

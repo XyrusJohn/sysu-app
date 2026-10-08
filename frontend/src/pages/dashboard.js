@@ -15,7 +15,7 @@ import {
     fitAllDrivers,
     clearOfflineDrivers,
 } from "../components/MapTrackingPanel.js";
-import { EVENTS, socket, getDriverSocket } from "../api/socket.js";
+import { EVENTS, socket, getDriverSocket, connectDriverSocket } from "../api/socket.js";
 import { AuthService } from "../api/authService.js";
 import { SAPService } from "../api/sapService.js";
 import { SAPAssignmentService } from "../api/sapAssignmentService.js";
@@ -1464,19 +1464,7 @@ export class Dashboard {
 
         // Connect if not already connected (with Firebase auth token for sysu-go Railway)
         if (!driverSocket.connected) {
-            if (auth.currentUser) {
-                try {
-                    const token = await auth.currentUser.getIdToken(false);
-                    driverSocket.auth = { token };
-                    driverSocket.connect();
-                } catch (err) {
-                    console.error("[LiveScans] Failed to get Firebase token:", err);
-                    driverSocket.connect(); // try anyway
-                }
-            } else {
-                console.warn("[LiveScans] No Firebase user, connecting driverSocket without auth");
-                driverSocket.connect();
-            }
+            await connectDriverSocket();
         }
 
         // Diagnostic listeners for the driver's secondary socket.
