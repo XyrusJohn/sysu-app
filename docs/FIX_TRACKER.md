@@ -8,6 +8,8 @@ Batayan: [Production release review](PRODUCTION_RELEASE_REVIEW_2026-10-07.md) at
 
 ## Paano mag-close ng finding
 
+Shared mobile-rule checkpoint (2026-10-08): canonical `frontend/firestore.rules` now requires explicit active approved roles and driver-only owned mutations, supports bounded split-name pending registration/basic completion, and matches the sysu-go mirror. The latest combined demo suite passed 58/58, including 10 existing web rule regressions; these are not 58 new web tests. Deployed rules/migration and remaining mobile location/POD/profile contracts are still unverified. See [mobile tracker](../../sysu-go/docs/FIX_TRACKER.md) and [mobile evidence](../../sysu-go/docs/RELEASE_FIXES_TDD.md). Do not deploy strict shared rules alone as proof that every legacy mobile write works.
+
 Markahang DONE lamang kapag natugunan ang buong “done when” at may naitalang fix commit o configuration version, test scenario/command, environment, expected/actual result, at redacted evidence link. Para sa regression tests, patunayang nahuhuli nila ang dating failure at pumapasa sa fix. Para sa deployment findings, hindi sapat ang local test: kailangan ang staging/deployed configuration evidence na tinukoy.
 
 Gamitin ang synthetic data, isolated Firebase emulators/staging, at fake SAP fixtures. Walang destructive reproduction sa production. Hindi pa umiiral ang lahat ng proposed test scripts sa test plan; ang test IDs sa ibaba ay planned acceptance scenarios, hindi executable commands o passing results.
