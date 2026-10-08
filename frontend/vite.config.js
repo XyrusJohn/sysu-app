@@ -7,8 +7,8 @@ import tailwindcss from "@tailwindcss/vite";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export default defineConfig(({mode}) => {
-  const endpoints = resolveReleaseConfig(loadEnv(mode, __dirname, "VITE_"));
+export default defineConfig(({mode,command}) => {
+  const endpoints = resolveReleaseConfig({...loadEnv(mode, __dirname, "VITE_"), DEV: command === 'serve'});
   return {
   // Only non-HTML assets are copied. Legacy public HTML is excluded from releases.
   publicDir: 'static',

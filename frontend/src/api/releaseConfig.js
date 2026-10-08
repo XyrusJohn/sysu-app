@@ -4,6 +4,7 @@ const LIVE_HOSTS = new Set(['sysu-app-production.up.railway.app', 'sysu-go-produ
 /** Shared browser/build validation; endpoints never default to a live service. */
 export function resolveReleaseConfig(env) {
     const target = env.VITE_RELEASE_TARGET;
+    const workstation = target === 'production' && env.DEV === true && env.VITE_USE_LOCAL_BACKEND === 'true';
     if (!['local', 'staging', 'production'].includes(target)) throw new Error('VITE_RELEASE_TARGET must explicitly be local, staging or production');
     const project = env.VITE_FIREBASE_PROJECT_ID;
     if (!project) throw new Error('VITE_FIREBASE_PROJECT_ID is required');
@@ -30,7 +31,8 @@ export function resolveReleaseConfig(env) {
             || url.pathname !== '/' || url.search || url.hash) throw new Error(`${name} must be a service origin`);
         if (target === 'local' && !LOCAL_HOSTS.has(url.hostname)) throw new Error('Local endpoints must use loopback hosts');
         if (target !== 'production' && LIVE_HOSTS.has(url.hostname)) throw new Error('Non-production configuration cannot target live production endpoints');
-        if (target !== 'local' && (url.protocol !== 'https:' || LOCAL_HOSTS.has(url.hostname))) throw new Error(`${name} requires a public HTTPS origin`);
+        const localTestEndpoint = workstation && LOCAL_HOSTS.has(url.hostname);
+        if (target !== 'local' && !localTestEndpoint && (url.protocol !== 'https:' || LOCAL_HOSTS.has(url.hostname))) throw new Error(`${name} requires a public HTTPS origin`);
         return url.origin;
     }
     return Object.freeze({BASE_URL: endpoint('VITE_API_URL'), SOCKET_URL: endpoint('VITE_SOCKET_URL'),
