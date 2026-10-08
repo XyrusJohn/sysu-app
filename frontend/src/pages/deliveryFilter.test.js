@@ -82,6 +82,23 @@ test('In Transit filter and counter use the stored trip lifecycle', async () => 
   expect((await render('in_transit')).textContent).toContain('Test Driver');
   expect(document.getElementById('sapStatTransit').textContent).toBe('1');
 });
+test('assigned detail keeps repeated stored OBD rows and quantities when SAP overlaps', async () => {
+  const assignment = dashboard.state.sapAssignments[dispatch];
+  assignment.lineItems.push({...assignment.lineItems[0], quantity: 2});
+  SAPService.fetchShipments.mockResolvedValue([{SAPDispatchNumber: dispatch, OBDNumber: '6801001522', TruckType: '4w', Quantity: 999}]);
+  await render();
+  dashboard.openSapDispatchDetail(dispatch);
+  expect(document.getElementById('sapDtlOBDLines').querySelectorAll('tr')).toHaveLength(3);
+  expect(document.getElementById('sapDtlOBDLines').textContent).not.toContain('999');
+});
+test('stored dispatch labels and inline callback IDs cannot inject markup or script', async () => {
+  const unsafeKey = "001'<img src=x onerror=alert(1)>";
+  dashboard.state.sapAssignments = {[unsafeKey]: stored()};
+  const body = await render();
+  expect(body.querySelector('img')).toBeNull();
+  const link = body.querySelector('[onclick]');
+  expect(link.getAttribute('onclick')).toBe(`window.dashboard.openSapDispatchDetail('${encodeURIComponent(unsafeKey).replaceAll("'", '%27')}')`);
+});
 test.each([1791476416000, {seconds: 1791476416}, undefined])('POD preview handles stored capture time %j without crashing', async podCapturedAt => {
   const assignment = dashboard.state.sapAssignments[dispatch];
   assignment.lineItems[0].podImageUrl = 'data:image/png;base64,AAAA';
