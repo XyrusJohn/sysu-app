@@ -6,6 +6,7 @@
 const {admin} = require("../config/firebase.js");
 const {resolveEarliest, validateEarliest} = require("../services/queueOrdering.js");
 const tokenService = require("../services/tokenService.js");
+const decisions = require("../services/dispatchDecisions.js");
 const {asyncWrapper} = require("../middleware/asyncWrapper.js");
 const { z } = require("zod");
 
@@ -19,7 +20,7 @@ const CANCEL_REQUESTS = "cancelRequests";
 
 const lineItemSchema = z.object({
     obdNumber: z.string().min(1),
-    quantity: z.union([z.number(), z.string().regex(/^\\d+(\\.\\d+)?$/)]),
+    quantity: z.union([z.number().finite().positive(), z.string().regex(/^\d+(\.\d+)?$/).transform(Number).pipe(z.number().finite().positive())]),
     customerName: z.string().min(1),
     amount: z.undefined().optional(), // Explicitly forbid amount
 });
@@ -28,7 +29,7 @@ const assignDriverSchema = z.object({
     dispatchKey: z.string().min(1),
     requestedDriverId: z.string().min(1),
     truckType: z.string().min(1),
-    overrideTokenId: z.string().optional(),
+    overrideTokenId: z.string().min(1).max(128).nullish(),
     driverSnapshot: z.any().optional(),
     lineItems: z.array(lineItemSchema).min(1),
 });
@@ -72,8 +73,9 @@ function toMillis(value) {
     return null;
 }
 
-async function loadQueueForType(truckType) {
-    const snap = await DB().collection(QUEUE_COLLECTION).get();
+async function loadQueueForType(truckType, transaction) {
+    const ref = DB().collection(QUEUE_COLLECTION);
+    const snap = transaction ? await transaction.get(ref) : await ref.get();
     const wanted = (truckType || "").trim().toLowerCase();
     const all = [];
     snap.forEach((doc) => {
@@ -127,7 +129,6 @@ exports.peekEarliest = asyncWrapper(async (req, res) => {
 exports.assignDriver = asyncWrapper(async (req, res) => {
     const body = assignDriverSchema.parse(req.body);
     const {dispatchKey, requestedDriverId, truckType, overrideTokenId, lineItems} = body;
-    const driverSnapshot = req.body?.driverSnapshot || null;
     const assignedBy = req.user && req.user.uid;
 
     const result = await DB().runTransaction(async (tx) => {
@@ -137,7 +138,7 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             return {status: 409, code: "DISPATCH_TAKEN", message: "This dispatch is already assigned."};
         }
 
-        const queue = await loadQueueForType(truckType);
+        const queue = await loadQueueForType(truckType, tx);
 
         let requested = queue.find((d) => d.id === requestedDriverId);
         if (!requested) {
@@ -165,6 +166,10 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             };
         }
 
+        if (!['waiting', 'available', 'assigned', 'loading', 'loaded', 'fully_loaded'].includes(requested.status)
+            || String(requested.truckType || '').trim().toLowerCase() !== truckType.trim().toLowerCase()) {
+            return {status: 409, code: 'DRIVER_INELIGIBLE', message: 'Queue entry is inactive or truck type does not match.'};
+        }
         const driverIdForLookup = requested.driverId || requestedDriverId;
         const existingAssignmentsSnap = await tx.get(
             DB().collection(SAP_COLLECTION).where("driverId", "==", driverIdForLookup),
@@ -208,12 +213,12 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
         }
 
         if (overrideTokenId) {
-            const tokenResult = await tokenService.consumeTokenInTransaction(tx, overrideTokenId, {
-                dispatchKey,
-                driverId: requestedDriverId,
-                usedBy: assignedBy,
+            const tokenResult = await tokenService.consumeInTransaction(tx, DB().collection("overrideTokens").doc(overrideTokenId), {
+                consumedForAssignment: dispatchKey,
+                requestedDriverId,
+                consumedBy: assignedBy,
             });
-            if (!tokenResult.valid) {
+            if (!tokenResult.ok) {
                 return {
                     status: 403,
                     code: tokenResult.code,
@@ -230,9 +235,10 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
         const driverAuthUid = requested.driverId || requestedDriverId;
         tx.set(assignRef, {
             driverId: driverAuthUid,
-            driverName: driverSnapshot?.driverName || requested.driverName || null,
-            truckPlate: driverSnapshot?.truckPlate || requested.plateNumber || null,
-            truckCompany: driverSnapshot?.truckCompany || requested.truckCompany || null,
+            queueId: requested.id,
+            driverName: requested.driverName || null,
+            truckPlate: requested.plateNumber || null,
+            truckCompany: requested.truckCompany || null,
             truckType,
             lineItems: normalizedLineItems,
             assignedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -304,190 +310,30 @@ exports.requestOverride = asyncWrapper(async (req, res) => {
     return res.json({success: true, data: {requestId: ref.id}});
 });
 
+function sendDecision(res, result) {
+    return res.status(result.status).json(result.status === 200
+        ? {success: true, data: result.data} : {success: false, message: result.message});
+}
 exports.decideOverride = asyncWrapper(async (req, res) => {
-    const {requestId, decision, reason} = overrideDecisionSchema.parse(req.body);
-    const decidedBy = req.user && req.user.uid;
-
-    const ref = DB().collection(OVERRIDE_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) {
-        return res.status(404).json({success: false, message: "Override request not found."});
-    }
-    const reqDoc = snap.data();
-    if (reqDoc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${reqDoc.status}.`});
-    }
-
-    let tokenId = null;
-    let expiresAt = null;
-
-    if (decision === "approved") {
-        const issued = await tokenService.issue({
-            dispatchKey: reqDoc.dispatchKey,
-            requestedDriverId: reqDoc.requestedDriverId,
-            reason: reqDoc.reason,
-            requestId,
-            issuedBy: decidedBy,
-        });
-        tokenId = issued.tokenId;
-        expiresAt = issued.expiresAt.toISOString();
-    }
-
-    await ref.update({
-        status: decision,
-        decision,
-        decidedBy,
-        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        denyReason: decision === "denied" ? reason || null : null,
-        tokenId: tokenId || null,
-        tokenExpiresAt: expiresAt,
-    });
-
-    return res.json({success: true, data: {requestId, status: decision, tokenId, tokenExpiresAt: expiresAt}});
+    const input = overrideDecisionSchema.parse(req.body);
+    return sendDecision(res, await decisions.decideOverride({...input, decidedBy: req.user.uid}));
 });
-
 exports.revokeOverride = asyncWrapper(async (req, res) => {
-    const {requestId} = revokeSchema.parse(req.body);
-    const uid = req.user && req.user.uid;
-
-    const ref = DB().collection(OVERRIDE_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({success: false, message: "Override request not found."});
-    const doc = snap.data();
-    if (doc.requestedBy !== uid) {
-        return res.status(403).json({success: false, message: "Cannot revoke another user's request."});
-    }
-    if (doc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${doc.status}.`});
-    }
-    await ref.update({
-        status: "revoked",
-        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    return res.json({success: true, data: {requestId, status: "revoked"}});
+    const input = revokeSchema.parse(req.body);
+    return sendDecision(res, await decisions.revoke(OVERRIDE_REQUESTS, {...input, uid: req.user.uid}));
 });
-
 exports.requestCancelAssignment = asyncWrapper(async (req, res) => {
-    const {dispatchKey, reason} = cancelRequestSchema.parse(req.body);
-    const requestedBy = req.user && req.user.uid;
-
-    const ref = DB().collection(CANCEL_REQUESTS).doc();
-    await ref.set({
-        dispatchKey,
-        reason,
-        requestedBy,
-        requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-        status: "pending",
-        action: "cancel",
-        decidedBy: null,
-        decidedAt: null,
-        decision: null,
-        cancelAudit: null,
-    });
-    return res.json({success: true, data: {requestId: ref.id}});
+    const input = cancelRequestSchema.parse(req.body);
+    return sendDecision(res, await decisions.requestCancellation({...input, requestedBy: req.user.uid}));
 });
-
 exports.decideCancelAssignment = asyncWrapper(async (req, res) => {
-    const {requestId, decision, reason} = cancelDecisionSchema.parse(req.body);
-    const decidedBy = req.user && req.user.uid;
-
-    const ref = DB().collection(CANCEL_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) {
-        return res.status(404).json({success: false, message: "Cancel request not found."});
-    }
-    const reqDoc = snap.data();
-    if (reqDoc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${reqDoc.status}.`});
-    }
-
-    if (decision === "denied") {
-        await ref.update({
-            status: "denied",
-            decision,
-            denyReason: reason || null,
-            decidedBy,
-            decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return res.json({success: true, data: {requestId, status: "denied"}});
-    }
-
-    const cancelAudit = await DB().runTransaction(async (tx) => {
-        const assignRef = DB().collection(SAP_COLLECTION).doc(reqDoc.dispatchKey);
-        const existing = await tx.get(assignRef);
-        if (!existing.exists) {
-            return null;
-        }
-        const asgn = existing.data();
-        const queueSnap = await tx.get(
-            DB().collection(QUEUE_COLLECTION).where("driverId", "==", asgn.driverId).limit(1),
-        );
-        const queueDoc = queueSnap.docs[0];
-
-        tx.delete(assignRef);
-
-        const audit = {
-            reason: reqDoc.reason,
-            cancelledBy: decidedBy,
-            cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
-            dispatchKey: reqDoc.dispatchKey,
-        };
-
-        if (queueDoc) {
-            const qData = queueDoc.data() || {};
-            const currentList = Array.isArray(qData.assignedShipments) ? qData.assignedShipments : [];
-            const remainingShipments = currentList.filter(
-                (s) => (s.dispatchKey || s.id || s.obdNumber) !== reqDoc.dispatchKey
-            );
-            const hasRemaining = remainingShipments.length > 0;
-
-            tx.update(queueDoc.ref, {
-                assignedShipments: remainingHShipments,
-                activeShipmentsCount: remainingShipments.length,
-                isAssigned: hasRemaining,
-                status: hasRemaining ? (qData.status || "loading") : "available",
-                overallTripStatus: hasRemaining ? (qData.overallTripStatus || "loading") : "available",
-                assignedShipment: hasRemaining ? remainingShipments[0].dispatchKey : null,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                cancelAudit: audit,
-            });
-        }
-
-        return audit;
-    });
-
-    await ref.update({
-        status: "approved",
-        decision,
-        decidedBy,
-        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        cancelAudit: cancelAudit || null,
-    });
-
-    return res.json({success: true, data: {requestId, status: "approved"}});
+    const input = cancelDecisionSchema.parse(req.body);
+    return sendDecision(res, await decisions.decideCancellation({...input, decidedBy: req.user.uid}));
 });
-
 exports.revokeCancelAssignment = asyncWrapper(async (req, res) => {
-    const {requestId} = revokeSchema.parse(req.body);
-    const uid = req.user && req.user.uid;
-
-    const ref = DB().collection(CANCEL_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({success: false, message: "Override request not found."});
-    const doc = snap.data();
-    if (doc.requestedBy !== uid) {
-        return res.status(403).json({success: false, message: "Cannot revoke another user's request."});
-    }
-    if (doc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${doc.status}.`});
-    }
-    await ref.update({
-    status: "revoked",
-    decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    return res.json({success: true, data: {requestId, status: "revoked"}});
+    const input = revokeSchema.parse(req.body);
+    return sendDecision(res, await decisions.revoke(CANCEL_REQUESTS, {...input, uid: req.user.uid}));
 });
-
 exports.getActiveDriverLocations = asyncWrapper(async (req, res) => {
     const snap = await DB()
         .collection(SAP_COLLECTION)

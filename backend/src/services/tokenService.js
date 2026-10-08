@@ -48,7 +48,7 @@ const DEFAULT_TTL_MS = 15 * 60 * 1000;
  * }} input
  * @returns {Promise<{ tokenId: string, expiresAt: Date }>}
  */
-async function issue(input) {
+async function issue(input, transaction) {
     if (!input || !input.dispatchKey || !input.requestedDriverId) {
         throw new Error("issue: dispatchKey and requestedDriverId are required");
     }
@@ -61,7 +61,7 @@ async function issue(input) {
     const expiresAtMs = now + ttl;
 
     const ref = DB().collection(COLLECTION).doc();
-    await ref.set({
+    const data = {
         dispatchKey: input.dispatchKey,
         requestedDriverId: input.requestedDriverId,
         reason: input.reason || null,
@@ -72,7 +72,9 @@ async function issue(input) {
         consumedAt: null,
         consumedBy: null,
         consumedForAssignment: null,
-    });
+    };
+    if (transaction) transaction.set(ref, data);
+    else await ref.set(data);
 
     return {tokenId: ref.id, expiresAt: new Date(expiresAtMs)};
 }
@@ -126,8 +128,8 @@ function isExpired(token) {
  * Pass the Firestore transaction via `transaction` and the token doc
  * reference via `tokenRef`.
  */
-function consumeInTransaction(transaction, tokenRef, {consumedBy, consumedForAssignment}) {
-    const snap = transaction.get(tokenRef);
+async function consumeInTransaction(transaction, tokenRef, {consumedBy, consumedForAssignment, requestedDriverId}) {
+    const snap = await transaction.get(tokenRef);
     if (!snap.exists) {
         return {ok: false, code: "TOKEN_NOT_FOUND"};
     }
@@ -138,6 +140,13 @@ function consumeInTransaction(transaction, tokenRef, {consumedBy, consumedForAss
     if (isExpired(token)) {
         return {ok: false, code: "TOKEN_EXPIRED", token};
     }
+    if (token.dispatchKey !== consumedForAssignment) {
+        return {ok: false, code: "TOKEN_DISPATCH_MISMATCH"};
+    }
+    if (token.requestedDriverId !== requestedDriverId) {
+        return {ok: false, code: "TOKEN_DRIVER_MISMATCH"};
+    }
+    if (!consumedBy) return {ok: false, code: "TOKEN_ACTOR_REQUIRED"};
     transaction.update(tokenRef, {
         consumedAt: admin.firestore.FieldValue.serverTimestamp(),
         consumedBy: consumedBy || null,

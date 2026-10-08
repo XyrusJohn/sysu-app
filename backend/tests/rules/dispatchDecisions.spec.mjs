@@ -118,3 +118,18 @@ test('R13 duplicate concurrent cancellation requests create one pending marker',
   assert.equal(requests.size, 1);
   assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).data().pendingCancellationId, requests.docs[0].id);
 });
+test('R13 versionless old request is rejected for a timestamped assignment', async () => {
+  await seedCancellation();
+  await db.collection('sap_assignments').doc('dispatch').update({assignedAt: admin.firestore.Timestamp.now()});
+  assert.equal((await invoke(ctrl.decideCancelAssignment, {requestId: 'request', decision: 'approved'})).status, 409);
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).exists, true);
+});
+test('R13 newly created cancellation approves its exact timestamped generation', async () => {
+  await seedCancellation();
+  await db.collection('cancelRequests').doc('request').delete();
+  await db.collection('sap_assignments').doc('dispatch').update({assignedAt: admin.firestore.Timestamp.now()});
+  const created = await invoke(ctrl.requestCancelAssignment, {dispatchKey: 'dispatch', reason: 'Synthetic'}, 'staff');
+  assert.equal(created.status, 200);
+  assert.equal((await invoke(ctrl.decideCancelAssignment, {requestId: created.body.data.requestId, decision: 'approved'})).status, 200);
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).exists, false);
+});
