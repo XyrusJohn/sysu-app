@@ -30,3 +30,7 @@ The beta can start once these gates are proven for its agreed scope. Public-rele
 Collect crashes/ANRs, QR success/conflict/timeout, assignment/progress/POD success, web-update delay, socket reconnect/expiry behavior, API error/latency and device network/battery behavior. Record device/OS/app and server/config versions with each observation. These measurements can be gathered during the supervised pilot; they do not replace the pre-beta security and workflow proof. Agree operating thresholds from the existing operation and the first supervised run rather than inventing unsupported production capacity claims.
 
 No production database, rules, deployment, IAM key, installed driver application or signing configuration has been changed by this local beta-preparation batch.
+
+## 2026-10-09 local fix checkpoint
+
+Latest local evidence is GREEN: sysu-go backend 119/119, shared Firestore profile/location contracts 24/24, atomic POD emulator transaction 1/1, mobile socket lifecycle regressions 2/2, Android session-gate unit test 3/3, and Android debug/release unit tests, lint, and assemble tasks all BUILD SUCCESSFUL. The duplicate rules-function regression found by the first contract run was removed and the suite rerun successfully. These are local/demo-emulator results; deployment, IAM rotation, signing, and actual-device gates remain open.

@@ -28,6 +28,39 @@ service cloud.firestore {
         && data.get('phone', '') is string && data.get('phone', '').size() <= 30;
     }
 
+    function requirements(data) {
+      let req = data.get('requirements', {});
+      return req is map && req.keys().hasOnly(['aircon', 'reflectorizedVest', 'safetyShoes', 'headcap', 'pants', 'closedShoes'])
+        && req.get('aircon', false) is bool && req.get('reflectorizedVest', false) is bool
+        && req.get('safetyShoes', false) is bool && req.get('headcap', false) is bool
+        && req.get('pants', false) is bool && req.get('closedShoes', false) is bool;
+    }
+    function driverProfile(data) {
+      return basicProfile(data) && requirements(data)
+        && data.get('driverName', '') is string && data.get('driverName', '').size() <= 100
+        && data.get('helperName', '') is string && data.get('helperName', '').size() <= 300
+        && data.get('helper', '') is string && data.get('helper', '').size() <= 300
+        && data.get('plateNumber', '') is string && data.get('plateNumber', '').size() <= 20
+        && data.get('truckType', '') is string && data.get('truckType', '').size() <= 20
+        && data.get('truckingCompany', '') is string && data.get('truckingCompany', '').size() <= 100
+        && data.get('truckCompany', '') is string && data.get('truckCompany', '').size() <= 100
+        && data.get('isFull', false) is bool;
+    }
+    function coordinates(data) {
+      return data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180;
+    }
+    function ownedLocation(data) {
+      let shipment = data.get('sapDocId', null);
+      return data.keys().hasOnly(['driverId', 'name', 'lat', 'lng', 'status', 'sapDocId', 'updatedAt'])
+        && data.driverId == request.auth.uid && coordinates(data)
+        && data.name is string && data.name.size() <= 100
+        && data.status in ['online', 'stopped'] && data.updatedAt == request.time
+        && (shipment == null || (shipment is string && shipment.size() > 0 && shipment.size() <= 128
+          && get(/databases/$(database)/documents/sap_assignments/$(shipment)).data.driverId == request.auth.uid
+          && get(/databases/$(database)/documents/sap_assignments/$(shipment)).data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']));
+    }
+
     // ─── User Profiles ───────────────────────────────────────────────────────
     // Read: authenticated users (for admin user management UI).
     // Write: own document only. Role changes MUST go through backend API
@@ -89,10 +122,11 @@ service cloud.firestore {
       allow read: if staff() || (active() && request.auth.uid == driverId);
       allow create: if driverUser() && request.auth.uid == driverId
         && request.resource.data.keys().hasOnly(['driverId', 'driverName', 'plateNumber', 'truckType', 'truckCompany', 'helperName', 'isFull', 'updatedAt'])
-        && request.resource.data.driverId == request.auth.uid;
+        && request.resource.data.driverId == request.auth.uid && driverProfile(request.resource.data);
       allow update: if driverUser() && request.auth.uid == driverId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['driverName', 'helperName', 'isFull', 'updatedAt'])
-        && request.resource.data.get('isFull', false) is bool;
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['driverName', 'helperName', 'name', 'fn', 'mi', 'ln', 'phone', 'truckType', 'plateNumber', 'truckingCompany', 'helper', 'requirements', 'isFull', 'updatedAt'])
+        && driverProfile(request.resource.data)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['updatedAt']) || request.resource.data.updatedAt == request.time);
       allow delete: if false;
     }
 
@@ -100,6 +134,24 @@ service cloud.firestore {
     // Public read: anyone can see confirmed assignments (dispatch table).
     // Creation & Deletion: backend API only (POST /api/sap/assign, POST /api/sap/cancel) via Admin SDK.
     // Update: Allowed for the assigned driver to update tripStatus, lineItems (POD), and timestamps.
+    match /driver_locations/{driverId} {
+      allow read: if staff() || (driverUser() && request.auth.uid == driverId);
+      allow create, update: if driverUser() && request.auth.uid == driverId && ownedLocation(request.resource.data);
+      allow delete: if driverUser() && request.auth.uid == driverId;
+    }
+
+    match /driver_locations/{driverId} {
+      allow read: if staff() || (driverUser() && request.auth.uid == driverId);
+      allow create, update: if driverUser() && request.auth.uid == driverId && ownedLocation(request.resource.data);
+      allow delete: if driverUser() && request.auth.uid == driverId;
+    }
+
+    match /driver_locations/{driverId} {
+      allow read: if staff() || (driverUser() && request.auth.uid == driverId);
+      allow create, update: if driverUser() && request.auth.uid == driverId && ownedLocation(request.resource.data);
+      allow delete: if driverUser() && request.auth.uid == driverId;
+    }
+
     match /sap_assignments/{shipmentId} {
       allow read: if staff() || ownsDriver();
       allow create: if false; // Backend Admin SDK only
@@ -110,6 +162,24 @@ service cloud.firestore {
           || (resource.data.tripStatus == 'loading' && request.resource.data.tripStatus in ['loaded', 'fully_loaded'])
           || (resource.data.tripStatus in ['loaded', 'fully_loaded'] && request.resource.data.tripStatus == 'in_transit')
           || (resource.data.tripStatus == 'in_transit' && request.resource.data.tripStatus == 'completed'));
+      allow update: if ownsDriver()
+        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLocation'])
+        && request.resource.data.lastLocation.keys().hasOnly(['lat', 'lng', 'at'])
+        && coordinates(request.resource.data.lastLocation)
+        && request.resource.data.lastLocation.at == request.time;
+      allow update: if ownsDriver()
+        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLocation'])
+        && request.resource.data.lastLocation.keys().hasOnly(['lat', 'lng', 'at'])
+        && coordinates(request.resource.data.lastLocation)
+        && request.resource.data.lastLocation.at == request.time;
+      allow update: if ownsDriver()
+        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLocation'])
+        && request.resource.data.lastLocation.keys().hasOnly(['lat', 'lng', 'at'])
+        && coordinates(request.resource.data.lastLocation)
+        && request.resource.data.lastLocation.at == request.time;
 
       match /pod_images/{obdNumber} {
         allow read: if staff() || (active()
