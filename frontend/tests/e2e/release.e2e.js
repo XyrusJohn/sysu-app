@@ -32,6 +32,39 @@ test('Browser staff login, profile save through real API and logout',async({page
   await page.goto('/logout.html');await expect(page).toHaveURL(/\/$|index\.html/);await expect(page.locator('#loginBtn')).toBeVisible();
 });
 test('Browser anonymous dashboard returns to login',async({page})=>{await page.goto('/dashboard.html');await expect(page).toHaveURL(/\/$|index\.html/);});
+
+test('Browser deliveries use stored OBDs, show POD evidence and update without SAP membership',async({page})=>{
+  const dispatch='0010136559',obd='6801001522',secondObd='6801001523';
+  await db.collection('sap_assignments').doc(dispatch).set({driverId:'e2e-driver',driverName:'Stored Delivery Driver',truckType:'4w',truckPlate:'TEST',tripStatus:'returning_to_base',lineItems:[
+    {obdNumber:obd,customerName:'Stored Customer',quantity:4,isPodCompleted:true,podImageUrl:'saved_in_subcollection',podCapturedAt:1791476416000},
+    {obdNumber:secondObd,customerName:'Second Customer',quantity:6,isPodCompleted:true,podImageUrl:'saved_in_subcollection'},
+  ]});
+  await db.collection('sap_assignments').doc(dispatch).collection('pod_images').doc(obd).set({base64Image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII='});
+  await login(page);
+  await page.waitForFunction(()=>Boolean(window.dashboard.state.sapAssignments['0010136559']));
+  await page.evaluate(()=>window.dashboard.handleNavClick('sap'));
+  await expect(page.locator('#sapBody')).toContainText('Stored Delivery Driver');
+  await expect(page.locator('#sapBody')).toContainText('Returning to base');
+  await page.locator('#sapSearch').fill(secondObd);
+  await expect(page.locator('#sapBody')).toContainText('Stored Delivery Driver');
+  await page.locator('#sapBody [onclick]').first().click();
+  await expect(page.locator('#sapDtlOBDLines')).toContainText(obd);
+  await expect(page.locator('#sapDtlOBDLines')).toContainText(secondObd);
+  await page.locator('#sapDtlOBDLines button').first().click();
+  await expect(page.locator('#podPreviewModal')).toBeVisible();
+  await expect(page.locator('#podPreviewImg')).toHaveAttribute('src',/^data:image\/png;base64,/);
+  await expect(page.locator('#podTimestamp')).not.toHaveText('Invalid Date');
+  await page.evaluate(()=>{window.dashboard.closePodPreview();window.dashboard.closeSapDispatchModal();});
+  await page.locator('#sapSearch').fill('');
+  await page.locator('#sapTabForAssignment').click();
+  await expect(page.locator('#sapBody')).not.toContainText('Stored Delivery Driver');
+  await expect(page.locator('#sapBody')).toContainText('e2e-dispatch');
+  await db.collection('sap_assignments').doc(dispatch).update({tripStatus:'in_transit'});
+  await page.locator('#sapTabTransit').click();
+  await expect(page.locator('#sapBody')).toContainText('Stored Delivery Driver');
+  await db.collection('sap_assignments').doc(dispatch).delete();
+  await expect(page.locator('#sapBody')).not.toContainText('Stored Delivery Driver');
+});
 test('Browser disabled profile ends an already authenticated dashboard session',async({page})=>{await login(page);await db.collection('users').doc('e2e-staff').update({status:'disabled'});await expect(page).toHaveURL(/\/$|index\.html/);});
 
 test('Browser SAP assignment, approved cancellation and reassignment preserve canonical driver identity',async({page})=>{

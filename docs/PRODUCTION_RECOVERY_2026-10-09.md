@@ -10,6 +10,31 @@ Read-only Admin Firestore counts: users29, drivers21, queue17, sap_assignments12
 
 A legacy super_admin profile without status was identified, but reading the actual deployed rules disproved the initial hypothesis that it caused this live data issue: currently deployed rules permit these reads without that status check. The stricter local rules have not been deployed. The existing production rules remain a previously tracked security gate; no broad rules rollout was bundled into this incident repair. The user's authenticated browser dashboard rendering and SAP source have not been independently verified by these collection reads.
 
+## W-02: Delivery Filter and POD display recovery
+
+The user's production browser received queue/location data but Delivery Filter was empty despite existing `sap_assignments`. The frontend built every delivery group from `/api/sap/shipments`, which correctly returns only unassigned SAP rows. Firestore assignments supplied lifecycle data but could not create display rows. Collection-read health checks did not test this rendering failure.
+
+The dashboard now rebuilds display groups on both SAP refresh and assignment snapshots. Stored assignment line items supply assigned cargo, preserving leading-zero identifiers, multiple OBDs, repeated OBD rows and their canonical quantities. SAP data supplements fields available upstream; absent fields remain unavailable. No database state is changed. Assigned records remain excluded from For Assignment. Delivered includes completed trips and returning-to-base trips only when their nonempty line items all have POD completion; the return phase is retained in the status label. Returning shipments expose their POD previews. Numeric, Firestore and unavailable capture timestamps render without a crash. Shipment text, callback identifiers and HTML attribute quotes are escaped.
+
+ECC TDD checkpoints: RED `cd60628` / `d1672c3` reproduced missing rows and invalid/missing POD timestamps (8 failed, 3 passed); GREEN `22eda2c` passed all 11 new cases. Independent code/security review identified overlapping OBD multiplicity and identifier escaping: RED `5dd493c` (2 failures), GREEN `806ca51`; action-attribute injection RED `d2bc1bc`, GREEN `d9427bb`. Final dedicated suite: 14/14, plus existing grouping tests 3/3. The independent final review found no remaining critical new regression for the supplied production schema. Supplementary fields absent from repeated stored OBD rows use the first matching SAP row; canonical quantities are retained.
+
+Final verification:
+
+| Check | Actual result |
+| --- | --- |
+| Node 24 frontend Vitest suite | 78/78, 16 files |
+| ESLint frontend source | 0 errors; 64 existing warnings |
+| Production `npm run build` | PASS, 77 modules |
+| Playwright current-source desktop and Pixel 7 browser flows | 10/10 PASS, 34.5 seconds final rerun |
+| Delivery browser scenario | Login → stored assignment absent from SAP → Delivered → search second OBD → detail → subcollection POD preview → For Assignment exclusion → live In Transit update → assignment removal |
+| Existing browser regressions | Staff profile save/logout, anonymous access, disabled-session termination, assignment/approved cancellation/archive/reassignment all pass on both browser projects |
+| Production read-only projection | HTTP200; 12 stored assignments / 12 displayable; 40 stored line rows / 40 projected; 8 delivered, 2 in transit |
+| Firebase Hosting | `firebase deploy --only hosting --project sysu-web-5a25d` completed with final dashboard asset `dashboard-BxvCpPnx.js` |
+| Served root/dashboard/QR HTML | HTTP200; SHA-256 matches final local production build |
+| Railway post-deployment probes | Both services HTTP200, sysu-app Firestore readiness HTTP200, four hosted-origin preflights HTTP204 with exact origins |
+
+Browser tests use isolated demo Auth/Firestore and a freshly built test artifact; they do not write to production. Production projection checks only read existing documents and print aggregate counts. The existing production project, credentials, Railway endpoints and records were preserved. Actual owner-session rendering in the user's browser and Android-device cross-app acceptance are separate from these checks. No new whole-app coverage percentage was measured (Vitest coverage provider is absent); no 80% coverage claim is made. These results close the reported display incident, not every public-release gate.
+
 ## Firebase Hosting recovery
 
 The user's `firebase deploy --only hosting` failed before upload because frontend had no `.firebaserc` project mapping. Added default project sysu-web-5a25d. Rebuilt the current frontend with Node 24 (76 modules, successful production configuration validation), then successfully executed `firebase deploy --only hosting --project sysu-web-5a25d` from frontend. Firebase reported release complete. No Firestore rules were included in this deployment.
