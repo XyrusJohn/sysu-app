@@ -22,6 +22,8 @@ Verified: website HTTP 200; backend `/health/ready` HTTP 200 with `ready`; resol
 
 ## Android
 
+**Google sign-in correction, 2026-10-09:** default Android Studio `debug` now targets existing production Firebase and Railway. Sync Project with Gradle Files, select `debug`, then Run. Its rebuilt APK is `C:\Users\xyver\sysu\sysu-go\app\build\outputs\apk\debug\app-debug.apk`. The explicit `emulator` variant is the isolated demo configuration; ordinary Run no longer redirects Auth to emulators. The current signing SHA-1/SHA-256 were registered on the existing production Android Firebase app and the SDK configuration refreshed. Actual APK project/package/certificate/web-audience checks pass for debug and liveTest; 43/43 Kotlin cases pass per debug/liveTest/emulator variant, both operational APK builds/lint pass. Actual phone Google login remains unverified. See [mobile Google login evidence](../../sysu-go/docs/GOOGLE_LOGIN_RECOVERY_2026-10-09.md).
+
 Testing APK: `C:\Users\xyver\sysu\sysu-go\app\build\outputs\apk\liveTest\app-liveTest.apk`.
 
 Build again with `gradlew.bat assembleLiveTest` from sysu-go. This variant uses the existing Firebase and Railway services, with emulator mode disabled. It is signed with this machine's Android debug key for testing. Its application ID remains `com.sysu.go`; update compatibility with an installed APK depends on that APK's signing certificate. Do not uninstall an operational driver app to bypass a signing mismatch; inspect the certificates first.
