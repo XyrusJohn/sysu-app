@@ -102,3 +102,39 @@ test('all role request functions consumed by production socket server remain cal
     assert.equal(typeof roles[name], 'function', name);
   }
 });
+
+function http(handler, request) {
+  return new Promise((resolve, reject) => {
+    const response = {statusCode: 200, status(code) {this.statusCode = code; return this;},
+      json(body) {resolve({status: this.statusCode, body});}};
+    handler(request, response, reject);
+  });
+}
+
+test('existing warehouse HTTP read handler continues returning stored data', async () => {
+  stored = {name: 'Existing warehouse', lat: 14.5, lng: 121.1, radiusMeters: 700};
+  const result = await http(warehouse.getWarehouseBase, {});
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.name, stored.name);
+});
+
+test('existing warehouse HTTP update denies ordinary admin', async () => {
+  role = 'admin';
+  const result = await http(warehouse.updateWarehouseBase, {user: {uid: 'owner'}, body: {}});
+  assert.equal(result.status, 403);
+  assert.equal(writes.length, 0);
+});
+
+test('existing warehouse HTTP update accepts super-admin and notifies after persistence', async () => {
+  const emitted = [];
+  global._io = {emit: (...args) => emitted.push(args)};
+  try {
+    const result = await http(warehouse.updateWarehouseBase, {user: {uid: 'owner'},
+      body: {lat: 14.5, lng: 121.1, radiusMeters: 700}});
+    assert.equal(result.status, 200);
+    assert.equal(writes.length, 1);
+    assert.equal(emitted[0][0], 'warehouse_base_updated');
+  } finally {
+    delete global._io;
+  }
+});

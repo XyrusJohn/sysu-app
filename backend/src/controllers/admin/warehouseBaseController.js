@@ -45,6 +45,9 @@ async function saveWarehouseBaseConfig(payload, userUid, userEmail) {
     return {id: WAREHOUSE_DOC_ID, ...dataToSave};
 }
 
+exports.getWarehouseBaseConfig = getWarehouseBaseConfig;
+exports.saveWarehouseBaseConfig = saveWarehouseBaseConfig;
+
 exports.getWarehouseBase = asyncWrapper(async (req, res) => {
     const data = await getWarehouseBaseConfig();
     return res.status(200).json({success: true, data});
