@@ -3,20 +3,26 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require = createRequire(import.meta.url);
 const admin = require('firebase-admin');
-let db;
+let db, sapRows;
+const sourceRow = (dispatchKey='test-dispatch',quantity='10') => ({SAPDispatchNumber:dispatchKey,OBDNumber:'000001',
+  OBDItem:'001',Quantity:quantity,ShipToPartyName:'Synthetic',TruckType:'4W',Driver:'',Delivery:'',PgiStatus:'X'});
 before(() => {
   assert.equal(process.env.FIRESTORE_EMULATOR_HOST, '127.0.0.1:8085');
   admin.initializeApp({projectId: 'demo-sysu-security'});
   db = admin.firestore();
   const configPath = require.resolve('../../src/config/firebase');
   require.cache[configPath] = {id:configPath, filename:configPath, loaded:true, exports:{admin}};
+  const sapPath=require.resolve('../../src/services/sapSource');
+  const {isUnassigned}=require(sapPath);
+  require.cache[sapPath]={id:sapPath,filename:sapPath,loaded:true,exports:{read:async()=>({rows:sapRows.filter(isUnassigned),fetchedAt:Date.now()})}};
 });
 after(async () => { await db?.terminate(); await admin.app().delete(); });
 beforeEach(async () => {
+  sapRows=['test-dispatch','dispatch-a','dispatch-b'].map(key=>sourceRow(key));
   await db.recursiveDelete(db.collection('sap_assignments'));
   await db.recursiveDelete(db.collection('queue'));
   await db.recursiveDelete(db.collection('overrideTokens'));
-  await db.collection('queue').doc('queue-a').set({driverId:'driver-a', truckType:'truck', status:'waiting', isAssigned:false, isFull:false, entryTime:admin.firestore.Timestamp.now()});
+  await db.collection('queue').doc('queue-a').set({driverId:'driver-a', truckType:'4W', status:'waiting', isAssigned:false, isFull:false, entryTime:admin.firestore.Timestamp.now()});
 });
 function invoke(handler, body) {
   return new Promise((resolve,reject) => {
@@ -24,7 +30,7 @@ function invoke(handler, body) {
     handler({body, user:{uid:'staff'}},res,reject);
   });
 }
-const assignment = (quantity) => ({dispatchKey:'test-dispatch',requestedDriverId:'driver-a',truckType:'truck',overrideTokenId:null,driverSnapshot:null,lineItems:[{obdNumber:'000001',quantity,customerName:'Synthetic'}]});
+const assignment = (quantity) => ({dispatchKey:'test-dispatch',requestedDriverId:'driver-a',truckType:'4W',overrideTokenId:null,driverSnapshot:null,lineItems:[{obdNumber:'000001',quantity,customerName:'Synthetic'}]});
 test('R07: exact ordinary frontend request succeeds without override', async () => {
   const ctrl = require('../../src/controllers/sapAssignmentController');
   const result = await invoke(ctrl.assignDriver,assignment(10));
@@ -32,10 +38,49 @@ test('R07: exact ordinary frontend request succeeds without override', async () 
   assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).data().driverId,'driver-a');
 });
 test('R15: positive decimal quantity strings are accepted', async () => {
+  sapRows[0].Quantity='10.5';
   const ctrl = require('../../src/controllers/sapAssignmentController');
   const result = await invoke(ctrl.assignDriver,assignment('10.5'));
   assert.equal(result.status,200);
   assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).data().lineItems[0].quantity,10.5);
+});
+
+for(const [name,patch] of [
+  ['unknown dispatch',{dispatchKey:'invented'}],
+  ['foreign OBD',{lineItems:[{obdNumber:'FOREIGN',quantity:10,customerName:'Synthetic'}]}],
+  ['fabricated quantity',{lineItems:[{obdNumber:'000001',quantity:999,customerName:'Synthetic'}]}],
+  ['fabricated customer',{lineItems:[{obdNumber:'000001',quantity:10,customerName:'INVENTED'}]}],
+]) {
+  test(`R15 ${name} cannot create an assignment or consume an override`,async()=>{
+    await seedToken({dispatchKey:patch.dispatchKey || 'test-dispatch'});
+    const ctrl=require('../../src/controllers/sapAssignmentController');
+    const result=await invoke(ctrl.assignDriver,{...assignment(10),overrideTokenId:'token-a',...patch});
+    assert.equal(result.status,409);
+    assert.equal((await db.collection('sap_assignments').get()).size,0);
+    assert.equal((await db.collection('overrideTokens').doc('token-a').get()).data().consumedAt,null);
+    assert.equal((await db.collection('queue').doc('queue-a').get()).data().status,'waiting');
+  });
+}
+test('R15 source-assigned dispatch no longer qualifies despite a stale browser list',async()=>{
+  sapRows[0].Driver='Assigned Driver';
+  const ctrl=require('../../src/controllers/sapAssignmentController');
+  assert.equal((await invoke(ctrl.assignDriver,assignment(10))).status,409);
+  assert.equal((await db.collection('sap_assignments').get()).size,0);
+});
+test('SAP grouping preserves distinct OBD rows and repeated OBD item multiplicity in one dispatch',async()=>{
+  sapRows=[sourceRow(),{...sourceRow(),OBDNumber:'000002',OBDItem:'002',Quantity:'2'},
+    {...sourceRow(),OBDItem:'003',Quantity:'3'}];
+  const ctrl=require('../../src/controllers/sapAssignmentController');
+  const lineItems=sapRows.map(row=>({obdNumber:row.OBDNumber,quantity:row.Quantity,customerName:row.ShipToPartyName}));
+  assert.equal((await invoke(ctrl.assignDriver,{...assignment(10),lineItems})).status,200);
+  assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).data().lineItems.length,3);
+});
+test('SAP group cannot silently drop an OBD or duplicate a row beyond source multiplicity',async()=>{
+  sapRows=[sourceRow(),{...sourceRow(),OBDNumber:'000002'}];
+  const ctrl=require('../../src/controllers/sapAssignmentController');
+  assert.equal((await invoke(ctrl.assignDriver,assignment(10))).status,409);
+  assert.equal((await invoke(ctrl.assignDriver,{...assignment(10),lineItems:[...assignment(10).lineItems,...assignment(10).lineItems]})).status,409);
+  assert.equal((await db.collection('sap_assignments').get()).size,0);
 });
 async function seedToken(patch={}) {
   await db.collection('overrideTokens').doc('token-a').set({dispatchKey:'test-dispatch',requestedDriverId:'driver-a',
