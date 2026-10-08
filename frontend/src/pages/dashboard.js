@@ -46,7 +46,7 @@ const escapeHtml = (str) => {
     if (str == null) return "";
     const div = document.createElement("div");
     div.textContent = str;
-    return div.innerHTML;
+    return div.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 };
 
 export class Dashboard {
