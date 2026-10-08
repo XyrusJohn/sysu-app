@@ -6,6 +6,10 @@ Batayan: [Production release review](PRODUCTION_RELEASE_REVIEW_2026-10-07.md) at
 
 **Current scope:** Ang pinakahuling instruction ay ayusin ayon sa buong tracker R01-R51. Superseded ang dating docs-only restriction at unresolved F-ID subset; hindi ni-rename ang original IDs.
 
+## Current controlled-beta checkpoint — 2026-10-09
+
+User selected real drivers/real shipments in the current production database; existing deployed web/backend and driver APK do not yet contain these local fixes. The [controlled beta checklist](BETA_CHECKLIST.md) owns the minimum beta gate. Current socket-session batch: RED dc9baa2, GREEN f940d52; frontend 62/62, synthetic-config build PASS (76 modules), lint 0 errors/66 warnings. Companion mobile G-13/G-14 fixes and G-15 routing closure are in the [mobile tracker](../../sysu-go/docs/FIX_TRACKER.md). R10/R22 remain IN PROGRESS for complete shared business/device/deployed acceptance. No new web finding is closed by this batch. Metrics alone cannot replace remaining owned mobile contracts, key remediation, installed APK/deployed compatibility and actual cross-app proof.
+
 ## Paano mag-close ng finding
 
 Shared mobile-rule checkpoint (2026-10-08): canonical `frontend/firestore.rules` now requires explicit active approved roles and driver-only owned mutations, supports bounded split-name pending registration/basic completion, and matches the sysu-go mirror. The latest combined demo suite passed 58/58, including 10 existing web rule regressions; these are not 58 new web tests. Deployed rules/migration and remaining mobile location/POD/profile contracts are still unverified. See [mobile tracker](../../sysu-go/docs/FIX_TRACKER.md) and [mobile evidence](../../sysu-go/docs/RELEASE_FIXES_TDD.md). Do not deploy strict shared rules alone as proof that every legacy mobile write works.
