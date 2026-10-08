@@ -10,6 +10,20 @@ beforeEach(() => {
     VITE_FIREBASE_STORAGE_BUCKET:'demo-sysu-security.appspot.com', VITE_AUTH_EMULATOR_URL: '', VITE_FIRESTORE_EMULATOR_HOST: ''})) vi.stubEnv(key, value);
 });
 afterEach(() => {vi.unstubAllEnvs();});
+test('explicit workstation testing supports existing Firebase with localhost backend', async () => {
+  const {resolveReleaseConfig}=await import('./releaseConfig.js');
+  expect(resolveReleaseConfig({VITE_RELEASE_TARGET:'production',VITE_FIREBASE_PROJECT_ID:'sysu-web-5a25d',
+    DEV:true,VITE_USE_LOCAL_BACKEND:'true',VITE_API_URL:'http://localhost:8080',
+    VITE_SOCKET_URL:'http://localhost:8080',VITE_DRIVER_TRACKING_URL:'https://sysu-go-production.up.railway.app'}).BASE_URL)
+    .toBe('http://localhost:8080');
+});
+test('workstation opt-in cannot allow localhost in a release build', async () => {
+  const {resolveReleaseConfig}=await import('./releaseConfig.js');
+  expect(()=>resolveReleaseConfig({VITE_RELEASE_TARGET:'production',VITE_FIREBASE_PROJECT_ID:'sysu-web-5a25d',
+    DEV:false,VITE_USE_LOCAL_BACKEND:'true',VITE_API_URL:'http://localhost:8080',
+    VITE_SOCKET_URL:'http://localhost:8080',VITE_DRIVER_TRACKING_URL:'https://sysu-go-production.up.railway.app'}))
+    .toThrow(/HTTPS/);
+});
 test('R32 missing endpoints fail before any silent production fallback', async () => {
   vi.stubEnv('VITE_API_URL', '');
   await expect(import('./config.js')).rejects.toThrow(/VITE_API_URL/);
