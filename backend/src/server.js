@@ -285,26 +285,13 @@ io.on("connection", async (socket) => {
                 || (data.driverId && data.driverId !== socket.data.uid)) return;
             const driverId = data?.driverId || socket.data.uid;
             const isFull = Boolean(data?.isFull);
-            console.log(`[driver_is_full] Driver ${driverId} capacity updated: isFull=${isFull}`);
-
-            // Update active queue doc for this driver
-            const queueSnap = await admin.firestore().collection("queue")
-                .where("driverId", "==", driverId)
-                .where("status", "in", ["waiting", "called", "assigned", "loading"])
-                .limit(1)
-                .get();
-
-            if (!queueSnap.empty) {
-                await queueSnap.docs[0].ref.update({
-                    isFull,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-            }
+            const {updateDriverCapacity} = require('./services/driverCapacity');
+            await updateDriverCapacity(driverId, isFull);
 
             // Broadcast to dispatchers
             io.to('dispatchers').emit("driver_capacity_updated", {driverId, isFull});
         } catch (err) {
-            console.error("[driver_is_full] error:", err.message);
+            console.error(JSON.stringify({event:'capacity_update_failed', statusCode:err.statusCode || 500}));
         }
     });
 

@@ -14,10 +14,13 @@ async function connect(profile={role:'driver',status:'active'}, options={}) {
   let failWrites=false;
   const ref={update:async()=>{writes++;},set:async()=>{writes++;if(failWrites) throw new Error('Synthetic database outage');}};
   const query={where(){return this;},limit(){return this;},doc(){return {onSnapshot(listener){profileListener=listener;return ()=>{stoppedProfile=true;};},get:async()=>({exists:Boolean(profile),data:()=>profile})};},get:async()=>({empty:false,docs:Array.from({length:options.assignmentCount || 1},(_,n)=>({id:`assignment-${n}`,ref,data:()=>({driverId:'driver-a',tripStatus:'in_transit'})}))})};
-  const firestore=()=>({collection:name=>name === 'sap_assignments' ? {...query,doc:()=>({get:async()=>({exists:true,data:()=>({driverId:options.assignmentOwner || 'driver-a'})})})} : query}); firestore.FieldValue={serverTimestamp:()=>0};
+  const fakeDb={collection:name=>name === 'sap_assignments' ? {...query,doc:()=>({get:async()=>({exists:true,data:()=>({driverId:options.assignmentOwner || 'driver-a'})})})} : query,
+    runTransaction:async callback=>callback({get:ref=>ref.get(),update(){writes++;}})};
+  const firestore=()=>fakeDb; firestore.FieldValue={serverTimestamp:()=>0};
   const admin={firestore,auth:()=>({verifyIdToken:async()=>({uid:'driver-a',exp:Math.floor(Date.now()/1000)+3600})})};
   const capture=(...args)=>logs.push(args.join(' '));
-  vm.runInNewContext(connectionSource,{io,admin,require:()=>admin,console:{log:capture,warn:capture,error:capture},
+  vm.runInNewContext(connectionSource,{io,admin,require:path=>path.includes('driverCapacity')
+    ? {updateDriverCapacity:(id,flag)=>require('../../src/services/driverCapacity').updateDriverCapacity(id,flag,fakeDb)} : admin,console:{log:capture,warn:capture,error:capture},
     setTimeout:()=>({unref(){}}),clearTimeout(){},lastDriverLocationPersist:new Map(),getDistanceMeters:()=>1000,LOCATION_PERSIST_THROTTLE_MS:600000,MIN_PERSIST_DISTANCE_METERS:100});
   const socket={handshake:{auth:{token:'synthetic'}},data:{},join(){},disconnect(){disconnected=true;handlers.disconnect?.();},once(event,handler){handlers[event]=handler;},on(event,handler){handlers[event]=handler;},emit(...args){emissions.push(args);}};
   for(const handler of middleware) {
@@ -50,7 +53,7 @@ test('R10/R22: disabled and missing profiles register no handlers',async()=>{
 });
 test('R10: legitimate own capacity change still persists and notifies',async()=>{
   const session=await connect(); await session.handlers.driver_is_full({driverId:'driver-a',isFull:true});
-  assert.equal(session.writes,1); assert.equal(session.emissions.length,1);
+  assert.equal(session.writes,2); assert.equal(session.emissions.length,1);
 });
 test('R10: auth finishes in middleware before connection handlers can register',async()=>{
   const session=await connect(); assert.equal(session.authenticatedBeforeConnection,true);
