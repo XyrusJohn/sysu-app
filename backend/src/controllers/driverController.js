@@ -47,3 +47,69 @@ exports.updateDriverFull = asyncWrapper(async (req, res) => {
 
     return res.json({success: true, driverId, isFull});
 });
+
+const identifier = z.string().trim().min(1).max(128)
+    .refine(value => !value.includes('/') && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+        && !['.', '..'].includes(value));
+const profileSchema = z.object({
+    name: z.string().trim().min(1).max(200),
+    phone: z.string().trim().min(1).max(32),
+    license: z.string().trim().max(128),
+    truckType: z.string().trim().min(1).max(64),
+    plateNumber: z.string().trim().min(1).max(64),
+    truckingCompany: z.string().trim().max(200),
+    helper: z.string().trim().max(200),
+    notes: z.string().trim().max(2000),
+}).strict();
+const failure = (message, statusCode) => Object.assign(new Error(message), {statusCode});
+async function checkStaff(tx, db, uid, roles) {
+    const actor = await tx.get(db.collection('users').doc(uid));
+    const data = actor.data();
+    if (!actor.exists || !roles.includes(data?.role) || ['inactive', 'disabled'].includes(data?.status)) {
+        throw failure('Staff authorization required', 403);
+    }
+}
+
+exports.saveDriverProfile = asyncWrapper(async (req, res) => {
+    const id = identifier.parse(req.params.driverId);
+    const input = profileSchema.parse(req.body);
+    const db = DB();
+    await db.runTransaction(async tx => {
+        await checkStaff(tx, db, req.user.uid, ['fleet_manager', 'admin', 'super_admin']);
+        const target = await tx.get(db.collection('users').doc(id));
+        const user = target.data();
+        if (!target.exists || user?.role !== 'driver' || ['inactive', 'disabled'].includes(user?.status)) {
+            throw failure('Select an active registered driver account; phone-only profiles require reconciliation', 409);
+        }
+        const queues = await tx.get(db.collection('queue').where('driverId', '==', id).limit(101));
+        if (queues.size > 100) throw failure('Driver queues require reconciliation', 409);
+        const updatedAt = admin.firestore.FieldValue.serverTimestamp();
+        tx.set(db.collection('drivers').doc(id), {...input, driverId:id,
+            driverName:input.name, truckCompany:input.truckingCompany, helperName:input.helper, updatedAt}, {merge:true});
+        for (const queue of queues.docs) {
+            const data = queue.data();
+            if (data.registrationComplete === false && ['waiting', 'called', 'available', 'assigned', 'loading', 'loaded', 'fully_loaded'].includes(data.status)) {
+                tx.update(queue.ref, {registrationComplete:true, updatedAt});
+            }
+        }
+        tx.set(db.collection('driver_profile_audit').doc(), {actorId:req.user.uid, driverId:id, action:'save', updatedAt});
+    });
+    return res.json({success:true, driverId:id});
+});
+
+exports.deleteDriverProfile = asyncWrapper(async (req, res) => {
+    const id = identifier.parse(req.params.driverId);
+    const db = DB();
+    await db.runTransaction(async tx => {
+        await checkStaff(tx, db, req.user.uid, ['admin', 'super_admin']);
+        const user = await tx.get(db.collection('users').doc(id));
+        const queues = await tx.get(db.collection('queue').where('driverId', '==', id).limit(1));
+        const assignments = await tx.get(db.collection('sap_assignments').where('driverId', '==', id).limit(1));
+        if (user.exists || queues.size || assignments.size) {
+            throw failure('Linked driver profile retained; use account administration or reconciliation', 409);
+        }
+        tx.delete(db.collection('drivers').doc(id));
+        tx.set(db.collection('driver_profile_audit').doc(), {actorId:req.user.uid, driverId:id, action:'delete-orphan', updatedAt:admin.firestore.FieldValue.serverTimestamp()});
+    });
+    return res.json({success:true, driverId:id});
+});

@@ -22,6 +22,7 @@ import { SAPAssignmentService } from "../api/sapAssignmentService.js";
 import { API_CONFIG } from "../api/config.js";
 import { SecurityGuardService } from "../api/securityGuardService.js";
 import { TruckCompanyService } from "../api/truckCompanyService.js";
+import { StaffDriverService } from "../api/staffDriverService.js";
 import { db, auth } from "../api/firebase.js";
 import { updateProfile } from "firebase/auth";
 import {
@@ -32,8 +33,6 @@ import {
     orderBy,
     doc,
     updateDoc,
-    setDoc,
-    deleteDoc,
     addDoc,
     serverTimestamp,
     getDocs,
@@ -4043,7 +4042,6 @@ class Dashboard {
     }
 
     async saveDriver() {
-        console.log("[saveDriver] CALLED — queue snapshot:", this.state.queue.map(q => ({ id: q.id, driverName: q.driverName, registrationComplete: q.registrationComplete })));
         const fn = document.getElementById("drvFName").value.trim();
         const ln = document.getElementById("drvLName").value.trim();
         const nm = `${fn} ${ln}`.trim();
@@ -4069,42 +4067,11 @@ class Dashboard {
             truckingCompany: document.getElementById("drvCompany").value.trim(),
             helper: document.getElementById("drvHelper").value.trim(),
             notes: document.getElementById("drvNotes").value.trim(),
-            updatedAt: new Date().toISOString(),
         };
 
         try {
-            const id = this.state.editDrvId || phone;
-            await setDoc(doc(db, "drivers", id), data, { merge: true });
-
-            // â"€â"€ Back-fill registrationComplete to ALL incomplete queue entries â"€â"€
-            // When a driver completes trip registration (saves Edit Driver), ALL incomplete
-            // queue entries are marked with registrationComplete: true so they become visible
-            // in Fleet Manager. Also update local state immediately for instant UI feedback.
-            const queueSnapshot = await getDocs(
-                query(collection(db, "queue"), where("status", "!=", "completed"))
-            );
-            const updates = [];
-            queueSnapshot.forEach((qDoc) => {
-                const qData = qDoc.data();
-                if (qData.registrationComplete === false) {
-                    // 1. Update Firestore
-                    updates.push(
-                        updateDoc(doc(db, "queue", qDoc.id), {
-                            registrationComplete: true,
-                            updatedAt: new Date().toISOString(),
-                        })
-                    );
-                    // 2. Update local state immediately (for instant Fleet Manager UI update)
-                    const queueEntry = this.state.queue.find((q) => q.id === qDoc.id);
-                    if (queueEntry) queueEntry.registrationComplete = true;
-                    console.log("[saveDriver] Marking queue entry", qDoc.id, "as registrationComplete=true");
-                }
-            });
-            if (updates.length === 0) {
-                console.log("[saveDriver] No queue entries with registrationComplete === false — nothing to update");
-            }
-            console.log("[saveDriver] Queued Firestore updates:", updates.length);
-            if (updates.length > 0) await Promise.all(updates);
+            const id = this.state.editDrvId;
+            await StaffDriverService.save(id, data);
 
             this.closeDrvModal();
             alert("Driver saved. Fleet Manager updated.");
@@ -4129,7 +4096,7 @@ class Dashboard {
             return;
 
         try {
-            await deleteDoc(doc(db, "drivers", id));
+            await StaffDriverService.remove(id);
             const toast = document.getElementById("toast");
             if (toast) {
                 toast.textContent = "Driver profile deleted.";
