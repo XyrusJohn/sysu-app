@@ -33,6 +33,8 @@ No production database, rules, deployment, IAM key, installed driver application
 
 ## 2026-10-09 local fix checkpoint
 
+Production update: [Railway startup recovery](PRODUCTION_RECOVERY_2026-10-09.md) now proves both backend deployments SUCCESS and passing production health/CORS checks. Earlier statements that no Railway changes had been performed refer to the prior local batch; real configuration repair and restarts have now occurred. Firebase Hosting/rules, APK installation and complete authenticated acceptance have not been verified by this recovery.
+
 Workstation startup correction: see [tomorrow's testing setup](TOMORROW_TESTING.md). Web now explicitly supports existing Firebase with a localhost backend only during the opted-in Vite development server; all 64 frontend tests pass. Backend Firebase readiness returns HTTP 200. A separate liveTest mobile APK uses existing Firebase/services with emulators disabled, signed by the machine's debug key; assemble/lint and 42 unit tests pass, and its APK signature verifies. Device acceptance, installed-certificate compatibility and deployment of the matching mobile backend remain unverified.
 
 Latest local evidence is GREEN: sysu-go backend 119/119, shared Firestore profile/location contracts 24/24, atomic POD emulator transaction 1/1, mobile socket lifecycle regressions 2/2, Android session-gate unit test 3/3, and Android debug/release unit tests, lint, and assemble tasks all BUILD SUCCESSFUL. The duplicate rules-function regression found by the first contract run was removed and the suite rerun successfully. These are local/demo-emulator results; deployment, IAM rotation, signing, and actual-device gates remain open.

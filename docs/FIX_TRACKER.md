@@ -8,6 +8,8 @@ Batayan: [Production release review](PRODUCTION_RELEASE_REVIEW_2026-10-07.md) at
 
 ## 2026-10-09 verification checkpoint
 
+Railway production startup outage recovered: both services were observed CRASHED, then repaired through their real production environment variables. Final deployments SUCCESS; sysu-app /health/live and /health/ready return 200; sysu-go /api/health returns 200; both services pass hosted-site CORS preflight (204, exact origins). See [production recovery evidence](PRODUCTION_RECOVERY_2026-10-09.md). Full authenticated phone/shipment acceptance remains unverified.
+
 Workstation startup: GREEN b9e62ae supports explicit localhost backend with existing Firebase (64 frontend tests). Real backend `/health/ready` returns HTTP 200 after configuration reload. Mobile build 6e76623 creates signed liveTest APK using existing Firebase/services (42 unit tests, lint/assemble and signature verification pass). See [testing setup](TOMORROW_TESTING.md). This artifact uses the local Android debug signing key; no installed-device or deployed-mobile-backend acceptance is implied.
 
 Local GREEN evidence: sysu-go backend 119/119; shared Firestore profile/location contracts 24/24; atomic POD emulator transaction 1/1; mobile socket lifecycle regressions 2/2; Android session-gate unit test 3/3; Android debug/release unit tests, lint, and assemble successful. This closes local regression evidence for the touched paths; production deployment, IAM key invalidation, signed artifact identity, and actual-device cross-app acceptance remain required before real-driver beta.

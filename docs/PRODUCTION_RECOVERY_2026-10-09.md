@@ -1,0 +1,28 @@
+# Railway production recovery — 2026-10-09
+
+Project: splendid-courage (`6caec00e-4b8c-4b50-8d1e-0de2fe67de81`), environment production.
+
+Both services were observed CRASHED after the user's deployments. The startup guards required configuration which the deployed variables did not satisfy. sysu-go lacked SYSU_ENV and FIREBASE_PROJECT_ID; sysu-app included a localhost origin which its production origin guard rejects. Existing credential JSON was present in both services and identified the existing project sysu-web-5a25d. No credential values were printed by the Railway inspection.
+
+Production variables were repaired through the linked authenticated CLI, preserving existing credentials and the existing database. sysu-go now has SYSU_ENV=production, FIREBASE_PROJECT_ID=sysu-web-5a25d and NODE_ENV=production. Its allowed origins include both existing hosted website origins and the existing workstation origins. sysu-app's production allowed origins are exactly https://sysu-web-5a25d.web.app and https://sysu-web-5a25d.firebaseapp.com.
+
+The first CLI origin list lost comma separators under PowerShell argument parsing. This was detected during verification and corrected with quoted arguments before accepting the recovery. The final live CORS checks pass.
+
+Verified production deployments:
+
+| Service | Deployment | State |
+|---|---|---|
+| sysu-app | 555b3bd7-5b49-48cd-a515-492f3fc8d217 | SUCCESS |
+| sysu-go | c6e4e51f-c179-4fa0-addc-bfc3d23a0e31 | SUCCESS |
+
+Verified public responses after these deployments completed:
+
+| Check | Result |
+|---|---|
+| sysu-app /health/live | 200 live |
+| sysu-app /health/ready (actual Firestore read probe) | 200 ready |
+| sysu-go /api/health | 200 ok |
+| sysu-app OPTIONS from each hosted website origin | 204 with exact matching allow-origin |
+| sysu-go OPTIONS from each hosted website origin | 204 with exact matching allow-origin |
+
+This recovers the Railway startup outage. It is not evidence of phone installation, authenticated shipment/POD acceptance, credential rotation, or Firebase Hosting/rules deployment. Variable-triggered deployments reuse the already-uploaded service artifacts; exact source-commit correspondence has not been independently proven. Existing release gates retain their status.
