@@ -54,3 +54,22 @@ test('R14 orphan deletion is audited without touching other driver queues',async
   await db.collection('users').doc('driver-a').delete();for(const id of ['a','done'])await db.collection('queue').doc(id).delete();
   assert.equal((await request('staff',{},'DELETE')).status,200);assert.equal((await db.collection('drivers').doc('driver-a').get()).exists,false);assert.ok((await db.collection('queue').doc('b').get()).exists);
 });
+test('Driver sync GET permits own driver and staff reads while excluding private profile fields',async()=>{
+  await db.collection('drivers').doc('driver-a').update({driverName:'Synthetic',phone:'synthetic-private',notes:'synthetic-private'});
+  for(const token of ['staff','driver-a']){
+    const response=await fetch(url.replace('/profile',''),{headers:{Authorization:`Bearer ${token}`}});assert.equal(response.status,200);
+    const body=await response.json();assert.equal(body.data.driverId,'driver-a');assert.equal(body.data.phone,undefined);assert.equal(body.data.notes,undefined);
+  }
+});
+test('Driver sync GET denies cross-driver and anonymous reads',async()=>{
+  assert.equal((await fetch(url.replace('/profile',''))).status,401);
+  assert.equal((await fetch(url.replace('driver-a/profile','other-driver'),{headers:{Authorization:'Bearer driver-a'}})).status,403);
+});
+test('Driver sync GET returns a controlled missing-profile result',async()=>{
+  await db.collection('drivers').doc('driver-a').delete();
+  assert.equal((await fetch(url.replace('/profile',''),{headers:{Authorization:'Bearer staff'}})).status,404);
+});
+test('R14 encoded nested driver paths are rejected without audit or writes',async()=>{
+  const response=await fetch(url.replace('driver-a','parent%2Fchild'),{method:'PUT',headers:{Authorization:'Bearer staff','Content-Type':'application/json'},body:JSON.stringify(data)});
+  assert.equal(response.status,400);assert.equal((await db.collection('driver_profile_audit').get()).size,0);
+});

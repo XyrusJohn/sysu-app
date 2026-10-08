@@ -6,6 +6,7 @@ const {protectRoute} = require("../middleware/protectRoute.js");
 const {authorize} = require("../middleware/authorize.js");
 
 router.use(protectRoute);
+router.use(authorize(["fleet_manager", "admin", "super_admin"]));
 
 // Peek the earliest eligible driver for a dispatch (used by the modal to
 // render hard-locked rows).

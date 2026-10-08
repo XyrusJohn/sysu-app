@@ -13,7 +13,7 @@ const protectRoute = async (req, res, next) => {
                 .json({message: "Not authorized, no token provided"});
         }
 
-        const decodedToken = await admin.auth().verifyIdToken(token);
+        const decodedToken = await admin.auth().verifyIdToken(token, true);
 
         req.user = decodedToken;
         next();
