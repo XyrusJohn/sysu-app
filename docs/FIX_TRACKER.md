@@ -8,6 +8,8 @@ Batayan: [Production release review](PRODUCTION_RELEASE_REVIEW_2026-10-07.md) at
 
 ## 2026-10-09 verification checkpoint
 
+Production incident W-01 (P1, warehouse socket helper exports) FIXED: missing getWarehouseBaseConfig/saveWarehouseBaseConfig exports reproduced by actual handler tests, two exports added, 103 backend unit cases GREEN. Railway hotfix deployment fb41db33-08f2-42d0-a06c-ccad930a31ea SUCCESS. Browser-facing production Firestore reads return 200 with existing drivers21/queue17/assignments12. Done condition for this incident: shipped handler contracts pass and the fix is deployed with healthy production probes. Authenticated UI/SAP and full driver acceptance retain separate gates. See [production recovery evidence](PRODUCTION_RECOVERY_2026-10-09.md).
+
 Firebase Hosting now deployed successfully to sysu-web-5a25d after restoring frontend/.firebaserc. Production build PASS; live root/dashboard/QR HTML return 200 and exactly match the current build by SHA-256. Railway health/readiness/CORS checks still pass. See [production recovery evidence](PRODUCTION_RECOVERY_2026-10-09.md). Phone and authenticated business-flow acceptance remain open.
 
 Railway production startup outage recovered: both services were observed CRASHED, then repaired through their real production environment variables. Final deployments SUCCESS; sysu-app /health/live and /health/ready return 200; sysu-go /api/health returns 200; both services pass hosted-site CORS preflight (204, exact origins). See [production recovery evidence](PRODUCTION_RECOVERY_2026-10-09.md). Full authenticated phone/shipment acceptance remains unverified.

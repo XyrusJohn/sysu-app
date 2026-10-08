@@ -1,5 +1,15 @@
 # Railway production recovery — 2026-10-09
 
+## Warehouse socket regression and production data verification
+
+Incident W-01: server.js destructured getWarehouseBaseConfig/saveWarehouseBaseConfig, but warehouseBaseController defined without exporting them. The shipped socket callback returned the exact `getWarehouseBaseConfig is not a function` error. RED f04e5ee captured 4 failures/3 passes; minimal fix exports both helpers, preserving authorization. Final dedicated tests cover warehouse socket and HTTP reads/writes/denials plus all role-helper exports (10 passing); backend unit regressions 103/103 pass. GREEN commit 19b4bc9.
+
+Uploaded sysu-app current source through Railway up. Deployment fb41db33-08f2-42d0-a06c-ccad930a31ea is SUCCESS. New deployment logs show the server running on 8080; sampled logs contain no warehouse-function error. Production health/readiness and four hosted-origin CORS preflights still pass.
+
+Read-only Admin Firestore counts: users29, drivers21, queue17, sap_assignments12, settings1. Separate browser-facing REST reads with the existing web project's API configuration return HTTP200 and drivers21/queue17/assignments12. Production warehouse setting exists. No records or account roles/status were modified.
+
+A legacy super_admin profile without status was identified, but reading the actual deployed rules disproved the initial hypothesis that it caused this live data issue: currently deployed rules permit these reads without that status check. The stricter local rules have not been deployed. The existing production rules remain a previously tracked security gate; no broad rules rollout was bundled into this incident repair. The user's authenticated browser dashboard rendering and SAP source have not been independently verified by these collection reads.
+
 ## Firebase Hosting recovery
 
 The user's `firebase deploy --only hosting` failed before upload because frontend had no `.firebaserc` project mapping. Added default project sysu-web-5a25d. Rebuilt the current frontend with Node 24 (76 modules, successful production configuration validation), then successfully executed `firebase deploy --only hosting --project sysu-web-5a25d` from frontend. Firebase reported release complete. No Firestore rules were included in this deployment.
