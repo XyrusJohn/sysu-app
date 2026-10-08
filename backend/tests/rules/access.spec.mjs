@@ -29,6 +29,8 @@ beforeEach(async () => {
     await setDoc(doc(db, 'role_requests', 'request-a'), { requesterId: 'driver-a', requestedRole: 'admin', status: 'pending' });
     await setDoc(doc(db, 'sap_assignments', 'dispatch-a', 'pod_images', '000001'), {imageUrl: 'https://example.invalid/synthetic.png'});
     await setDoc(doc(db, 'cancelRequests', 'cancel-a'), {requestedBy: 'staff', dispatchKey: 'dispatch-a', status: 'pending'});
+    await setDoc(doc(db, 'sap_assignment_history', 'history-a'), {driverId: 'driver-a', tripStatus: 'cancelled'});
+    await setDoc(doc(db, 'sap_assignment_history', 'history-a', 'pod_images', '000001'), {synthetic: true});
   });
 });
 
@@ -87,4 +89,12 @@ test('R13 direct SDK override writes cannot bypass backend decision transactions
     dispatchKey: 'dispatch-a', requestedDriverId: 'driver-a', reason: 'Synthetic', requestedBy: 'staff',
     requestedAt: Timestamp.now(), status: 'pending', decidedBy: null, decision: null,
   }));
+});
+test('R13 archived POD history remains readable only to staff and its original driver', async () => {
+  for (const uid of ['staff', 'driver-a']) {
+    await assertSucceeds(getDoc(doc(own(uid), 'sap_assignment_history', 'history-a')));
+    await assertSucceeds(getDoc(doc(own(uid), 'sap_assignment_history', 'history-a', 'pod_images', '000001')));
+  }
+  await assertFails(getDoc(doc(own('driver-b'), 'sap_assignment_history', 'history-a', 'pod_images', '000001')));
+  await assertFails(updateDoc(doc(own('admin'), 'sap_assignment_history', 'history-a'), {driverId: 'driver-b'}));
 });
