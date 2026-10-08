@@ -30,7 +30,7 @@ Final verification:
 | Existing browser regressions | Staff profile save/logout, anonymous access, disabled-session termination, assignment/approved cancellation/archive/reassignment all pass on both browser projects |
 | Production read-only projection | HTTP200; 12 stored assignments / 12 displayable; 40 stored line rows / 40 projected; 8 delivered, 2 in transit |
 | Firebase Hosting | `firebase deploy --only hosting --project sysu-web-5a25d` completed with final dashboard asset `dashboard-BxvCpPnx.js` |
-| Served root/dashboard/QR HTML | HTTP200; SHA-256 matches final local production build |
+| Served root/dashboard/QR HTML and dashboard JavaScript | HTTP200; SHA-256 matches final local production build, including `dashboard-BxvCpPnx.js` |
 | Railway post-deployment probes | Both services HTTP200, sysu-app Firestore readiness HTTP200, four hosted-origin preflights HTTP204 with exact origins |
 
 Browser tests use isolated demo Auth/Firestore and a freshly built test artifact; they do not write to production. Production projection checks only read existing documents and print aggregate counts. The existing production project, credentials, Railway endpoints and records were preserved. Actual owner-session rendering in the user's browser and Android-device cross-app acceptance are separate from these checks. No new whole-app coverage percentage was measured (Vitest coverage provider is absent); no 80% coverage claim is made. These results close the reported display incident, not every public-release gate.
