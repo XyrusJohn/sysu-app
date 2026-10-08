@@ -82,3 +82,14 @@ test('In Transit filter and counter use the stored trip lifecycle', async () => 
   expect((await render('in_transit')).textContent).toContain('Test Driver');
   expect(document.getElementById('sapStatTransit').textContent).toBe('1');
 });
+test.each([1791476416000, {seconds: 1791476416}, undefined])('POD preview handles stored capture time %j without crashing', async podCapturedAt => {
+  const assignment = dashboard.state.sapAssignments[dispatch];
+  assignment.lineItems[0].podImageUrl = 'data:image/png;base64,AAAA';
+  assignment.lineItems[0].podCapturedAt = podCapturedAt;
+  document.body.insertAdjacentHTML('beforeend', '<div id="podPreviewModal" class="hidden"><img id="podPreviewImg"><span id="podTimestamp"></span><span id="podVerifiedTimestamp"></span></div>');
+  dashboard._currentDispatchKey = dispatch;
+  await expect(dashboard.openObdPodPreview('6801001522')).resolves.toBeUndefined();
+  expect(document.getElementById('podPreviewModal').classList.contains('hidden')).toBe(false);
+  expect(document.getElementById('podTimestamp').textContent).not.toContain('Invalid Date');
+  dashboard.closePodPreview();
+});
