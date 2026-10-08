@@ -14,7 +14,7 @@ before(() => {
 });
 after(async () => {await db?.terminate(); await admin.app().delete();});
 beforeEach(async () => {
-  for (const name of ['queue', 'sap_assignments', 'overrideRequests', 'overrideTokens', 'cancelRequests']) await db.recursiveDelete(db.collection(name));
+  for (const name of ['queue', 'sap_assignments', 'sap_assignment_history', 'overrideRequests', 'overrideTokens', 'cancelRequests']) await db.recursiveDelete(db.collection(name));
 });
 function invoke(handler, body, uid = 'admin') {
   return new Promise((resolve, reject) => handler({body, user: {uid}},
@@ -61,10 +61,11 @@ test('R13 override approval competing with requester revoke has one winner', asy
 test('R13 cancellation preserves assignment/POD history and selects the exact active queue', async () => {
   await seedCancellation();
   assert.equal((await invoke(ctrl.decideCancelAssignment, {requestId: 'request', decision: 'approved'})).status, 200);
-  const assignment = (await db.collection('sap_assignments').doc('dispatch').get()).data();
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).exists, false);
+  const assignment = (await db.collection('sap_assignment_history').doc('request').get()).data();
   assert.equal(assignment?.tripStatus, 'cancelled');
   assert.deepEqual(assignment.lineItems, [{obdNumber: '0001'}]);
-  assert.equal((await db.collection('sap_assignments').doc('dispatch').collection('pod_images').get()).size, 1);
+  assert.equal((await db.collection('sap_assignment_history').doc('request').collection('pod_images').get()).size, 1);
   assert.deepEqual((await db.collection('queue').doc('a-history').get()).data().assignedShipments, [{dispatchKey: 'past'}]);
   assert.equal((await db.collection('queue').doc('z-active').get()).data().activeShipmentsCount, 0);
 });
@@ -81,8 +82,8 @@ test('R13 competing cancellation decisions have one winner', async () => {
   const results = await Promise.all(['approved', 'denied'].map(decision => invoke(ctrl.decideCancelAssignment, {requestId: 'request', decision})));
   assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
   const request = (await db.collection('cancelRequests').doc('request').get()).data();
-  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).data()?.tripStatus,
-    request.status === 'approved' ? 'cancelled' : 'assigned');
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).exists, request.status !== 'approved');
+  assert.equal((await db.collection('sap_assignment_history').doc('request').get()).exists, request.status === 'approved');
 });
 test('R13 request-write failure rolls back cancellation and queue changes', async () => {
   await seedCancellation();
@@ -100,4 +101,20 @@ test('R13 request-write failure rolls back cancellation and queue changes', asyn
   assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).data().tripStatus, 'assigned');
   assert.equal((await db.collection('queue').doc('z-active').get()).data().activeShipmentsCount, 1);
   assert.equal((await db.collection('cancelRequests').doc('request').get()).data().status, 'pending');
+});
+test('R13 stale cancellation request cannot cancel a replacement assignment', async () => {
+  await seedCancellation();
+  await db.collection('sap_assignments').doc('dispatch').update({assignedAt: admin.firestore.Timestamp.fromMillis(2000)});
+  await db.collection('cancelRequests').doc('request').update({assignmentAssignedAt: admin.firestore.Timestamp.fromMillis(1000)});
+  assert.equal((await invoke(ctrl.decideCancelAssignment, {requestId: 'request', decision: 'approved'})).status, 409);
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).data().tripStatus, 'assigned');
+});
+test('R13 duplicate concurrent cancellation requests create one pending marker', async () => {
+  await seedCancellation();
+  await db.collection('cancelRequests').doc('request').delete();
+  const results = await Promise.all([1, 2].map(() => invoke(ctrl.requestCancelAssignment, {dispatchKey: 'dispatch', reason: 'Synthetic'}, 'staff')));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+  const requests = await db.collection('cancelRequests').get();
+  assert.equal(requests.size, 1);
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).data().pendingCancellationId, requests.docs[0].id);
 });
