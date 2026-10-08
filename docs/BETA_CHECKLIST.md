@@ -33,6 +33,8 @@ No production database, rules, deployment, IAM key, installed driver application
 
 ## 2026-10-09 local fix checkpoint
 
+Hosting update: current frontend built and deployed successfully to the existing Firebase Hosting site. Live root/dashboard/QR pages match the current build exactly and return 200. This supersedes the earlier statement that Hosting deployment was unverified; Firebase rules and phone workflows remain unverified.
+
 Production update: [Railway startup recovery](PRODUCTION_RECOVERY_2026-10-09.md) now proves both backend deployments SUCCESS and passing production health/CORS checks. Earlier statements that no Railway changes had been performed refer to the prior local batch; real configuration repair and restarts have now occurred. Firebase Hosting/rules, APK installation and complete authenticated acceptance have not been verified by this recovery.
 
 Workstation startup correction: see [tomorrow's testing setup](TOMORROW_TESTING.md). Web now explicitly supports existing Firebase with a localhost backend only during the opted-in Vite development server; all 64 frontend tests pass. Backend Firebase readiness returns HTTP 200. A separate liveTest mobile APK uses existing Firebase/services with emulators disabled, signed by the machine's debug key; assemble/lint and 42 unit tests pass, and its APK signature verifies. Device acceptance, installed-certificate compatibility and deployment of the matching mobile backend remain unverified.

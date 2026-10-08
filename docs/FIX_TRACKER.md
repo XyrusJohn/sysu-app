@@ -8,6 +8,8 @@ Batayan: [Production release review](PRODUCTION_RELEASE_REVIEW_2026-10-07.md) at
 
 ## 2026-10-09 verification checkpoint
 
+Firebase Hosting now deployed successfully to sysu-web-5a25d after restoring frontend/.firebaserc. Production build PASS; live root/dashboard/QR HTML return 200 and exactly match the current build by SHA-256. Railway health/readiness/CORS checks still pass. See [production recovery evidence](PRODUCTION_RECOVERY_2026-10-09.md). Phone and authenticated business-flow acceptance remain open.
+
 Railway production startup outage recovered: both services were observed CRASHED, then repaired through their real production environment variables. Final deployments SUCCESS; sysu-app /health/live and /health/ready return 200; sysu-go /api/health returns 200; both services pass hosted-site CORS preflight (204, exact origins). See [production recovery evidence](PRODUCTION_RECOVERY_2026-10-09.md). Full authenticated phone/shipment acceptance remains unverified.
 
 Workstation startup: GREEN b9e62ae supports explicit localhost backend with existing Firebase (64 frontend tests). Real backend `/health/ready` returns HTTP 200 after configuration reload. Mobile build 6e76623 creates signed liveTest APK using existing Firebase/services (42 unit tests, lint/assemble and signature verification pass). See [testing setup](TOMORROW_TESTING.md). This artifact uses the local Android debug signing key; no installed-device or deployed-mobile-backend acceptance is implied.

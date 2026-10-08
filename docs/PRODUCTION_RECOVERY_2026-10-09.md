@@ -1,5 +1,11 @@
 # Railway production recovery — 2026-10-09
 
+## Firebase Hosting recovery
+
+The user's `firebase deploy --only hosting` failed before upload because frontend had no `.firebaserc` project mapping. Added default project sysu-web-5a25d. Rebuilt the current frontend with Node 24 (76 modules, successful production configuration validation), then successfully executed `firebase deploy --only hosting --project sysu-web-5a25d` from frontend. Firebase reported release complete. No Firestore rules were included in this deployment.
+
+Live root, dashboard.html and qr-generator.html each return HTTP 200; SHA-256 of each delivered HTML matches the freshly built file exactly. Both Railway health endpoints, sysu-app Firestore readiness and all four hosted-origin CORS preflights were rechecked and still pass after Hosting release. The installed phone APK and complete authenticated shipment flow remain unverified.
+
 Project: splendid-courage (`6caec00e-4b8c-4b50-8d1e-0de2fe67de81`), environment production.
 
 Both services were observed CRASHED after the user's deployments. The startup guards required configuration which the deployed variables did not satisfy. sysu-go lacked SYSU_ENV and FIREBASE_PROJECT_ID; sysu-app included a localhost origin which its production origin guard rejects. Existing credential JSON was present in both services and identified the existing project sysu-web-5a25d. No credential values were printed by the Railway inspection.
