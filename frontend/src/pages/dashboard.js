@@ -18,6 +18,7 @@ import {
 import { EVENTS, socket, getDriverSocket, connectDriverSocket } from "../api/socket.js";
 import { AuthService } from "../api/authService.js";
 import { SAPService } from "../api/sapService.js";
+import { mergeAssignmentGroups, isDeliveredAssignment, assignmentDisplayStatus } from './shipmentDisplay.js';
 import { SAPAssignmentService } from "../api/sapAssignmentService.js";
 import { API_CONFIG } from "../api/config.js";
 import { SecurityGuardService } from "../api/securityGuardService.js";
@@ -190,6 +191,7 @@ export class Dashboard {
         try {
             SAPService.subscribeToAssignments((data) => {
                 this.state.sapAssignments = data;
+                this._rebuildShipmentGroups();
                 assignmentReady();
                 this._renderAll();
             });
@@ -360,7 +362,7 @@ export class Dashboard {
     async _syncSAP(skipRender = false) {
         try {
             this.state.sapShipments = await SAPService.fetchShipments();
-            this.state.sapGroupedByDispatch = this.groupByDispatch(this.state.sapShipments);
+            this._rebuildShipmentGroups();
             if (!skipRender) this._renderAll();
         } catch (err) {
             console.error("SAP sync error:", err);
@@ -2848,10 +2850,16 @@ export class Dashboard {
         const allKeys = Object.keys(groups);
 
         if (allKeys.length === 0) {
+            for (const id of ['sapStatAll', 'sapStatDel', 'sapStatTransit']) {
+                const stat = document.getElementById(id);
+                if (stat) stat.textContent = '0';
+            }
+            const resultCount = document.getElementById('sapResultCount');
+            if (resultCount) resultCount.textContent = '0 dispatches';
             body.innerHTML = `<tr>
           <td colspan="9" class="px-4 py-0">
             <div class="flex flex-col items-center justify-center min-h-[240px] text-center w-full">
-              <span class="text-db-text3 italic tracking-wide">No shipments found in SAP.</span>
+              <span class="text-db-text3 italic tracking-wide">No shipments available.</span>
             </div>
         </td>
         </tr>`;
@@ -2915,7 +2923,7 @@ export class Dashboard {
         // Filter
         const filtered = groupedList.filter((g) => {
             if (q) {
-                const hay = `${g.key} ${g.rec.OBDNumber || ""} ${g.rec.SoldToParty || g.rec.ShipToPartyName || ""} ${g.rec.Route || ""}`.toLowerCase();
+                const hay = `${g.key} ${g.records.map(rec => `${rec.OBDNumber || ''} ${rec.SoldToParty || rec.ShipToPartyName || ''} ${rec.Route || ''}`).join(' ')}`.toLowerCase();
                 if (!hay.includes(q.toLowerCase())) return false;
             }
 
@@ -2935,21 +2943,18 @@ export class Dashboard {
             }
 
             if (this.state.sapFilter === "delivered") {
-                // Only show rows that have an assignment entry with tripStatus === "completed"
-                // from our local sap_assignments database, NOT from SAP ODATA.
-                // Using case-insensitive comparison to handle potential case variations
-                if (!asgn || !(asgn.tripStatus?.toLowerCase() === "completed")) return false;
+                if (!isDeliveredAssignment(asgn)) return false;
             } else if (this.state.sapFilter === "in_transit") {
-                if (tripStatus !== "in_transit") return false;
+                if (tripStatusLower !== "in_transit") return false;
             } else if (this.state.sapFilter === "fully_loaded") {
                 // Matches either "loaded" or "fully_loaded" (case-insensitive)
                 if (tripStatusLower !== "loaded" && tripStatusLower !== "fully_loaded") return false;
             } else if (this.state.sapFilter === "loading") {
-                if (tripStatus !== "loading") return false;
+                if (tripStatusLower !== "loading") return false;
             } else if (this.state.sapFilter === "assigned") {
                 // A fresh assignment has tripStatus === "assigned" until the
                 // driver transitions to "loading" / "loaded" / "in_transit".
-                if (tripStatus !== "assigned") return false;
+                if (tripStatusLower !== "assigned") return false;
             } else if (this.state.sapFilter === "forAssignment") {
                 // Exclude already DELIVERED — no point assigning something already delivered
                 if ((g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
@@ -2988,8 +2993,8 @@ export class Dashboard {
         });
 
         // Stats from valid (non-planning) entries only
-        const del = validKeys.filter((k) => this.state.sapAssignments[k]?.tripStatus === "completed").length;
-        const tra = validKeys.filter((k) => (groups[k][0].PgiStatus || groups[k][0].CheckStatus || "").toUpperCase() === "IN TRANSIT").length;
+        const del = validKeys.filter((k) => isDeliveredAssignment(this.state.sapAssignments[k])).length;
+        const tra = validKeys.filter((k) => this.state.sapAssignments[k]?.tripStatus?.toLowerCase() === 'in_transit').length;
 
         const e = (id, v) => {
             const el = document.getElementById(id);
@@ -3024,8 +3029,8 @@ export class Dashboard {
                 const { key, rec, count } = g;
                 const shipmentDisplay = stripZeros(key);
                 const asgn = this.state.sapAssignments[key];
-                const status = rec.PgiStatus || rec.CheckStatus || "Pending";
-                const isDelivered = status.toUpperCase() === "DELIVERED" || (asgn?.tripStatus?.toLowerCase() === "completed");
+                const status = assignmentDisplayStatus(asgn, rec);
+                const isDelivered = isDeliveredAssignment(asgn);
 
                 return `
         <tr class="hover:bg-db-item-hover transition-colors border-b border-db-border">
@@ -3049,7 +3054,7 @@ export class Dashboard {
           </td>
           <td class="px-6 py-4 text-right">
              ${isDelivered
-                        ? '<span class="text-green-500 font-bold text-xs">COMPLETE</span>'
+                        ? `<span class="text-green-500 font-bold text-xs">${asgn?.tripStatus?.toLowerCase() === 'returning_to_base' ? 'RETURNING TO BASE' : 'COMPLETE'}</span>`
                         : asgn
                             ? (
                                 // Hide the cancel/change dropdown once the driver
@@ -4476,6 +4481,12 @@ export class Dashboard {
         return groups;
     }
 
+    _rebuildShipmentGroups() {
+        this.state.sapGroupedByDispatch = mergeAssignmentGroups(
+            this.groupByDispatch(this.state.sapShipments), this.state.sapAssignments,
+        );
+    }
+
     openSapDispatchDetail(dispatchNumber) {
         this._currentDispatchKey = dispatchNumber;
         this._currentDispatchKey = dispatchNumber;
@@ -4491,7 +4502,7 @@ export class Dashboard {
         };
 
         set("sapDtlDispatchNum", rec.SAPDispatchNumber || dispatchNumber);
-        set("sapDtlStatus", rec.PgiStatus || rec.CheckStatus || "—");
+        set("sapDtlStatus", assignmentDisplayStatus(asgn, rec));
         set("sapDtlDelivery", rec.Delivery || "—");
         set("sapDtlPlanDate", SAPService.parseDate(rec.PlanningDate));
         set("sapDtlActualDate", this._formatDelDateDisplay(rec.ActualDelDate));
@@ -4543,7 +4554,7 @@ export class Dashboard {
                         <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center">
-                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
+                          ${asgn && ['in_transit', 'completed', 'returning_to_base'].includes(asgn.tripStatus?.toLowerCase()) && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
                         </td>
                     </tr>`;
             }).join("");
@@ -4648,19 +4659,14 @@ export class Dashboard {
                 this._calculatePodMaxOffsets(imgEl);
             };
         }
-        if (tsEl) {
-            const captureDate = match.podCapturedAt?.toDate
-                ? match.podCapturedAt.toDate()
-                : new Date(match.podCapturedAt.seconds * 1000);
-            tsEl.textContent = captureDate.toLocaleString();
-        }
+        const captureTime = match?.podCapturedAt;
+        const captureDate = captureTime?.toDate ? captureTime.toDate()
+            : typeof captureTime?.seconds === 'number' ? new Date(captureTime.seconds * 1000)
+                : typeof captureTime === 'number' ? new Date(captureTime) : null;
+        const captureText = captureDate && Number.isFinite(captureDate.getTime()) ? captureDate.toLocaleString() : '—';
+        if (tsEl) tsEl.textContent = captureText;
         const verifiedEl = modal.querySelector('#podVerifiedTimestamp');
-        if (verifiedEl) {
-            const captureDate = match.podCapturedAt?.toDate
-                ? match.podCapturedAt.toDate()
-                : new Date(match.podCapturedAt.seconds * 1000);
-            verifiedEl.textContent = captureDate.toLocaleString();
-        }
+        if (verifiedEl) verifiedEl.textContent = captureText;
         // Handle signature button
         if (signatureContainer) {
             const guardSignatureBase64 = match?.guardSignatureBase64 || asgn?.guardSignatureBase64;
