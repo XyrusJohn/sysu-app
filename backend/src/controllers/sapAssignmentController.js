@@ -18,47 +18,53 @@ const CANCEL_REQUESTS = "cancelRequests";
 
 // ── Validation Schemas ─────────────────────────────────────────────────────────────
 
+const documentIdSchema = z.string().min(1).max(128).refine(value => value === value.trim()
+    && !value.includes('/') && value !== '.' && value !== '..' && !/^__.*__$/.test(value)
+    && [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 'Invalid document identifier');
+const reasonSchema = z.string().trim().min(1).max(2000);
+const quantitySchema = z.number().finite().positive().max(Number.MAX_SAFE_INTEGER);
+
 const lineItemSchema = z.object({
-    obdNumber: z.string().min(1),
-    quantity: z.union([z.number().finite().positive(), z.string().regex(/^\d+(\.\d+)?$/).transform(Number).pipe(z.number().finite().positive())]),
-    customerName: z.string().min(1),
+    obdNumber: documentIdSchema,
+    quantity: z.union([quantitySchema, z.string().max(32).regex(/^\d+(\.\d+)?$/).transform(Number).pipe(quantitySchema)]),
+    customerName: z.string().trim().min(1).max(500),
     amount: z.undefined().optional(), // Explicitly forbid amount
 });
 
 const assignDriverSchema = z.object({
-    dispatchKey: z.string().min(1),
-    requestedDriverId: z.string().min(1),
-    truckType: z.string().min(1),
-    overrideTokenId: z.string().min(1).max(128).nullish(),
+    dispatchKey: documentIdSchema,
+    requestedDriverId: documentIdSchema,
+    truckType: z.string().trim().min(1).max(64),
+    overrideTokenId: documentIdSchema.nullish(),
     driverSnapshot: z.any().optional(),
-    lineItems: z.array(lineItemSchema).min(1),
+    lineItems: z.array(lineItemSchema).min(1).max(500),
 });
 
 const overrideRequestSchema = z.object({
-    dispatchKey: z.string().min(1),
-    requestedDriverId: z.string().min(1),
-    reason: z.string().min(1),
+    dispatchKey: documentIdSchema,
+    requestedDriverId: documentIdSchema,
+    reason: reasonSchema,
 });
 
 const overrideDecisionSchema = z.object({
-    requestId: z.string().min(1),
+    requestId: documentIdSchema,
     decision: z.enum(["approved", "denied"]),
-    reason: z.string().optional(),
+    reason: reasonSchema.optional(),
 });
 
 const cancelRequestSchema = z.object({
-    dispatchKey: z.string().min(1),
-    reason: z.string().min(1),
+    dispatchKey: documentIdSchema,
+    reason: reasonSchema,
 });
 
 const cancelDecisionSchema = z.object({
-    requestId: z.string().min(1),
+    requestId: documentIdSchema,
     decision: z.enum(["approved", "denied"]),
-    reason: z.string().optional(),
+    reason: reasonSchema.optional(),
 });
 
 const revokeSchema = z.object({
-    requestId: z.string().min(1),
+    requestId: documentIdSchema,
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────
