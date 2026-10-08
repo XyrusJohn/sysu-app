@@ -8,7 +8,7 @@ for (const [name, exports] of [['firebase-admin',fakeAdmin], ['dotenv',{config()
   require.cache[path]={id:path,filename:path,loaded:true,exports};
 }
 const {initializeFirebase}=require('../../src/config/firebase');
-const keys=['FIREBASE_PROJECT_ID','FIREBASE_SERVICE_ACCOUNT_JSON','FIRESTORE_EMULATOR_HOST','NODE_ENV'];
+const keys=['FIREBASE_PROJECT_ID','FIREBASE_SERVICE_ACCOUNT_JSON','FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','NODE_ENV'];
 let saved;
 test.beforeEach(() => {saved=Object.fromEntries(keys.map(k=>[k,process.env[k]])); keys.forEach(k=>delete process.env[k]); initialized=undefined;});
 test.afterEach(() => {for (const key of keys) {if(saved[key]===undefined) delete process.env[key]; else process.env[key]=saved[key];}});
@@ -18,6 +18,21 @@ test('R32: missing project fails instead of defaulting to production', () => {
 });
 test('R18/R32: production rejects accidental emulator configuration', () => {
   Object.assign(process.env,{NODE_ENV:'production',FIREBASE_PROJECT_ID:'test-staging',FIRESTORE_EMULATOR_HOST:'127.0.0.1:8085'});
+  assert.throws(initializeFirebase,/emulator/i);
+  assert.equal(initialized,undefined);
+});
+test('R32: production rejects Auth emulator before initialization or token verification', () => {
+  Object.assign(process.env,{NODE_ENV:'production',FIREBASE_PROJECT_ID:'test-staging',FIREBASE_AUTH_EMULATOR_HOST:'127.0.0.1:9099'});
+  assert.throws(initializeFirebase,/emulator/i);
+  assert.equal(initialized,undefined);
+});
+test('R32: local Auth emulator cannot target a remote host', () => {
+  Object.assign(process.env,{FIREBASE_PROJECT_ID:'demo-sysu-security',FIRESTORE_EMULATOR_HOST:'127.0.0.1:8085',FIREBASE_AUTH_EMULATOR_HOST:'example.com:9099'});
+  assert.throws(initializeFirebase,/emulator/i);
+  assert.equal(initialized,undefined);
+});
+test('R32: emulator ports must be within TCP bounds', () => {
+  Object.assign(process.env,{FIREBASE_PROJECT_ID:'demo-sysu-security',FIRESTORE_EMULATOR_HOST:'127.0.0.1:99999'});
   assert.throws(initializeFirebase,/emulator/i);
   assert.equal(initialized,undefined);
 });
