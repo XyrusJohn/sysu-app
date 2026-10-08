@@ -5,8 +5,8 @@ service cloud.firestore {
     function active() {
       return request.auth != null
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', 'active') == 'active'
-        && !(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['pending', 'inactive']);
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', '') == 'active'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['driver', 'fleet_manager', 'qr_generator', 'admin', 'super_admin'];
     }
     function staff() {
       return active() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['fleet_manager', 'admin', 'super_admin'];
@@ -17,6 +17,13 @@ service cloud.firestore {
     function ownsDriver() {
       return active() && resource.data.driverId == request.auth.uid;
     }
+    function basicProfile(data) {
+      return data.get('name', '') is string && data.get('name', '').size() <= 100
+        && data.get('fn', '') is string && data.get('fn', '').size() <= 50
+        && data.get('mi', '') is string && data.get('mi', '').size() <= 8
+        && data.get('ln', '') is string && data.get('ln', '').size() <= 50
+        && data.get('phone', '') is string && data.get('phone', '').size() <= 30;
+    }
 
     // ─── User Profiles ───────────────────────────────────────────────────────
     // Read: authenticated users (for admin user management UI).
@@ -26,14 +33,15 @@ service cloud.firestore {
       allow get: if request.auth != null && (request.auth.uid == userId || staff());
       allow list: if staff();
       allow create: if request.auth != null && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'phone', 'position', 'role', 'status', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'fn', 'mi', 'ln', 'email', 'phone', 'position', 'role', 'status', 'createdAt'])
         && request.resource.data.role == 'pending'
         && request.resource.data.status == 'inactive'
-        && request.resource.data.name is string && request.resource.data.name.size() <= 100;
+        && request.resource.data.get('uid', userId) == userId
+        && request.resource.data.get('email', '') is string && request.resource.data.get('email', '').size() <= 254
+        && basicProfile(request.resource.data);
       allow update: if request.auth != null && request.auth.uid == userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'displayName', 'photoURL', 'phone'])
-        && request.resource.data.get('name', '') is string
-        && request.resource.data.get('name', '').size() <= 100
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'fn', 'mi', 'ln', 'displayName', 'photoURL', 'phone'])
+        && basicProfile(request.resource.data)
         && request.resource.data.get('displayName', '') is string
         && request.resource.data.get('displayName', '').size() <= 100
         && (request.resource.data.get('photoURL', null) == null
