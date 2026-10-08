@@ -26,7 +26,7 @@ async function seedCancellation(tripStatus = 'assigned') {
   await db.collection('queue').doc('z-active').set({driverId: 'driver', status: 'loading', isAssigned: true,
     assignedShipments: [{dispatchKey: 'dispatch'}], activeShipmentsCount: 1});
   await db.collection('sap_assignments').doc('dispatch').set({driverId: 'driver', queueId: 'z-active', tripStatus, lineItems: [{obdNumber: '0001'}]});
-  await db.collection('sap_assignments').doc('dispatch').collection('pods').doc('retained').set({synthetic: true});
+  await db.collection('sap_assignments').doc('dispatch').collection('pod_images').doc('retained').set({synthetic: true});
   await db.collection('cancelRequests').doc('request').set({dispatchKey: 'dispatch', reason: 'Synthetic', requestedBy: 'staff', status: 'pending'});
 }
 test('R13 concurrent override approvals issue exactly one token', async () => {
@@ -36,6 +36,19 @@ test('R13 concurrent override approvals issue exactly one token', async () => {
   const tokens = await db.collection('overrideTokens').get();
   assert.equal(tokens.size, 1);
   assert.equal((await db.collection('overrideRequests').doc('request').get()).data().tokenId, tokens.docs[0].id);
+});
+test('R13 cancelled dispatch can be reassigned without leaking the previous POD', async () => {
+  await seedCancellation();
+  await invoke(ctrl.decideCancelAssignment, {requestId: 'request', decision: 'approved'});
+  await db.collection('queue').doc('new-driver').set({driverId: 'next-driver', status: 'waiting', truckType: 'truck', isAssigned: false, isFull: false, entryTime: admin.firestore.Timestamp.now()});
+  const assigned = await invoke(ctrl.assignDriver, {dispatchKey: 'dispatch', requestedDriverId: 'next-driver', truckType: 'truck', overrideTokenId: null,
+    lineItems: [{obdNumber: '0001', customerName: 'Synthetic', quantity: 1}]});
+  assert.equal(assigned.status, 200);
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).data().driverId, 'next-driver');
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').collection('pod_images').get()).size, 0);
+  const history = db.collection('sap_assignment_history').doc('request');
+  assert.equal((await history.get()).data().driverId, 'driver');
+  assert.equal((await history.collection('pod_images').get()).size, 1);
 });
 test('R13 override approval competing with requester revoke has one winner', async () => {
   await db.collection('overrideRequests').doc('request').set({dispatchKey: 'dispatch', requestedDriverId: 'driver', reason: 'Synthetic', status: 'pending', requestedBy: 'staff'});
@@ -51,7 +64,7 @@ test('R13 cancellation preserves assignment/POD history and selects the exact ac
   const assignment = (await db.collection('sap_assignments').doc('dispatch').get()).data();
   assert.equal(assignment?.tripStatus, 'cancelled');
   assert.deepEqual(assignment.lineItems, [{obdNumber: '0001'}]);
-  assert.equal((await db.collection('sap_assignments').doc('dispatch').collection('pods').get()).size, 1);
+  assert.equal((await db.collection('sap_assignments').doc('dispatch').collection('pod_images').get()).size, 1);
   assert.deepEqual((await db.collection('queue').doc('a-history').get()).data().assignedShipments, [{dispatchKey: 'past'}]);
   assert.equal((await db.collection('queue').doc('z-active').get()).data().activeShipmentsCount, 0);
 });
