@@ -6,7 +6,8 @@ beforeEach(() => {
   vi.resetModules();
   for (const [key, value] of Object.entries({VITE_RELEASE_TARGET: 'local', VITE_API_URL: 'http://127.0.0.1:8080',
     VITE_SOCKET_URL: 'http://127.0.0.1:8080', VITE_DRIVER_TRACKING_URL: 'http://127.0.0.1:8091',
-    VITE_FIREBASE_PROJECT_ID: 'demo-sysu-security', VITE_AUTH_EMULATOR_URL: '', VITE_FIRESTORE_EMULATOR_HOST: ''})) vi.stubEnv(key, value);
+    VITE_FIREBASE_PROJECT_ID: 'demo-sysu-security', VITE_FIREBASE_AUTH_DOMAIN:'demo-sysu-security.firebaseapp.com',
+    VITE_FIREBASE_STORAGE_BUCKET:'demo-sysu-security.appspot.com', VITE_AUTH_EMULATOR_URL: '', VITE_FIRESTORE_EMULATOR_HOST: ''})) vi.stubEnv(key, value);
 });
 afterEach(() => {vi.unstubAllEnvs();});
 test('R32 missing endpoints fail before any silent production fallback', async () => {
@@ -24,6 +25,14 @@ test('R32 local mode cannot initialize the production Firebase project', async (
 test('R32 explicit isolated API and both socket endpoints are preserved', async () => {
   const {API_CONFIG} = await import('./config.js');
   expect(API_CONFIG).toEqual({BASE_URL: 'http://127.0.0.1:8080', SOCKET_URL: 'http://127.0.0.1:8080', DRIVER_TRACKING_URL: 'http://127.0.0.1:8091'});
+});
+test('R32 local configuration rejects an inherited live Storage bucket', async () => {
+  vi.stubEnv('VITE_FIREBASE_STORAGE_BUCKET','sysu-web-5a25d.firebasestorage.app');
+  await expect(import('./config.js')).rejects.toThrow(/bucket|storage|production/i);
+});
+test('R32 local configuration rejects an inherited live Auth domain', async () => {
+  vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN','sysu-web-5a25d.firebaseapp.com');
+  await expect(import('./config.js')).rejects.toThrow(/domain|auth|production/i);
 });
 test('R32 Vite development proxy uses the explicit local API and primary socket', async () => {
   const imported = await import('../../vite.config.js');
