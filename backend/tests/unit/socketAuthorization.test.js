@@ -8,7 +8,7 @@ const connectionSource=source.slice(middlewareStart >= 0 ? middlewareStart : sou
 async function connect(profile={role:'driver',status:'active'}, options={}) {
   const handlers={}; const emissions=[]; const logs=[]; let writes=0; let disconnected=false;
   let profileListener, stoppedProfile=false;
-  let onConnection;
+  let onConnection; let authFailure=false;const timers=[];
   const middleware=[];
   const io={use(handler){middleware.push(handler);},on(_event,callback){onConnection=callback;},emit(...args){emissions.push(args);},to(){return this;}};
   let failWrites=false;
@@ -17,19 +17,23 @@ async function connect(profile={role:'driver',status:'active'}, options={}) {
   const fakeDb={collection:name=>name === 'sap_assignments' ? {...query,doc:()=>({get:async()=>({exists:true,data:()=>({driverId:options.assignmentOwner || 'driver-a'})})})} : query,
     runTransaction:async callback=>callback({get:ref=>ref.get(),update(){writes++;}})};
   const firestore=()=>fakeDb; firestore.FieldValue={serverTimestamp:()=>0};
-  const admin={firestore,auth:()=>({verifyIdToken:async()=>({uid:'driver-a',exp:Math.floor(Date.now()/1000)+3600})})};
+  const admin={firestore,auth:()=>({verifyIdToken:async(_token,checkRevoked)=>{assert.equal(checkRevoked,true);if(authFailure)throw new Error('Synthetic revoked session');return {uid:'driver-a',exp:Math.floor(Date.now()/1000)+3600};}})};
   const capture=(...args)=>logs.push(args.join(' '));
   vm.runInNewContext(connectionSource,{io,admin,require:path=>path.includes('driverCapacity')
     ? {updateDriverCapacity:(id,flag)=>require('../../src/services/driverCapacity').updateDriverCapacity(id,flag,fakeDb)} : admin,console:{log:capture,warn:capture,error:capture},
-    setTimeout:()=>({unref(){}}),clearTimeout(){},lastDriverLocationPersist:new Map(),getDistanceMeters:()=>1000,LOCATION_PERSIST_THROTTLE_MS:600000,MIN_PERSIST_DISTANCE_METERS:100});
+    setTimeout:(fn,delay)=>{const timer={fn,delay,unref(){}};timers.push(timer);return timer;},clearTimeout(timer){if(timer)timer.cleared=true;},lastDriverLocationPersist:new Map(),getDistanceMeters:()=>1000,LOCATION_PERSIST_THROTTLE_MS:600000,MIN_PERSIST_DISTANCE_METERS:100});
   const socket={handshake:{auth:{token:'synthetic'}},data:{},join(){},disconnect(){disconnected=true;handlers.disconnect?.();},once(event,handler){handlers[event]=handler;},on(event,handler){handlers[event]=handler;},emit(...args){emissions.push(args);}};
   for(const handler of middleware) {
     const error=await new Promise(resolve=>handler(socket,resolve));
     if(error) {disconnected=true; break;}
   }
   if(!disconnected) await onConnection(socket);
-  return {handlers,emissions,logs,authenticatedBeforeConnection:middleware.length>0,set failWrites(value){failWrites=value;},changeProfile(data){assert.equal(typeof profileListener,'function');profileListener({exists:Boolean(data),data:()=>data});},get stoppedProfile(){return stoppedProfile;},get writes(){return writes;},get disconnected(){return disconnected;}};
+  return {handlers,emissions,logs,authenticatedBeforeConnection:middleware.length>0,set failWrites(value){failWrites=value;},async revokeAuth(){authFailure=true;const timer=timers.find(t=>t.delay===30000&&!t.cleared);assert.ok(timer,'Established socket must schedule Auth revalidation');await timer.fn();await new Promise(r=>setImmediate(r));},changeProfile(data){assert.equal(typeof profileListener,'function');profileListener({exists:Boolean(data),data:()=>data});},get stoppedProfile(){return stoppedProfile;},get writes(){return writes;},get disconnected(){return disconnected;}};
 }
+
+test('R22 actual server wiring disconnects revoked Auth without any profile snapshot change',async()=>{
+  const session=await connect();await session.revokeAuth();assert.equal(session.disconnected,true);assert.equal(session.stoppedProfile,true);
+});
 test('R10: capacity socket cannot impersonate a different driver',async()=>{
   const session=await connect(); await session.handlers.driver_is_full({driverId:'driver-b',isFull:true});
   assert.equal(session.writes,0); assert.equal(session.emissions.length,0);
