@@ -4512,9 +4512,9 @@ class Dashboard {
     }
 
     groupByDispatch(shipments) {
-        const groups = {};
+        const groups = Object.create(null);
         for (const s of shipments) {
-            const key = (s.SAPDispatchNumber || "").trim() || s.TrId || "";
+            const key = typeof s?.SAPDispatchNumber === 'string' ? s.SAPDispatchNumber.trim() : '';
             if (!key) continue;
             if (!groups[key]) groups[key] = [];
             groups[key].push(s);

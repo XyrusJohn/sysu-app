@@ -7,6 +7,8 @@ const {admin} = require("../config/firebase.js");
 const {resolveEarliest, validateEarliest} = require("../services/queueOrdering.js");
 const tokenService = require("../services/tokenService.js");
 const decisions = require("../services/dispatchDecisions.js");
+const sapSource = require('../services/sapSource');
+const {validateAssignment} = require('../services/sapAssignmentPolicy');
 const {asyncWrapper} = require("../middleware/asyncWrapper.js");
 const { z } = require("zod");
 
@@ -134,8 +136,12 @@ exports.peekEarliest = asyncWrapper(async (req, res) => {
 
 exports.assignDriver = asyncWrapper(async (req, res) => {
     const body = assignDriverSchema.parse(req.body);
-    const {dispatchKey, requestedDriverId, truckType, overrideTokenId, lineItems} = body;
+    const {dispatchKey, requestedDriverId, truckType, overrideTokenId} = body;
     const assignedBy = req.user && req.user.uid;
+
+    const sapSnapshot = await sapSource.read({maxAge:5000});
+    const sapCheck = validateAssignment(sapSnapshot.rows,body);
+    if (sapCheck.status !== 200) return res.status(sapCheck.status).json({success:false,code:sapCheck.code,message:sapCheck.message});
 
     const result = await DB().runTransaction(async (tx) => {
         const assignRef = DB().collection(SAP_COLLECTION).doc(dispatchKey);
@@ -234,7 +240,7 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             }
         }
 
-        const normalizedLineItems = lineItems.map((li) => {
+        const normalizedLineItems = sapCheck.lineItems.map((li) => {
             const q = typeof li.quantity === "string" ? parseFloat(li.quantity) : li.quantity;
             return {...li, quantity: Number.isFinite(q) ? q : null};
         });
@@ -249,6 +255,8 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             lineItems: normalizedLineItems,
             assignedAt: admin.firestore.FieldValue.serverTimestamp(),
             assignedBy: assignedBy || null,
+            sapSourceFetchedAt: admin.firestore.Timestamp.fromMillis(sapSnapshot.fetchedAt),
+            sapContractVersion: 'unassigned-v1',
             overrideTokenId: overrideTokenId || null,
             tripStatus: "assigned",
         });

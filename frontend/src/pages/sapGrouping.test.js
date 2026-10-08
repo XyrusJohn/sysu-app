@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {test,expect} from 'vitest';
 function group(rows) {
   const source=readFileSync('src/pages/dashboard.js','utf8');
-  const body=source.match(/groupByDispatch\(shipments\) \{([\s\S]*?)\n    \}/)[1];
+  const body=source.match(/groupByDispatch\(shipments\) \{([\s\S]*?)\n {4}\}/)[1];
   return new Function('shipments',body)(rows);
 }
 test('SAP groups same dispatch with distinct OBDs and keeps repeated item rows',()=>{

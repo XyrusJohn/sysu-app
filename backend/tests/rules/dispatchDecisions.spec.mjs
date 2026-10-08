@@ -10,6 +10,9 @@ before(() => {
   db = admin.firestore();
   const path = require.resolve('../../src/config/firebase');
   require.cache[path] = {id: path, filename: path, loaded: true, exports: {admin}};
+  const sapPath=require.resolve('../../src/services/sapSource');
+  require.cache[sapPath]={id:sapPath,filename:sapPath,loaded:true,exports:{read:async()=>({fetchedAt:Date.now(),rows:[{
+    SAPDispatchNumber:'dispatch',OBDNumber:'0001',Quantity:'1',ShipToPartyName:'Synthetic',TruckType:'4W'}]})}};
   ctrl = require('../../src/controllers/sapAssignmentController');
 });
 after(async () => {await db?.terminate(); await admin.app().delete();});
@@ -40,8 +43,8 @@ test('R13 concurrent override approvals issue exactly one token', async () => {
 test('R13 cancelled dispatch can be reassigned without leaking the previous POD', async () => {
   await seedCancellation();
   await invoke(ctrl.decideCancelAssignment, {requestId: 'request', decision: 'approved'});
-  await db.collection('queue').doc('new-driver').set({driverId: 'next-driver', status: 'waiting', truckType: 'truck', isAssigned: false, isFull: false, entryTime: admin.firestore.Timestamp.now()});
-  const assigned = await invoke(ctrl.assignDriver, {dispatchKey: 'dispatch', requestedDriverId: 'next-driver', truckType: 'truck', overrideTokenId: null,
+  await db.collection('queue').doc('new-driver').set({driverId: 'next-driver', status: 'waiting', truckType: '4W', isAssigned: false, isFull: false, entryTime: admin.firestore.Timestamp.now()});
+  const assigned = await invoke(ctrl.assignDriver, {dispatchKey: 'dispatch', requestedDriverId: 'next-driver', truckType: '4W', overrideTokenId: null,
     lineItems: [{obdNumber: '0001', customerName: 'Synthetic', quantity: 1}]});
   assert.equal(assigned.status, 200);
   assert.equal((await db.collection('sap_assignments').doc('dispatch').get()).data().driverId, 'next-driver');

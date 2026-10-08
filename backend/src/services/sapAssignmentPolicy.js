@@ -9,7 +9,8 @@ function validateAssignment(rows,body) {
     const canonical=[];
     for(const row of group) {
         const quantity=Number(row.Quantity);
-        const customer=(row.ShipToPartyName || row.ShipToParty || '').trim();
+        const rawCustomer=row.ShipToPartyName || row.ShipToParty || '';
+        const customer=typeof rawCustomer==='string' ? rawCustomer.trim() : '';
         if (typeof row.OBDNumber!=='string' || !row.OBDNumber.trim() || row.OBDNumber.length>128
             || row.OBDNumber.includes('/') || !customer || customer.length>500
             || typeof row.Quantity!=='string' || !/^\d+(?:\.\d+)?$/.test(row.Quantity)
