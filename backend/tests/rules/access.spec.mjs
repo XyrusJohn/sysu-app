@@ -27,6 +27,8 @@ beforeEach(async () => {
     await setDoc(doc(db, 'sap_assignments', 'dispatch-a'), { driverId: 'driver-a', assignedBy: 'staff', tripStatus: 'assigned', lineItems: [] });
     await setDoc(doc(db, 'qr_tokens', 'secret-token'), { used: false });
     await setDoc(doc(db, 'role_requests', 'request-a'), { requesterId: 'driver-a', requestedRole: 'admin', status: 'pending' });
+    await setDoc(doc(db, 'sap_assignments', 'dispatch-a', 'pod_images', '000001'), {imageUrl: 'https://example.invalid/synthetic.png'});
+    await setDoc(doc(db, 'cancelRequests', 'cancel-a'), {requestedBy: 'staff', dispatchKey: 'dispatch-a', status: 'pending'});
   });
 });
 
@@ -34,6 +36,7 @@ test('R01: own profile cannot promote role or activate status', async () => {
   await assertFails(updateDoc(doc(own('driver-a'), 'users', 'driver-a'), { role: 'super_admin' }));
   await assertFails(updateDoc(doc(own('pending'), 'users', 'pending'), { status: 'active' }));
   await assertSucceeds(updateDoc(doc(own('driver-a'), 'users', 'driver-a'), { name: 'New name' }));
+  await assertSucceeds(updateDoc(doc(own('driver-a'), 'users', 'driver-a'), { photoURL: null }));
 });
 test('R01: account creation cannot set an initial privileged role', async () => {
   await assertFails(setDoc(doc(own('new-user'), 'users', 'new-user'), { role: 'super_admin', status: 'active', name: 'Attack' }));
@@ -62,4 +65,26 @@ test('R04: clients cannot forge role-request decisions', async () => {
   await assertFails(updateDoc(doc(own('driver-b'), 'role_requests', 'request-a'), { requesterId: 'driver-b', requestedRole: 'super_admin', status: 'approved' }));
   await assertFails(getDocs(collection(own('driver-b'), 'role_requests')));
   await assertSucceeds(getDocs(collection(own('admin'), 'role_requests')));
+});
+
+test('R14 staff and owning driver can read POD images; unrelated/pending/anonymous cannot', async () => {
+  for (const uid of ['staff', 'admin', 'driver-a']) {
+    await assertSucceeds(getDoc(doc(own(uid), 'sap_assignments', 'dispatch-a', 'pod_images', '000001')));
+  }
+  for (const uid of ['driver-b', 'pending']) {
+    await assertFails(getDoc(doc(own(uid), 'sap_assignments', 'dispatch-a', 'pod_images', '000001')));
+  }
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'sap_assignments', 'dispatch-a', 'pod_images', '000001')));
+});
+test('R14 staff cancellation listeners work without exposing requests to drivers', async () => {
+  await assertSucceeds(getDocs(collection(own('admin'), 'cancelRequests')));
+  await assertSucceeds(getDocs(collection(own('staff'), 'cancelRequests')));
+  await assertFails(getDocs(collection(own('driver-b'), 'cancelRequests')));
+  await assertFails(updateDoc(doc(own('admin'), 'cancelRequests', 'cancel-a'), {status: 'approved'}));
+});
+test('R13 direct SDK override writes cannot bypass backend decision transactions', async () => {
+  await assertFails(setDoc(doc(own('staff'), 'overrideRequests', 'forged'), {
+    dispatchKey: 'dispatch-a', requestedDriverId: 'driver-a', reason: 'Synthetic', requestedBy: 'staff',
+    requestedAt: Timestamp.now(), status: 'pending', decidedBy: null, decision: null,
+  }));
 });
