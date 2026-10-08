@@ -16,7 +16,7 @@ async function authHeaders() {
 }
 
 async function handle(res) {
-    let body = null;
+    let body;
     try {
         body = await res.json();
     } catch {

@@ -60,6 +60,7 @@ export const EVENTS = {
     APPROVE_ROLE_REQUEST: "approve_role_request",
     REJECT_ROLE_REQUEST: "reject_role_request",
     USER_ROLE_CHANGED: "user_role_changed",
+    POD_UPDATED: "pod_updated",
 };
 
 // ── Driver-Location Socket ─────────────────────────────────────────────────

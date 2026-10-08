@@ -351,8 +351,7 @@ if (pass.length < 8 || pass.length > 128) {
             // Need to sign out since they cancelled registration
             try {
                 await auth.signOut();
-            } catch (e) {
-            }
+            } catch (e) { /* Best-effort cleanup; the view is already dismissed. */ }
         });
     }
 
@@ -405,8 +404,7 @@ if (pass.length < 8 || pass.length > 128) {
             pendingOverlay.classList.remove("show");
             try {
                 await auth.signOut();
-            } catch (e) {
-            }
+            } catch (e) { /* Best-effort cleanup; the view is already dismissed. */ }
         });
     }
 

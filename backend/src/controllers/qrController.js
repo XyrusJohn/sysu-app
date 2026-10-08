@@ -7,6 +7,9 @@ const DB = () => admin.firestore();
 const QR_TOKENS_COLLECTION = "qr_tokens";
 const QUEUE_COLLECTION = "queue";
 const TOKEN_EXPIRY_HOURS = 48;
+const PUBLIC_TRUCK_TYPES = ['AUV', '4W', '6W', '10W', '20F', '40F'];
+let publicQueueCache;
+let publicQueuePending;
 
 const scanTokenSchema = z.object({
     token: z.string().min(1),
@@ -24,6 +27,27 @@ const updateStatusSchema = z.object({
 });
 
 module.exports = {
+    getPublicQueue: asyncWrapper(async (req, res) => {
+        if (!publicQueueCache || publicQueueCache.expiresAt <= Date.now()) {
+            if (!publicQueuePending) {
+                publicQueuePending = (async () => {
+                    const snap = await DB().collection(QUEUE_COLLECTION).where('status', '==', 'waiting')
+                        .orderBy('entryTime', 'asc').limit(101).get();
+                    const queues = Object.fromEntries(PUBLIC_TRUCK_TYPES.map(type => [type, []]));
+                    for (const doc of snap.docs.slice(0, 100)) {
+                        const data = doc.data();
+                        const type = String(data.truckType || '').toUpperCase();
+                        if (!PUBLIC_TRUCK_TYPES.includes(type) || data.isAssigned === true) continue;
+                        queues[type].push({position: queues[type].length + 1});
+                    }
+                    publicQueueCache = {expiresAt: Date.now() + 10000,
+                        data: {queues, truncated: snap.docs.length > 100, asOf: new Date().toISOString()}};
+                })().finally(() => {publicQueuePending = null;});
+            }
+            await publicQueuePending;
+        }
+        return res.json({success: true, data: publicQueueCache.data});
+    }),
     generateToken: asyncWrapper(async (req, res) => {
         const randomPart = crypto.randomBytes(12).toString("hex").toUpperCase();
         const token = `SYS-${randomPart}`;
@@ -59,13 +83,9 @@ module.exports = {
 
         const data = tokenDoc.data();
 
-        if (data.used) {
+        if (data.used || data.isUsed || !data.expiresAt || data.expiresAt.toMillis() <= Date.now()) {
             return res.status(410).json({success: false, message: "Token already used"});
         }
-
-        await DB().collection(QR_TOKENS_COLLECTION).doc(token).update({used: true, isUsed: true});
-
-        if (global._qrNs) global._qrNs.emit("qr_token_used", {token});
 
         return res.status(200).json({
             success: true,
@@ -75,8 +95,14 @@ module.exports = {
     }),
 
     scanToken: asyncWrapper(async (req, res) => {
+        if (req.userData?.role !== 'driver' || ['inactive', 'disabled'].includes(req.userData?.status)) {
+            return res.status(403).json({success: false, message: 'Active driver account required'});
+        }
         const body = scanTokenSchema.parse(req.body);
         const {token, driverId, driverName, truckType, plateNumber, truckCompany, helperName} = body;
+        if (driverId !== req.user.uid) {
+            return res.status(403).json({success: false, message: "Cannot scan for another driver"});
+        }
 
         const SANITIZE = (str, max) => (str || "").replace(/[<>]/g, "").substring(0, max);
 
@@ -88,8 +114,19 @@ module.exports = {
                 return {status: 401, message: "Invalid or expired token"};
             }
             const tokenData = tokenDoc.data();
-            if (tokenData.used || tokenData.isUsed) {
+            if (tokenData.used || tokenData.isUsed || !tokenData.expiresAt || tokenData.expiresAt.toMillis() <= Date.now()) {
                 return {status: 410, message: "Token has already been used"};
+            }
+
+            // Serialize admission for this UID even when scans use different tokens.
+            const admissionRef = DB().collection('qr_admissions').doc(driverId);
+            await tx.get(admissionRef);
+            const activeQueue = await tx.get(DB().collection(QUEUE_COLLECTION)
+                .where('driverId', '==', driverId)
+                .where('status', 'in', ['waiting', 'called', 'assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit'])
+                .limit(1));
+            if (!activeQueue.empty) {
+                return {status: 409, message: 'Driver already has an active queue entry'};
             }
 
             const newQueueRef = DB().collection(QUEUE_COLLECTION).doc();
@@ -112,6 +149,7 @@ module.exports = {
             };
 
             tx.set(newQueueRef, queueEntry);
+            tx.set(admissionRef, {queueId: newQueueRef.id, updatedAt: now});
             tx.update(tokenRef, {
                 used: true,
                 isUsed: true,

@@ -1,27 +1,40 @@
 {
     "name": "frontend",
+    "engines": {
+        "node": "24.x"
+    },
     "version": "0.0.0",
     "private": true,
     "type": "module",
     "scripts": {
-        "dev": "vite",
+        "preview": "vite preview",
         "build": "vite build",
-        "preview": "vite preview"
+        "dev": "vite",
+        "test": "vitest run",
+        "lint": "node ../node_modules/eslint/bin/eslint.js src"
     },
     "devDependencies": {
+        "@playwright/test": "1.64.0",
+        "@testing-library/jest-dom": "6.9.1",
+        "@testing-library/react": "16.3.3",
+        "@vitejs/plugin-react": "^6.1.2",
         "firebase-admin": "^13.10.0",
+        "jsdom": "29.1.1",
         "socket.io-client": "^4.8.3",
         "vite": "^8.0.1",
-        "@playwright/test": "1.64.0"
+        "vitest": "4.1.11"
     },
     "dependencies": {
         "@tailwindcss/vite": "^4.2.2",
         "firebase": "^12.12.1",
         "leaflet": "^1.9.4",
+        "prop-types": "15.8.1",
+        "react": "19.2.0",
+        "react-dom": "19.2.0",
         "tailwindcss": "^4.2.2",
-        "xlsx": "^0.18.5"
+        "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
     },
-    "engines": {
-        "node": "24.x"
+    "overrides": {
+        "@grpc/grpc-js": "1.14.5"
     }
 }

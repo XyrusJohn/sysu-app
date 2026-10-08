@@ -391,7 +391,7 @@ export function clearOfflineDrivers() {
     Object.entries(trackingMarkers).forEach(([id, marker]) => {
         const meta = _driverMeta.get(id);
         if (!meta || meta.status !== "online") {
-            try { map.removeLayer(marker); } catch (_) {}
+            try { map.removeLayer(marker); } catch (_) { /* Best-effort cleanup; the view is already dismissed. */ }
             delete trackingMarkers[id];
             delete _markerStore[id];
         }

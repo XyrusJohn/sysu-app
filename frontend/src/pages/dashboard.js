@@ -48,7 +48,7 @@ const escapeHtml = (str) => {
     return div.innerHTML;
 };
 
-class Dashboard {
+export class Dashboard {
     constructor() {
         this.config = {
             mapId: "map",
@@ -263,6 +263,7 @@ class Dashboard {
 
         this._setupSocket();
         this._setupDriverLocationSocket();
+        this._setupPodSocket();
         this._seedLastKnownLocations();
     }
 
@@ -277,6 +278,16 @@ class Dashboard {
      * `_setupDriverLocationSocket`). No interval poll: refreshing the page
      * is the explicit way to re-sync.
      */
+    _setupPodSocket() {
+        if (this._podSocketHandler) return;
+        this._podSocketHandler = () => {
+            // POD documents are fetched when a preview opens; notifications
+            // refresh availability without modifying authoritative trip state.
+            this._renderSapTable();
+        };
+        socket.on(EVENTS.POD_UPDATED, this._podSocketHandler);
+    }
+
     async _seedLastKnownLocations() {
         try {
             const { locations } = await SAPAssignmentService.fetchActiveLocations();
@@ -876,15 +887,6 @@ class Dashboard {
                 this._rejectRoleRequestSocket(requestId);
             });
         });
-    }
-
-    _formatElapsed(date) {
-        if (!date || isNaN(date.getTime())) return "just now";
-        const diff = Math.floor((Date.now() - date.getTime()) / 1000);
-        if (diff < 60) return "just now";
-        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-        return `${Math.floor(diff / 86400)}d ago`;
     }
 
     async _approveRoleRequestSocket(requestId) {
@@ -2246,7 +2248,7 @@ class Dashboard {
 
         // Cleanup existing base map instance if any
         if (this._wbMap) {
-            try { this._wbMap.remove(); } catch (e) { }
+            try { this._wbMap.remove(); } catch (e) { /* Best-effort cleanup; the view is already dismissed. */ }
             this._wbMap = null;
         }
 
@@ -3780,7 +3782,8 @@ class Dashboard {
         }
 
         // Refresh data and render
-        this._syncSAP().finally(() => {
+        this._renderSapTable();
+        return this._syncSAP().finally(() => {
             // Hide spinner when data is loaded
             if (spinner) {
                 spinner.classList.add('hidden');
@@ -4242,7 +4245,7 @@ class Dashboard {
             const docId = u.id;
             const isPending = u.role === "pending" || u.status === "inactive";
 
-            let roleSelectHtml = "";
+            let roleSelectHtml;
             if (isSuperAdmin && u.role !== "super_admin") {
                 roleSelectHtml = `
                 <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-[#1f2937] border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-[#60a5fa] transition-colors focus:ring-1 focus:ring-[#60a5fa]">
@@ -4461,8 +4464,8 @@ class Dashboard {
                     errorData = await response.json();
                 } catch (e) {
                     if (response.status === 403)
-                        throw new Error("CORS or Permission Blocked (403)");
-                    throw new Error(`HTTP Error ${response.status}`);
+                        throw new Error("CORS or Permission Blocked (403)", {cause: e});
+                    throw new Error(`HTTP Error ${response.status}`, {cause: e});
                 }
                 throw new Error(errorData.message || "Failed to update role");
             }
@@ -5102,7 +5105,7 @@ class Dashboard {
                 let date;
                 if (capturedTimestamp?.toDate) {
                     date = capturedTimestamp.toDate();
-                } else if (typeof capturedTimestamp === 'object' && capturedTimestamp !== null && capturedTimestamp.hasOwnProperty('seconds')) {
+                } else if (typeof capturedTimestamp === 'object' && capturedTimestamp !== null && Object.prototype.hasOwnProperty.call(capturedTimestamp, 'seconds')) {
                     // Firestore Timestamp
                     date = new Date(capturedTimestamp.seconds * 1000 + (capturedTimestamp.nanoseconds / 1000000));
                 } else {
@@ -5121,7 +5124,7 @@ class Dashboard {
                 let date;
                 if (verifiedTimestamp?.toDate) {
                     date = verifiedTimestamp.toDate();
-                } else if (typeof verifiedTimestamp === 'object' && verifiedTimestamp !== null && verifiedTimestamp.hasOwnProperty('seconds')) {
+                } else if (typeof verifiedTimestamp === 'object' && verifiedTimestamp !== null && Object.prototype.hasOwnProperty.call(verifiedTimestamp, 'seconds')) {
                     // Firestore Timestamp
                     date = new Date(verifiedTimestamp.seconds * 1000 + (verifiedTimestamp.nanoseconds / 1000000));
                 } else {
@@ -7196,6 +7199,8 @@ class Dashboard {
             const ROW_STRIPE = "EBF5FB"; // light blue (zebra)
             const ROW_PLAIN = "FFFFFF";
             const BORDER_COLOR = "A9CCE3";
+            const STATUS_OK = "117A65";
+            const STATUS_ERR = "C0392B";
 
             const COL_WIDTHS = [24, 14, 22, 14, 14, 20];
             ws["!cols"] = COL_KEYS.map((_, i) => ({ wch: COL_WIDTHS[i] || 12 }));
@@ -7334,6 +7339,11 @@ class Dashboard {
     }
 
     _formatElapsed(date) {
+        if (!date) return "just now";
+        if (typeof date.toDate === 'function') date = date.toDate();
+        else if (typeof date.seconds === 'number') date = new Date(date.seconds * 1000);
+        else if (!(date instanceof Date)) date = new Date(date);
+        if (!Number.isFinite(date.getTime())) return "just now";
         const mins = Math.floor((Date.now() - date.getTime()) / 60000);
         if (mins < 1) return "just now";
         if (mins < 60) return `${mins}m ago`;
@@ -7350,3 +7360,4 @@ document.addEventListener("DOMContentLoaded", () => {
     window.dashboard = new Dashboard();
     window.dashboard.init();
 });
+

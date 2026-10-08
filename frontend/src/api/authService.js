@@ -13,22 +13,14 @@ let currentUserProfile = null;
 
 export const AuthService = {
     async login(email, password) {
-        try {
-            await setPersistence(auth, browserLocalPersistence);
-            const userCredential = await signInWithEmailAndPassword(auth, email, password);
-            return userCredential.user;
-        } catch (error) {
-            throw error;
-        }
+        await setPersistence(auth, browserLocalPersistence);
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        return userCredential.user;
     },
 
     async loginWithGoogle() {
-        try {
-            const result = await signInWithPopup(auth, googleProvider);
-            return result.user;
-        } catch (error) {
-            throw error;
-        }
+        const result = await signInWithPopup(auth, googleProvider);
+        return result.user;
     },
 
     async check() {

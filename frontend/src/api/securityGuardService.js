@@ -12,7 +12,7 @@ async function authedFetch(url, options = {}) {
         },
     });
 
-    let body = null;
+    let body;
     try {
         body = await response.json();
     } catch (e) {
