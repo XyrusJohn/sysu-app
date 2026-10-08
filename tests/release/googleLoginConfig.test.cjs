@@ -9,7 +9,6 @@ const variant=process.env.SYSU_LOGIN_VARIANT||'debug';
 if(!['debug','liveTest','release'].includes(variant))throw Error('Only operational APK variants are accepted');
 const project='sysu-web-5a25d',packageName='com.sysu.go';
 const cloud=JSON.parse(fs.readFileSync(path.join(root,'.tools/google-android-config-current.json'),'utf8'));
-const resource=fs.readFileSync(path.join(mobile,`app/build/generated/res/process${variant[0].toUpperCase()+variant.slice(1)}GoogleServices/values/values.xml`),'utf8');
 const build=fs.readFileSync(path.join(mobile,`app/build/generated/source/buildConfig/${variant}/com/sysu/go/BuildConfig.java`),'utf8');
 const configString=name=>build.match(new RegExp(`\\b${name} = "([^"]*)"`))?.[1];
 const resourceString=name=>compiledResources.match(new RegExp(`string/${name}\\s+\\(\\) "([^"]*)"`))?.[1];
@@ -19,7 +18,7 @@ const signer=execFileSync('C:/Program Files/Android/Android Studio1/jbr/bin/java
 const sha1=signer.match(/certificate SHA-1 digest: ([a-f0-9]+)/)?.[1];
 const manifest=execFileSync(path.join(sdk,'aapt2.exe'),['dump','badging',apk],{encoding:'utf8'});
 const actualPackage=manifest.match(/^package: name='([^']+)'/)?.[1];
-const compiledResources=execFileSync(path.join(sdk,'aapt2.exe'),['dump','resources',apk],{encoding:'utf8'});
+const compiledResources=execFileSync(path.join(sdk,'aapt2.exe'),['dump','resources',apk],{encoding:'utf8',maxBuffer:16*1024*1024});
 
 test('Android Studio operational build uses the existing production Firebase app',()=>{
   assert.equal(resourceString('project_id'),project);
