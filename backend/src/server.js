@@ -149,6 +149,8 @@ io.use(async (socket, next) => {
 });
 
 io.on("connection", async (socket) => {
+    require('./services/socketSession').watchSocketSession(socket, socket.handshake.auth.token,
+        token => admin.auth().verifyIdToken(token, true), {setTimeout, clearTimeout});
     socket.join(`user:${socket.data.uid}`);
     if (['fleet_manager', 'admin', 'super_admin'].includes(socket.data.role)) socket.join('dispatchers');
     if (['admin', 'super_admin'].includes(socket.data.role)) socket.join('role-reviewers');

@@ -20,9 +20,9 @@ async function connect(profile={role:'driver',status:'active'}, options={}) {
   const admin={firestore,auth:()=>({verifyIdToken:async(_token,checkRevoked)=>{assert.equal(checkRevoked,true);if(authFailure)throw new Error('Synthetic revoked session');return {uid:'driver-a',exp:Math.floor(Date.now()/1000)+3600};}})};
   const capture=(...args)=>logs.push(args.join(' '));
   vm.runInNewContext(connectionSource,{io,admin,require:path=>path.includes('driverCapacity')
-    ? {updateDriverCapacity:(id,flag)=>require('../../src/services/driverCapacity').updateDriverCapacity(id,flag,fakeDb)} : admin,console:{log:capture,warn:capture,error:capture},
+    ? {updateDriverCapacity:(id,flag)=>require('../../src/services/driverCapacity').updateDriverCapacity(id,flag,fakeDb)} : path.includes('socketSession') ? require('../../src/services/socketSession') : admin,console:{log:capture,warn:capture,error:capture},
     setTimeout:(fn,delay)=>{const timer={fn,delay,unref(){}};timers.push(timer);return timer;},clearTimeout(timer){if(timer)timer.cleared=true;},lastDriverLocationPersist:new Map(),getDistanceMeters:()=>1000,LOCATION_PERSIST_THROTTLE_MS:600000,MIN_PERSIST_DISTANCE_METERS:100});
-  const socket={handshake:{auth:{token:'synthetic'}},data:{},join(){},disconnect(){disconnected=true;handlers.disconnect?.();},once(event,handler){handlers[event]=handler;},on(event,handler){handlers[event]=handler;},emit(...args){emissions.push(args);}};
+  const socket={handshake:{auth:{token:'synthetic'}},data:{},join(){},disconnect(){disconnected=true;handlers.disconnect?.();},once(event,handler){const prior=handlers[event];handlers[event]=()=>{prior?.();handler();};},on(event,handler){handlers[event]=handler;},emit(...args){emissions.push(args);}};
   for(const handler of middleware) {
     const error=await new Promise(resolve=>handler(socket,resolve));
     if(error) {disconnected=true; break;}
