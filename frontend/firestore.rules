@@ -14,8 +14,11 @@ service cloud.firestore {
     function adminUser() {
       return active() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'super_admin'];
     }
+    function driverUser() {
+      return active() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver';
+    }
     function ownsDriver() {
-      return active() && resource.data.driverId == request.auth.uid;
+      return driverUser() && resource.data.driverId == request.auth.uid;
     }
     function basicProfile(data) {
       return data.get('name', '') is string && data.get('name', '').size() <= 100
@@ -84,10 +87,10 @@ service cloud.firestore {
     // Write: the driver themselves (document ID === auth UID).
     match /drivers/{driverId} {
       allow read: if staff() || (active() && request.auth.uid == driverId);
-      allow create: if active() && request.auth.uid == driverId
+      allow create: if driverUser() && request.auth.uid == driverId
         && request.resource.data.keys().hasOnly(['driverId', 'driverName', 'plateNumber', 'truckType', 'truckCompany', 'helperName', 'isFull', 'updatedAt'])
         && request.resource.data.driverId == request.auth.uid;
-      allow update: if active() && request.auth.uid == driverId
+      allow update: if driverUser() && request.auth.uid == driverId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['driverName', 'helperName', 'isFull', 'updatedAt'])
         && request.resource.data.get('isFull', false) is bool;
       allow delete: if false;
