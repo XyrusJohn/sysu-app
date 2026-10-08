@@ -99,6 +99,13 @@ test('stored dispatch labels and inline callback IDs cannot inject markup or scr
   const link = body.querySelector('[onclick]');
   expect(link.getAttribute('onclick')).toBe(`window.dashboard.openSapDispatchDetail('${encodeURIComponent(unsafeKey).replaceAll("'", '%27')}')`);
 });
+test('stored assignment action attributes cannot inject event handlers', async () => {
+  const key = '001" onmouseover="alert(1)';
+  dashboard.state.sapAssignments = {[key]: stored('assigned')};
+  const body = await render('assigned');
+  expect(body.querySelector('[onmouseover]')).toBeNull();
+  expect(body.querySelector('select').dataset.dispatch).toBe(key);
+});
 test.each([1791476416000, {seconds: 1791476416}, undefined])('POD preview handles stored capture time %j without crashing', async podCapturedAt => {
   const assignment = dashboard.state.sapAssignments[dispatch];
   assignment.lineItems[0].podImageUrl = 'data:image/png;base64,AAAA';
