@@ -4,27 +4,30 @@ export function mergeAssignmentGroups(sapGroups, assignments) {
     const groups = Object.assign(Object.create(null), sapGroups);
     for (const [key, assignment] of Object.entries(assignments)) {
         const sapRows = groups[key] || [];
-        const sapObds = new Set(sapRows.map(row => String(row.OBDNumber || '')));
         const storedRows = (assignment.lineItems || [])
-            .filter(line => !sapObds.has(String(line.obdNumber || '')))
-            .map(line => ({
+            .map(line => {
+                const sapRow = sapRows.find(row => String(row.OBDNumber || '') === String(line.obdNumber || '')) || {};
+                return {
+                ...sapRow,
                 SAPDispatchNumber: key,
                 OBDNumber: String(line.obdNumber || ''),
-                ShipToPartyName: line.customerName || '',
-                ShipToParty: line.shipToParty || '',
-                Address: line.address || '',
-                ActualDelDate: line.actualDelDate || '',
-                PlanningDate: line.planningDate || '',
-                Quantity: line.quantity ?? line.quantityNumeric,
-                Volume: line.volume,
-                Weight: line.weight,
-                Amount: line.amount,
-                TruckType: assignment.truckType || '',
-                PlateNumber: assignment.truckPlate || '',
-                Driver: assignment.driverName || '',
-                Route: assignment.route || '',
-            }));
-        if (sapRows.length || storedRows.length) groups[key] = [...sapRows, ...storedRows];
+                ShipToPartyName: line.customerName ?? sapRow.ShipToPartyName ?? '',
+                ShipToParty: line.shipToParty ?? sapRow.ShipToParty ?? '',
+                Address: line.address ?? sapRow.Address ?? '',
+                ActualDelDate: line.actualDelDate ?? sapRow.ActualDelDate ?? '',
+                PlanningDate: line.planningDate ?? sapRow.PlanningDate ?? '',
+                Quantity: line.quantity ?? line.quantityNumeric ?? sapRow.Quantity,
+                Volume: line.volume ?? sapRow.Volume,
+                Weight: line.weight ?? sapRow.Weight,
+                Amount: line.amount ?? sapRow.Amount,
+                TruckType: assignment.truckType ?? sapRow.TruckType ?? '',
+                PlateNumber: assignment.truckPlate ?? sapRow.PlateNumber ?? '',
+                Driver: assignment.driverName ?? sapRow.Driver ?? '',
+                Route: assignment.route ?? sapRow.Route ?? '',
+                };
+            });
+        // Stored line items are the canonical assigned cargo, including repeated OBD rows.
+        if (storedRows.length) groups[key] = storedRows;
     }
     return groups;
 }

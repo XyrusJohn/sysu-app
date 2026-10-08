@@ -3036,8 +3036,8 @@ export class Dashboard {
         <tr class="hover:bg-db-item-hover transition-colors border-b border-db-border">
           <td class="px-6 py-4 text-center font-mono text-[10px] text-db-text3 font-bold">${index + 1}</td>
           <td class="px-6 py-4 font-mono font-bold text-db-text cursor-pointer hover:text-sysu-red transition-colors"
-              onclick="window.dashboard.openSapDispatchDetail('${encodeURIComponent(key)}')">
-              #${shipmentDisplay}
+              onclick="window.dashboard.openSapDispatchDetail('${encodeURIComponent(key).replaceAll("'", '%27')}')">
+              #${escapeHtml(shipmentDisplay)}
               ${count > 1 ? `<span class="ml-1 text-[12px] bg-db-item-hover px-1.5 py-0.5 rounded font-bold">${count}</span>` : ""}
           </td>
           <td class="px-6 py-4 text-db-text2 font-semibold uppercase">${escapeHtml(rec.TruckType || "—")}</td>
