@@ -67,7 +67,6 @@ export class Dashboard {
             activeView: "overview",
             sapShipments: [],
             sapAssignments: {},
-            sapCancelledAssignments: {},
             sapSortKey: "SAPDispatchNumber",
             sapSortDir: 1,
             user: null,
@@ -2677,10 +2676,6 @@ export class Dashboard {
 
             if (this.state.sapFilter === "delivered") {
                 if (!isDeliveredAssignment(asgn)) return false;
-            } else if (this.state.sapFilter === "cancelled") {
-                const hasCancelledHistory = !!this.state.sapCancelledAssignments[g.key];
-                if (tripStatusLower !== "cancelled" && !hasCancelledHistory) return false;
-                if (asgn && tripStatusLower !== "cancelled") return false;
             } else if (this.state.sapFilter === "in_transit") {
                 if (tripStatusLower !== "in_transit") return false;
             } else if (this.state.sapFilter === "fully_loaded") {
@@ -2766,10 +2761,7 @@ export class Dashboard {
                 const { key, rec, count } = g;
                 const shipmentDisplay = stripZeros(key);
                 const asgn = this.state.sapAssignments[key];
-                const cancelledAssignment = this.state.sapCancelledAssignments[key];
-                const isCancelled = (asgn?.tripStatus || "").toLowerCase() === "cancelled" || (!asgn && !!cancelledAssignment);
-                const displayAssignment = asgn || cancelledAssignment;
-                const status = isCancelled ? "Cancelled" : assignmentDisplayStatus(asgn, rec);
+                const status = assignmentDisplayStatus(asgn, rec);
                 const isDelivered = isDeliveredAssignment(asgn);
 
                 return `
@@ -2785,18 +2777,16 @@ export class Dashboard {
           <td class="px-6 py-4 text-db-text2 font-mono text-[11px]">${SAPService.parseDate(rec.PlanningDate || rec.Planning_Date)}</td>
           <td class="px-6 py-4 text-db-text2 font-mono text-[11px] font-bold text-sysu-red">${SAPService.parseDate(rec.ActualDelDate)}</td>
           <td class="px-6 py-4">
-             <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isDelivered ? "bg-green-500/10 text-green-400" : isCancelled ? "bg-red-500/10 text-red-400" : "bg-sysu-gold/10 text-sysu-gold"}">
+             <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isDelivered ? "bg-green-500/10 text-green-400" : "bg-sysu-gold/10 text-sysu-gold"}">
                ${escapeHtml(status)}
              </span>
           </td>
           <td class="px-6 py-4">
-             ${displayAssignment ? `<div class="font-bold text-db-text">${escapeHtml(displayAssignment.driverName || "")}</div><div class="text-[10px] text-db-text3">${escapeHtml(displayAssignment.truckPlate || "")}</div>` : '<span class="text-db-text3">Unassigned</span>'}
+             ${asgn ? `<div class="font-bold text-db-text">${escapeHtml(asgn.driverName || "")}</div><div class="text-[10px] text-db-text3">${escapeHtml(asgn.truckPlate || "")}</div>` : '<span class="text-db-text3">Unassigned</span>'}
           </td>
           <td class="px-6 py-4 text-right">
              ${isDelivered
                         ? `<span class="text-green-500 font-bold text-xs">${asgn?.tripStatus?.toLowerCase() === 'returning_to_base' ? 'RETURNING TO BASE' : 'COMPLETE'}</span>`
-                        : isCancelled
-                            ? '<span class="text-red-400 font-bold text-xs">CANCELLED</span>'
                         : asgn
                             ? (
                                 // Hide the cancel/change dropdown once the driver
@@ -3483,27 +3473,12 @@ export class Dashboard {
         this._renderSapTable();
     }
 
-    async filterSap(type) {
+    filterSap(type) {
         this.state.sapFilter = type;
-
-        const spinner = document.getElementById('sapFilterSpinner');
-        if (spinner) spinner.classList.remove('hidden');
-
-        if (type === "cancelled") {
-            try {
-                this.state.sapCancelledAssignments = await SAPService.fetchCancelledAssignments();
-            } catch (err) {
-                console.error("Failed to load cancelled shipment history:", err);
-                this.state.sapCancelledAssignments = {};
-                this.state.sapFilter = type = "delivered";
-                this._showAssignBanner("Could not load cancelled shipment history. Please try again.", "error");
-            }
-        }
 
         // Map type to tab ID
         const tabIdMap = {
             delivered: 'sapTabDelivered',
-            cancelled: 'sapTabCancelled',
             in_transit: 'sapTabTransit',
             fully_loaded: 'sapTabFullyLoaded',
             loading: 'sapTabLoading',
@@ -3523,6 +3498,12 @@ export class Dashboard {
         if (activeTab) {
             activeTab.classList.remove("bg-db-panel/40", "text-db-text3");
             activeTab.classList.add("bg-db-item-active", "text-db-text", "active");
+        }
+
+        // Show loading spinner and refresh data
+        const spinner = document.getElementById('sapFilterSpinner');
+        if (spinner) {
+            spinner.classList.remove('hidden');
         }
 
         // Refresh data and render
