@@ -17,11 +17,15 @@ const _e = (id = _defaultId) => (_reg[id] ??= { map: null, tileLayer: null, mark
 export const markers         = _e(_defaultId).markers;
 export const trackingMarkers = _e("trackingMap").markers;
 
-// ── Map Init ───────────────────────────────────────────────────────────────────
-
 export const initLeafletMap = (containerId = _defaultId) => {
     const e = _e(containerId);
-    if (e.map) return e.map;
+    if (e.map) {
+        console.log(`[MapManager:${containerId}] reusing existing Leaflet map instance. Tile URL:`, e.tileLayer?._url);
+        return e.map;
+    }
+
+    const containerEl = document.getElementById(containerId);
+    console.log(`[MapManager:${containerId}] Initializing Leaflet map. DOM element found:`, !!containerEl, containerEl);
 
     e.map = L.map(containerId, {
         center: [14.5995, 120.9842],
@@ -30,10 +34,51 @@ export const initLeafletMap = (containerId = _defaultId) => {
         attributionControl: false,
     });
 
-    e.tileLayer = L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        { maxZoom: 19, subdomains: "abcd" }
-    ).addTo(e.map);
+    const initialTileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+    console.log(`[MapManager:${containerId}] Creating L.tileLayer with URL:`, initialTileUrl);
+
+    e.tileLayer = L.tileLayer(initialTileUrl, {
+        maxZoom: 19,
+        subdomains: ["a", "b", "c"],
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    });
+
+    e.tileLayer.on("loading", () => {
+        console.log(`[MapManager:${containerId}] TileLayer started loading tiles from:`, e.tileLayer._url);
+    });
+
+    e.tileLayer.on("load", () => {
+        console.log(`[MapManager:${containerId}] TileLayer finished loading all visible tiles successfully!`);
+        // Diagnostic: Scan DOM and image tiles to detect where 'API KEY' is coming from
+        setTimeout(() => {
+            const allImgs = Array.from(document.querySelectorAll(`#${containerId} img`));
+            console.log(`[MapManager:${containerId}] Loaded tile image count in container:`, allImgs.length);
+            if (allImgs.length > 0) {
+                console.log(`[MapManager:${containerId}] Sample active tile URL:`, allImgs[0].src);
+            }
+            const errorNodes = [];
+            document.querySelectorAll('*').forEach(el => {
+                if (el.children.length === 0 && (el.textContent || '').includes('API KEY')) {
+                    errorNodes.push({ tag: el.tagName, text: el.textContent, class: el.className, id: el.id, parent: el.parentElement?.tagName });
+                }
+            });
+            if (errorNodes.length > 0) {
+                console.error(`[MapManager:${containerId}] FOUND "API KEY" in DOM:`, errorNodes);
+            } else {
+                console.log(`[MapManager:${containerId}] NO "API KEY" text node found anywhere in the DOM tree.`);
+            }
+        }, 500);
+    });
+
+    e.tileLayer.on("tileerror", (errorEvent) => {
+        console.error(`[MapManager:${containerId}] Tile FAILED to load:`, {
+            tileSrc: errorEvent.tile?.src,
+            coords: errorEvent.coords,
+            error: errorEvent.error,
+        });
+    });
+
+    e.tileLayer.addTo(e.map);
 
     _injectCSS();
 
@@ -313,17 +358,18 @@ export const seedMarker = (input, containerId = _defaultId) => {
     const realLng = typeof lng === "number" && lng !== 0 ? lng : null;
     const hasRealGps = realLat != null && realLng != null;
 
-    const useLat = hasRealGps ? realLat : FALLBACK_LAT;
-    const useLng = hasRealGps ? realLng : FALLBACK_LNG;
-    const useStatus = hasRealGps ? "offline" : "pending";
+    // Do NOT draw ghost marker at fallback coords if the truck has not sent real GPS
+    if (!hasRealGps) {
+        return false;
+    }
 
     updateMarker(
         {
             driverId,
-            lat: useLat,
-            lng: useLng,
+            lat: realLat,
+            lng: realLng,
             name: name || "Unknown Driver",
-            status: useStatus,
+            status: "offline",
             shipmentId: shipmentId || null,
         },
         containerId,
@@ -354,9 +400,8 @@ export const removeMarker = (driverId, containerId = _defaultId) => {
 export const switchMapTheme = (theme, containerId = _defaultId) => {
     const e = _e(containerId);
     if (!e.map || !e.tileLayer) return;
-    e.tileLayer.setUrl(
-        theme === "light"
-            ? "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-            : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-    );
+    // OSM tiles used for all themes; visual theme (dark/light) handled via CSS filter
+    const targetUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+    console.log(`[MapManager:${containerId}] switchMapTheme to "${theme}". Setting TileLayer URL to:`, targetUrl);
+    e.tileLayer.setUrl(targetUrl);
 };

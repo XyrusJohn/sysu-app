@@ -37,6 +37,7 @@ import {
     addDoc,
     serverTimestamp,
     getDocs,
+    getDoc,
     limit,
 } from "firebase/firestore";
 
@@ -272,7 +273,7 @@ class Dashboard {
 
     /**
      * ONE-SHOT poll on page load. Pulls the last persisted location for every
-     * in-flight dispatch (loading / loaded / in_transit) and seeds both
+     * in-flight dispatch (assigned / loading / loaded / fully_loaded / in_transit) and seeds both
      * `liveTracking` and `liveScans` so markers appear on the overview map
      * immediately — even before any live `driver_moving` event arrives from
      * the driver app.
@@ -316,28 +317,32 @@ class Dashboard {
                     driverId: loc.driverId,
                     lat: realLat,
                     lng: realLng,
-                    status: hasRealGps ? "offline" : "pending", // tentative
+                    status: hasRealGps ? "offline" : "pending",
                     name: loc.driverName || "Unknown Driver",
                     sapDocId: loc.dispatchKey,
+                    shipmentNumber: loc.dispatchKey,
                     truckPlate: loc.truckPlate || null,
                     tripStatus: loc.tripStatus || null,
                     lastSeen: typeof loc.at === "number" ? loc.at : now,
                     awaitingGps: !hasRealGps,
                 };
 
-                this.state.liveTracking[loc.driverId] = seeded;
                 this.state.liveScans[loc.driverId] = seeded;
 
-                seedMarker(
-                    {
-                        driverId: loc.driverId,
-                        name: seeded.name,
-                        shipmentId: loc.dispatchKey,
-                        lat: loc.lat,
-                        lng: loc.lng,
-                    },
-                    "map",
-                );
+                // Only seed marker and live tracking if the truck has actual GPS coordinates
+                if (hasRealGps) {
+                    this.state.liveTracking[loc.driverId] = seeded;
+                    seedMarker(
+                        {
+                            driverId: loc.driverId,
+                            name: seeded.name,
+                            shipmentId: loc.dispatchKey,
+                            lat: realLat,
+                            lng: realLng,
+                        },
+                        "map",
+                    );
+                }
             }
             this._scheduleLiveScansRender();
             this._renderAll();
@@ -1249,10 +1254,15 @@ class Dashboard {
                 } else {
                     // Edge case: driver disconnected before sending any driver_moving
                     // (e.g. opened app, immediately force-closed before GPS got a fix)
-                    // → Remove marker entirely —" no position known to display.
+                    // → Remove marker entirely — no position known to display.
                     if (this.state.liveTracking[driverId]) {
                         removeMarker(driverId);
                         delete this.state.liveTracking[driverId];
+                    }
+                    // Also purge from liveScans so the Live Scans table stays in sync.
+                    if (this.state.liveScans[driverId]) {
+                        delete this.state.liveScans[driverId];
+                        this._scheduleLiveScansRender();
                     }
                 }
             }
@@ -1343,19 +1353,29 @@ class Dashboard {
             // #trackingMap; this handler ensures the Overview map also shows the driver marker.
             // Validate coordinates - treat lat/lng = 0 same as null (no position sentinel)
             // Fallback to Manila center if no prior position (brand new driver
-            // with no SharedPreferences trip history —" first open, no driver_moving yet).
+            // with no SharedPreferences trip history — first open, no driver_moving yet).
             // Treat lat/lng = 0 same as null: FusedLocationProviderClient never sends
-            // real 0.0, 0.0 coords inside the Philippines (~4.5Â°N–21Â°N, 116Â°E–127Â°E).
+            // real 0.0, 0.0 coords inside the Philippines (~4.5°N–21°N, 116°E–127°E).
             const FALLBACK_LAT = 14.5995;
             const FALLBACK_LNG = 120.9219;
             // !lat catches null, undefined, AND 0 (the intentional "no position" sentinel).
             const safeLat = !lat ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lat) || FALLBACK_LAT) : lat;
             const safeLng = !lng ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lng) || FALLBACK_LNG) : lng;
 
-            // ������ ����… Show the driver's truck on the overview #map immediately when location is received.
-            // This is the counterpart to MapTrackingPanel's _upsertMarker() —" that panel handles the
-            // #trackingMap; this handler ensures the Overview map also shows the driver marker.
-            updateMarker({ driverId, lat: safeLat, lng: safeLng, status: status === "offline" ? "offline" : "online", name: name || "Unknown Driver", sapDocId }, "map");
+            const trackingPayload = {
+                driverId,
+                lat: safeLat,
+                lng: safeLng,
+                status: status === "offline" ? "offline" : "online",
+                name: name || "Unknown Driver",
+                shipmentId: sapDocId || null,
+            };
+
+            // Sync liveTracking in state
+            this.state.liveTracking[driverId] = trackingPayload;
+
+            // Show / update the driver's truck on the overview #map immediately
+            updateMarker(trackingPayload, "map");
 
             // Fetch or use cached sap_assignments doc for shipment + plate
             if (sapDocId) {
@@ -1394,15 +1414,20 @@ class Dashboard {
 
         // â"€â"€ update_status (offline) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         driverSocket.on("update_status", (data) => {
-            const { driverId, status, name } = data;
+            const { driverId, status, name } = data || {};
+            if (!driverId) return;
+
+            // Handle completed shipments - remove marker AND all tracking state immediately without reload.
+            if (status === "completed") {
+                console.log("[driverSocket/update_status] ↘ trip completed — removing marker + tracking for:", driverId);
+                removeMarker(driverId);
+                delete this.state.liveScans[driverId];
+                delete this.state.liveTracking[driverId];
+                this._scheduleLiveScansRender();
+                return;
+            }
+
             if (this.state.liveScans[driverId]) {
-                // Handle completed shipments - remove from tracking
-                if (status === "completed") {
-                    console.log("[driverSocket/update_status] ↘ removing completed shipment from tracking:", driverId);
-                    delete this.state.liveScans[driverId];
-                    this._scheduleLiveScansRender();
-                    return;
-                }
 
                 this.state.liveScans[driverId].status = status;
                 // Also grey-out the overview map marker so the truck disappears visually
@@ -1416,6 +1441,26 @@ class Dashboard {
                         }
                     }, 5000);
                 }
+                this._scheduleLiveScansRender();
+            }
+        });
+
+        // ── vendor_status_update (offline / completed from sysu-go server) ────────
+        // The sysu-go backend broadcasts this when a driver goes offline or completes
+        // a trip. Handles real-time marker removal without requiring a page reload.
+        driverSocket.on("vendor_status_update", (data) => {
+            const { driverId, status, name } = data || {};
+            if (!driverId) return;
+
+            if (status === "completed" || status === "offline") {
+                console.log(`[driverSocket/vendor_status_update] ↘ ${status} — removing marker for:`, driverId, name);
+                // Remove Leaflet marker from overview map immediately
+                removeMarker(driverId);
+                // Remove Leaflet marker from tracking map if present
+                removeMarker(driverId, "trackingMap");
+                // Clear all in-memory state
+                delete this.state.liveScans[driverId];
+                delete this.state.liveTracking[driverId];
                 this._scheduleLiveScansRender();
             }
         });
@@ -2912,13 +2957,8 @@ class Dashboard {
             } else if (this.state.sapFilter === "in_transit") {
                 if (tripStatus !== "in_transit") return false;
             } else if (this.state.sapFilter === "fully_loaded") {
-                // A row belongs in the Fully Loaded filter ONLY when its
-                // tripStatus === "loaded" (case-insensitive). The
-                // presence of a guard signature does NOT pull a row in
-                // here — once the driver has advanced past loaded
-                // (e.g. to in_transit), the row belongs in the matching
-                // downstream filter regardless of guardSignatureBase64.
-                if (tripStatusLower !== "loaded") return false;
+                // Matches either "loaded" or "fully_loaded" (case-insensitive)
+                if (tripStatusLower !== "loaded" && tripStatusLower !== "fully_loaded") return false;
             } else if (this.state.sapFilter === "loading") {
                 if (tripStatus !== "loading") return false;
             } else if (this.state.sapFilter === "assigned") {
@@ -4549,7 +4589,7 @@ class Dashboard {
                         <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—"}</td>
                         <td class="py-2 text-center">
-                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && podMatch?.podImageUrl && podMatch?.podCapturedAt ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
+                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
                         </td>
                     </tr>`;
             }).join("");
@@ -4585,21 +4625,36 @@ class Dashboard {
     }
 
     // POD preview for a specific OBD item
-    openObdPodPreview(obdNumber) {
+    async openObdPodPreview(obdNumber) {
         const key = this._currentDispatchKey;
         if (!key) return;
         // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
         const asgn = this.state.sapAssignments[key];
         const match = asgn?.lineItems?.find(li => li.obdNumber === obdNumber);
-        if (!match || !match.podImageUrl) {
-            console.warn('No POD data for OBD', obdNumber);
-            return;
+
+        let imageUrl = match?.podImageUrl;
+        // If image is stored in pod_images subcollection or empty, fetch it directly
+        if (!imageUrl || imageUrl === 'saved_in_subcollection') {
+            try {
+                const podDocSnap = await getDoc(doc(db, "sap_assignments", key, "pod_images", obdNumber));
+                if (podDocSnap.exists()) {
+                    imageUrl = podDocSnap.data()?.base64Image || podDocSnap.data()?.imageUrl || podDocSnap.data()?.podImageUrl;
+                }
+            } catch (err) {
+                console.warn('Failed to fetch pod image from subcollection:', err);
+            }
         }
+
         const modal = document.getElementById('podPreviewModal');
         if (!modal) return;
         const imgEl = modal.querySelector('#podPreviewImg');
         const tsEl = modal.querySelector('#podTimestamp');
         const signatureContainer = modal.querySelector('#podPreviewSignature');
+
+        if (!imageUrl && (!match?.guardSignatureBase64 && !asgn?.guardSignatureBase64)) {
+            console.warn('No POD data or guard signature for OBD', obdNumber);
+            return;
+        }
 
         // Reset zoom and drag state when opening new POD
         this.state.podZoomLevel = 1;
@@ -4626,7 +4681,8 @@ class Dashboard {
         this.state._lastDragY = 0;
 
         if (imgEl) {
-            imgEl.src = match.podImageUrl;
+            imgEl.src = imageUrl || '';
+            imgEl.style.display = imageUrl ? 'block' : 'none';
             // Reset transform and cursor
             imgEl.style.transform = `scale(${this.state.podZoomLevel})`;
             imgEl.style.cursor = 'zoom-in';
@@ -5302,7 +5358,7 @@ class Dashboard {
             }
         }
         const queueDrivers = this.state.queue.filter(
-            (d) => !d.isAssigned && d.status !== "completed" && truckMatch(d)
+            (d) => !d.isAssigned && d.status !== "completed" && d.status !== "complete" && truckMatch(d)
         ).filter(
             // Drop queue entries whose driver has any sap_assignment at all.
             // The dispatcher must use the Assigned tab to give that driver

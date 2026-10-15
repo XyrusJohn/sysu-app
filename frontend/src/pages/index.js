@@ -27,6 +27,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const eyeBtn = document.getElementById("eyeBtn");
     const rememberMe = document.getElementById("rememberMe");
 
+    // Check if redirected due to deleted account
+    const urlParams = new URLSearchParams(window.location.search);
+    const reason = urlParams.get("reason");
+    const storedAuthMsg = sessionStorage.getItem("auth_error_message");
+    if (reason === "account_deleted" || storedAuthMsg) {
+        if (alertMsg) {
+            alertMsg.textContent = storedAuthMsg || "Your account has been deleted by an administrator.";
+            alertMsg.style.display = "block";
+            alertMsg.style.color = "#ff4d4f";
+        }
+        sessionStorage.removeItem("auth_error_message");
+    }
+
     // ── Real-time Role & Status Monitor ───────────────────────────────
     AuthService.subscribe(async (user, error) => {
         if (error) {

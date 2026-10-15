@@ -90,6 +90,11 @@ body {
   overflow: hidden;
 }
 
+/* Dark monochrome map — invert flips OSM light tiles to dark, grayscale removes color tint */
+.leaflet-tile-pane {
+  filter: invert(100%) grayscale(100%) brightness(90%) contrast(85%) hue-rotate(180deg);
+}
+
 /* Allow text selection in inputs */
 input,
 textarea,

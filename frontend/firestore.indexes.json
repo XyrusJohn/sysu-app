@@ -56,6 +56,14 @@
       ]
     },
     {
+      "collectionGroup": "qr_tokens",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "used", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "queue",
       "queryScope": "COLLECTION",
       "fields": [

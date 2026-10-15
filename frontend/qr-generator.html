@@ -363,7 +363,6 @@
     const API=isLocal?"http://localhost:8080":"%VITE_API_URL%";
     const QR_SEC=60;
     const TYPES=["AUV","4W","6W","10W","20F","40F"];
-    const STATIC_TOKEN="SYS-4BFC433C7B79ACA11B58EAF7";
 
     /* ── Socket.IO public /qr namespace — no auth, receives immediate QR restart events ── */
     // The main io namespace requires Firebase auth tokens (admin dashboard only).
@@ -435,8 +434,14 @@ ${d.truckCompany?`<div class="qcard-co">${esc(d.truckCompany)}</div>`:""}
         TYPES.forEach(t=>{
             const body=document.getElementById("body-"+t),cnt=document.getElementById("cnt-"+t);
             if(!body)return;
-            const rows=docs.filter(d=>d.data().truckType===t&&d.data().isAssigned!==true)
-                .sort((a,b)=>(a.data().joinedAt?.seconds||0)-(b.data().joinedAt?.seconds||0));
+            const rows=docs.filter(d=>{
+                const data = d.data();
+                if (data.truckType !== t) return false;
+                if (data.isAssigned === true) return false;
+                const st = (data.status || "").toLowerCase().trim();
+                if (st === "completed" || st === "complete" || st === "loading" || st === "in_transit" || st === "assigned") return false;
+                return true;
+            }).sort((a,b)=>(a.data().joinedAt?.seconds||0)-(b.data().joinedAt?.seconds||0));
             cnt.textContent=rows.length;
             cnt.className="qcol-cnt "+(rows.length>0?"has":"zero");
             body.innerHTML=rows.length===0?'<div class="empty">Wala pa</div>':rows.map(card).join("");

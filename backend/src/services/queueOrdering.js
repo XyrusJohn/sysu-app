@@ -14,9 +14,14 @@ function toMillis(value) {
     if (!value) return Number.POSITIVE_INFINITY;
     if (value instanceof Date) return value.getTime();
     if (typeof value === "number") return value;
+    if (typeof value === "string") {
+        const parsed = Date.parse(value);
+        if (!isNaN(parsed)) return parsed;
+    }
     // Firestore Timestamp shape: { _seconds, _nanoseconds } or { seconds, nanoseconds }
     if (typeof value === "object") {
         if (typeof value.toMillis === "function") return value.toMillis();
+        if (typeof value.toDate === "function") return value.toDate().getTime();
         if (typeof value._seconds === "number") {
             const ns = typeof value._nanoseconds === "number" ? value._nanoseconds : 0;
             return value._seconds * 1000 + Math.floor(ns / 1e6);
@@ -27,6 +32,12 @@ function toMillis(value) {
         }
     }
     return Number.POSITIVE_INFINITY;
+}
+
+function getEntryTimestamp(entry) {
+    if (!entry) return Number.POSITIVE_INFINITY;
+    const timeVal = entry.entryTime || entry.joinedAt || entry.createdAt || entry.updatedAt;
+    return toMillis(timeVal);
 }
 
 function normalizeTruckType(t) {
@@ -51,14 +62,15 @@ function resolveEarliest(queueEntries, requiredTruckType) {
 
     const eligible = (queueEntries || []).filter((entry) => {
         if (!entry || !entry.id) return false;
-        if (entry.status === "complete") return false;
+        if (entry.status === "complete" || entry.status === "completed") return false;
+        if (entry.isAssigned === true) return false;
         if (wanted && normalizeTruckType(entry.truckType) !== wanted) return false;
         return true;
     });
 
     eligible.sort((a, b) => {
-        const ta = toMillis(a.entryTime);
-        const tb = toMillis(b.entryTime);
+        const ta = getEntryTimestamp(a);
+        const tb = getEntryTimestamp(b);
         if (ta !== tb) return ta - tb;
         // Deterministic tie-break: ascending doc id.
         if (a.id < b.id) return -1;

@@ -19,7 +19,8 @@
 import { initLeafletMap, updateMarker, removeMarker, trackingMarkers } from "./MapManager.js";
 import { getDriverSocket } from "../api/socket.js";
 import { API_CONFIG } from "../api/config.js";
-import { auth } from "../api/firebase.js";
+import { auth, db } from "../api/firebase.js";
+import { collection, onSnapshot } from "firebase/firestore";
 
 const MARKER_STORE_KEY = "__trackingMarkers";
 
@@ -41,6 +42,7 @@ let _driverSocket   = null;
 let _markerStore    = {};   // driverId → L.Marker
 let _driverMeta      = new Map(); // driverId → { lat, lng, status, name, lastSeen }
 let _connStatus     = "disconnected";
+let _firestoreUnsub = null;
 
 // ── Public Init ─────────────────────────────────────────────────────────────
 
@@ -60,7 +62,49 @@ export function initTrackingPanel() {
   // Ensure Leaflet sizes correctly after container is visible
   setTimeout(() => map?.invalidateSize(), 300);
 
+  // Start live Firestore real-time tracking fallback (dual-channel)
+  _subscribeFirestoreDriverLocations();
+
   return map;
+}
+
+function _subscribeFirestoreDriverLocations() {
+  if (_firestoreUnsub) {
+    _firestoreUnsub();
+    _firestoreUnsub = null;
+  }
+  try {
+    const colRef = collection(db, "driver_locations");
+    _firestoreUnsub = onSnapshot(colRef, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        const data = change.doc.data();
+        const driverId = data.driverId || change.doc.id;
+        const { lat, lng, status, name } = data;
+        if (status === "completed" || change.type === "removed") {
+          removeMarker(driverId, "trackingMap");
+          delete _markerStore[driverId];
+          window[MARKER_STORE_KEY] = _markerStore;
+          _driverMeta.delete(driverId);
+          _refreshDriverList();
+          return;
+        }
+        if (lat != null && lng != null && lat !== 0 && lng !== 0) {
+          _driverMeta.set(driverId, {
+            lat, lng,
+            status: status || "online",
+            name: name || "Driver",
+            lastSeen: Date.now(),
+          });
+          _upsertMarker(driverId, lat, lng, status || "online", name || "Driver");
+          _refreshDriverList();
+        }
+      });
+    }, (err) => {
+      console.warn("[MapTrackingPanel] Firestore driver_locations listener error:", err.message);
+    });
+  } catch (e) {
+    console.warn("[MapTrackingPanel] Failed to subscribe to driver_locations:", e);
+  }
 }
 
 /**
@@ -69,6 +113,7 @@ export function initTrackingPanel() {
  */
 export async function connectDriverTrackingSocket() {
     destroyDriverSocket();
+    _subscribeFirestoreDriverLocations();
     _driverSocket = getDriverSocket();
     _wireDriverSocket();
 
@@ -139,14 +184,22 @@ function _onDriverMoving(data) {
   }
   console.log("[update_admin_map] ✓ processing driver:", driverId, "@", lat, lng);
 
+  const meta = _driverMeta.get(driverId);
+  let finalStatus = status ?? "online";
+
+  // PREVENT GPS movement from overriding returning_to_base
+  if (finalStatus === "online" && meta?.status === "returning_to_base") {
+      finalStatus = "returning_to_base";
+  }
+
   _driverMeta.set(driverId, {
     lat, lng,
-    status: status ?? "online",
+    status: finalStatus,
     name:   name   ?? "Unknown",
     lastSeen: Date.now(),
   });
 
-  _upsertMarker(driverId, lat, lng, status ?? "online", name ?? "Unknown");
+  _upsertMarker(driverId, lat, lng, finalStatus, name ?? "Unknown");
   _refreshDriverList();
 }
 
@@ -203,13 +256,29 @@ function _onDriverStatus(data) {
     const meta = _driverMeta.get(driverId);
     const safeLat = !lat ? (meta?.lat ?? 14.5995) : lat;
     const safeLng = !lng ? (meta?.lng ?? 120.9219) : lng;
+
+    let finalStatus = "online";
+
+    // PREVENT reconnects from overriding returning_to_base
+    if (meta?.status === "returning_to_base") {
+        finalStatus = "returning_to_base";
+    }
+
     if (meta) {
-      meta.status   = "online";
+      meta.status   = finalStatus;
       meta.lat      = safeLat;
       meta.lng      = safeLng;
       meta.lastSeen = Date.now();
+    } else {
+      _driverMeta.set(driverId, {
+        lat: safeLat,
+        lng: safeLng,
+        status: finalStatus,
+        name: name ?? "Unknown",
+        lastSeen: Date.now(),
+      });
     }
-    updateMarker({ driverId, lat: safeLat, lng: safeLng, status: "online", name: meta?.name ?? name ?? "Unknown" }, "trackingMap");
+    _upsertMarker(driverId, safeLat, safeLng, finalStatus, meta?.name ?? name ?? "Unknown");
   }
 
   _refreshDriverList();

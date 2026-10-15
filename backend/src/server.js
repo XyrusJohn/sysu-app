@@ -42,8 +42,12 @@ const { startCleanupScheduler: startIncidentCleanup } = require("./utils/inciden
 const app = express();
 app.use(helmet({contentSecurityPolicy: false}));
 
+// ── Global Middleware ──
+const { errorHandler } = require("./middleware/errorHandler");
+
 // ── Rate limiting ──
 app.set("trust proxy", parseInt(process.env.TRUST_PROXY, 10));
+
 
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -110,7 +114,10 @@ app.use("/api/qr", qrRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/admin", adminRoutes);
 
+app.use(errorHandler);
+
 const server = http.createServer(app);
+
 const io = new Server(server, {
     cors: {
         origin: allowedOrigins,
@@ -141,6 +148,23 @@ const {
     approveRoleRequest,
     rejectRoleRequest,
 } = require("./controllers/admin/roleRequestController.js");
+
+// ── Location persistence throttle (10 minutes) & Smart Movement Check (>=100m) to save Firestore quota ──
+const LOCATION_PERSIST_THROTTLE_MS = 10 * 60 * 1000;
+const MIN_PERSIST_DISTANCE_METERS = 100;
+const lastDriverLocationPersist = new Map(); // driverId -> { time, lat, lng }
+
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 io.on("connection", async (socket) => {
     try {
@@ -266,6 +290,34 @@ io.on("connection", async (socket) => {
         }
     });
 
+    // ── Driver Full Capacity Toggle via Socket.IO ──
+    socket.on("driver_is_full", async (data) => {
+        try {
+            const driverId = data?.driverId || socket.data.uid;
+            const isFull = Boolean(data?.isFull);
+            console.log(`[driver_is_full] Driver ${driverId} capacity updated: isFull=${isFull}`);
+
+            // Update active queue doc for this driver
+            const queueSnap = await admin.firestore().collection("queue")
+                .where("driverId", "==", driverId)
+                .where("status", "in", ["waiting", "called", "assigned", "loading"])
+                .limit(1)
+                .get();
+
+            if (!queueSnap.empty) {
+                await queueSnap.docs[0].ref.update({
+                    isFull,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+
+            // Broadcast to dispatchers
+            io.emit("driver_capacity_updated", {driverId, isFull});
+        } catch (err) {
+            console.error("[driver_is_full] error:", err.message);
+        }
+    });
+
     socket.on("driver_moving", (data) => {
         console.log("[driver_moving] ★ RECEIVED from socket:", JSON.stringify(data));
         if (data.driverId !== socket.data.uid) {
@@ -285,10 +337,27 @@ io.on("connection", async (socket) => {
             console.log("[driver_moving] (skip persist: invalid coords)");
             return;
         }
+
+        // Smart Movement Check: Throttle Firestore write to once every 10 mins AND >=100m moved
+        const now = Date.now();
+        const lastRecord = lastDriverLocationPersist.get(data.driverId);
+        if (lastRecord) {
+            // Must be at least 10 minutes since last Firestore write
+            if (now - lastRecord.time < LOCATION_PERSIST_THROTTLE_MS) {
+                return;
+            }
+            // Must have moved at least 100 meters (skip if parked or stuck in traffic)
+            const distance = getDistanceMeters(lastRecord.lat, lastRecord.lng, lat, lng);
+            if (distance < MIN_PERSIST_DISTANCE_METERS) {
+                return;
+            }
+        }
+        lastDriverLocationPersist.set(data.driverId, { time: now, lat, lng });
+
         const db = admin.firestore();
         db.collection("sap_assignments")
             .where("driverId", "==", data.driverId)
-            .where("tripStatus", "in", ["loaded", "in_transit", "loading"])
+            .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit"])
             .limit(1)
             .get()
             .then((snap) => {
@@ -318,6 +387,47 @@ io.on("connection", async (socket) => {
             .catch((err) => {
                 console.error("[driver_moving] ✗ persist error:", err?.message ?? err);
             });
+    });
+
+    // ── Driver Status Updates (completed / stopped / offline / online) ──
+    socket.on("update_status", (data) => {
+        try {
+            console.log("[update_status] ★ RECEIVED:", JSON.stringify(data));
+            const driverId = data?.driverId || socket.data.uid;
+            const status = data?.status;
+            if (!driverId || !status) return;
+
+            // Broadcast to dispatchers / admin map for immediate UI reaction
+            io.emit("update_status", {...data, driverId});
+
+            if (status === "stopped") {
+                io.emit("driver_stopped", {...data, driverId});
+            }
+        } catch (err) {
+            console.error("[update_status] error:", err.message);
+        }
+    });
+
+    // ── Driver Stopped (traffic signal / idle) ──
+    socket.on("driver_stopped", (data) => {
+        try {
+            console.log("[driver_stopped] ★ RECEIVED:", JSON.stringify(data));
+            const driverId = data?.driverId || socket.data.uid;
+            io.emit("driver_stopped", {...data, driverId});
+            io.emit("update_status", {...data, driverId, status: "stopped"});
+        } catch (err) {
+            console.error("[driver_stopped] error:", err.message);
+        }
+    });
+
+    // ── Driver POD Updated (photo / signature uploaded) ──
+    socket.on("pod_updated", (data) => {
+        try {
+            console.log("[pod_updated] ★ RECEIVED:", JSON.stringify(data));
+            io.emit("pod_updated", data);
+        } catch (err) {
+            console.error("[pod_updated] error:", err.message);
+        }
     });
 });
 

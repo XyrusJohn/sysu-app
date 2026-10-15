@@ -9,8 +9,6 @@ export const API_CONFIG = {
     BASE_URL: import.meta.env.VITE_API_URL || "https://sysu-app-production.up.railway.app",
     // Socket.IO server for sysu-app events (vendor/assignment → update_admin_map, vendor_status_update)
     SOCKET_URL: import.meta.env.VITE_SOCKET_URL || "https://sysu-app-production.up.railway.app",
-    // Driver-location Socket.IO server.
-    // Defaults to sysu-app's own Railway (CORS-allowed for localhost/web)
-    // Change to sysu-go-production URL only if drivers send there directly.
-    DRIVER_TRACKING_URL: import.meta.env.VITE_DRIVER_TRACKING_URL || "https://sysu-app-production.up.railway.app",
+    // Driver-location Socket.IO server (sysu-go-production where the mobile app sends real-time GPS coordinates)
+    DRIVER_TRACKING_URL: import.meta.env.VITE_DRIVER_TRACKING_URL || "https://sysu-go-production.up.railway.app",
 };
