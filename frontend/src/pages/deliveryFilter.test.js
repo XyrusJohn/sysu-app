@@ -65,6 +65,18 @@ test('only fresh SAP shipments appear in For Assignment, with no duplicate assig
   expect(body.textContent).not.toContain('Test Driver');
   expect(document.getElementById('sapStatAll').textContent).toBe('2');
 });
+test.each(['all', 'forAssignment'])('temporary review dispatch appears in %s as view-only', async filter => {
+  SAPService.fetchShipments.mockResolvedValue([{
+    SAPDispatchNumber: '0010139586', OBDNumber: '000000', TruckType: '', Driver: 'F. PAANO',
+    PlateNumber: 'NLC 1406', ShipmentStart: 'PT11H41M00S', ForwardingAgent: '0050000128', PgiStatus: 'X',
+  }]);
+  const body = await render(filter);
+  expect(body.textContent).toContain('10139586');
+  expect(body.textContent).toContain('F. PAANO');
+  expect(body.textContent).toContain('NLC 1406');
+  expect(body.textContent).toContain('Review only');
+  expect(body.querySelector('button')).toBeNull();
+});
 test('search matches any OBD and Firestore text is escaped', async () => {
   dashboard.state.sapAssignments[dispatch].driverName = '<img src=x onerror=alert(1)>';
   document.getElementById('sapSearch').value = '6801001523';

@@ -10,6 +10,9 @@ test('SAP policy retains source ordering and customer fallback with leading-zero
 test('SAP policy rejects a client-selected type different from the dispatch group type',()=>{
   assert.equal(validateAssignment([row],{...body,truckType:'40F'}).status,409);
 });
+test('temporary review exception with blank SAP truck type remains non-assignable',()=>{
+  assert.equal(validateAssignment([{...row,TruckType:''}],body).status,409);
+});
 test('SAP policy rejects malformed source customer types instead of throwing an internal error',()=>{
   assert.equal(validateAssignment([{...row,ShipToPartyName:123}],body).status,409);
 });

@@ -2654,6 +2654,7 @@ export class Dashboard {
 
         // Filter
         const filtered = groupedList.filter((g) => {
+            const isTemporaryReviewDispatch = g.key === "0010139586";
             if (q) {
                 const hay = `${g.key} ${g.records.map(rec => `${rec.OBDNumber || ''} ${rec.SoldToParty || rec.ShipToPartyName || ''} ${rec.Route || ''}`).join(' ')}`.toLowerCase();
                 if (!hay.includes(q.toLowerCase())) return false;
@@ -2689,11 +2690,11 @@ export class Dashboard {
                 if (tripStatusLower !== "assigned") return false;
             } else if (this.state.sapFilter === "forAssignment") {
                 // Exclude already DELIVERED — no point assigning something already delivered
-                if ((g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
+                if (!isTemporaryReviewDispatch && (g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
                 // Only show SYSU-owned shipments (ForwardingAgent == "0000001102")
-                if (!g.isOurs) return false;
-                if (!g.isUnassignable) return false;
-                if (this.state.sapAssignments[g.key]) return false;
+                if (!isTemporaryReviewDispatch && !g.isOurs) return false;
+                if (!isTemporaryReviewDispatch && !g.isUnassignable) return false;
+                if (!isTemporaryReviewDispatch && this.state.sapAssignments[g.key]) return false;
             }
             // For any other filter (including undefined or 'all'), show all
             return true;
@@ -2763,6 +2764,7 @@ export class Dashboard {
                 const asgn = this.state.sapAssignments[key];
                 const status = assignmentDisplayStatus(asgn, rec);
                 const isDelivered = isDeliveredAssignment(asgn);
+                const isTemporaryReviewDispatch = key === "0010139586";
 
                 return `
         <tr class="hover:bg-db-item-hover transition-colors border-b border-db-border">
@@ -2782,10 +2784,12 @@ export class Dashboard {
              </span>
           </td>
           <td class="px-6 py-4">
-             ${asgn ? `<div class="font-bold text-db-text">${escapeHtml(asgn.driverName || "")}</div><div class="text-[10px] text-db-text3">${escapeHtml(asgn.truckPlate || "")}</div>` : '<span class="text-db-text3">Unassigned</span>'}
+             ${(asgn?.driverName || rec.Driver || asgn?.truckPlate || rec.PlateNumber) ? `<div class="font-bold text-db-text">${escapeHtml(asgn?.driverName || rec.Driver || "")}</div><div class="text-[10px] text-db-text3">${escapeHtml(asgn?.truckPlate || rec.PlateNumber || "")}</div>` : '<span class="text-db-text3">Unassigned</span>'}
           </td>
           <td class="px-6 py-4 text-right">
-             ${isDelivered
+             ${isTemporaryReviewDispatch
+                        ? '<span class="text-db-text3 text-[10px] font-bold uppercase tracking-wider">Review only — not assignable</span>'
+                        : isDelivered
                         ? `<span class="text-green-500 font-bold text-xs">${asgn?.tripStatus?.toLowerCase() === 'returning_to_base' ? 'RETURNING TO BASE' : 'COMPLETE'}</span>`
                         : asgn
                             ? (

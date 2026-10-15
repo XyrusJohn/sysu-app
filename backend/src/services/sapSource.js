@@ -1,5 +1,6 @@
 const axios = require('axios');
 const ALLOWED_TYPES = new Set(['auv','4w','6w','10w','20f','40f']);
+const TEMPORARY_REVIEW_DISPATCH = '0010139586';
 const FIELDS = ['TrId','PlanningDate','ActualDelDate','PlanningRemarks','PONumber','SONumber','OBDNumber','OBDItem',
     'DocumentNumber','SoldToParty','ShipToPartyName','Route','Amount','Volume','Weight','Quantity','Tdn','TruckType',
     'SAPDispatchNumber','DonePicking','PgiStatus','CheckStatus','ShipToParty','Address','PlateNumber','ForwardingAgent',
@@ -8,6 +9,8 @@ let cache, pending;
 
 function isUnassigned(row) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+    // Temporary owner review exception; the blank truck type still fails assignment validation.
+    if (row.SAPDispatchNumber === TEMPORARY_REVIEW_DISPATCH) return true;
     const driver = row.Driver;
     if (driver != null && typeof driver !== 'string') return false;
     return (!driver || driver.includes('-') || driver.includes('*-*') || driver.trim().toLowerCase() === 'driver')

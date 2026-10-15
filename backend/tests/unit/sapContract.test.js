@@ -34,6 +34,13 @@ test('SAP contract keeps allowed placeholders, six normalized truck types and al
   assert.deepEqual(rows(result).map(row=>row.OBDNumber),accepted.map(row=>row.OBDNumber));
   assert.ok(rows(result).every(row=>row.SAPDispatchNumber==='dispatch-a'));
 });
+test('temporary review dispatch is returned even when SAP has a driver and missing truck type',async()=>{
+  const review={...base,SAPDispatchNumber:'0010139586',TruckType:'',Driver:'F. PAANO',PlateNumber:'NLC 1406',ShipmentStart:'PT11H41M00S'};
+  const result=await invoke(load(async()=>({data:{d:{results:[review]}}})));
+  assert.equal(result.status,200);
+  assert.equal(rows(result).length,1);
+  assert.equal(rows(result)[0].SAPDispatchNumber,'0010139586');
+});
 test('SAP cache miss coalesces concurrent requests into one bounded upstream fetch',async()=>{
   let calls=0,release,options;
   const pending=new Promise(resolve=>{release=resolve;});
