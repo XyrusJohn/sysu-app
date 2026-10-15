@@ -1,5 +1,5 @@
 import {db} from "./firebase.js";
-import {collection, onSnapshot} from "firebase/firestore";
+import {collection, getDocs, onSnapshot, query, where} from "firebase/firestore";
 import {API_CONFIG} from "./config.js";
 import {AuthService} from "./authService.js";
 
@@ -50,6 +50,21 @@ export const SAPService = {
             this.state.assignments = data;
             if (callback) callback(data);
         });
+    },
+
+    async fetchCancelledAssignments() {
+        const historyQuery = query(
+            collection(db, "sap_assignment_history"),
+            where("tripStatus", "==", "cancelled"),
+        );
+        const snapshot = await getDocs(historyQuery);
+        const data = {};
+        snapshot.forEach((doc) => {
+            const assignment = doc.data();
+            const dispatchKey = String(assignment.dispatchKey || assignment.cancelAudit?.dispatchKey || "").trim();
+            if (dispatchKey) data[dispatchKey] = assignment;
+        });
+        return data;
     },
 
     parseDate(sapDate) {
