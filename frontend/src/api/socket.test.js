@@ -70,3 +70,12 @@ test('G13/R22 secondary handshake drops a token returned for a previous account'
   state.auth.currentUser = user('b', 'token-b'); pending.resolve('old-token');
   expect(await handshake).toEqual({});
 });
+test('Tracking connection requested during token refresh is not lost', async () => {
+  const module = await import('./socket.js'); const pending = deferred();
+  const account = user('a', 'fresh-token'); account.getIdToken.mockReturnValueOnce(pending.promise);
+  state.auth.currentUser = account;
+  const connecting = module.connectDriverSocket();
+  await notify(account); pending.resolve('old-token'); await connecting;
+  expect(module.getDriverSocket().connected).toBe(true);
+  expect(await new Promise(resolve => module.getDriverSocket().auth(resolve))).toEqual({token:'fresh-token'});
+});

@@ -7,6 +7,8 @@
 
 import L from "leaflet";
 import truckSvg from "../../public/truck.svg?raw";
+import {validLocation} from './locationState.js';
+const safeText = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
@@ -203,6 +205,8 @@ const _injectCSS = () => {
 // ── Status config ─────────────────────────────────────────────────────────────
 
 const ST = {
+    returning_to_base: {rc: '#3B82F6', rg: 'rgba(59,130,246,0.25)', lbl: 'Returning to base'},
+    stale:   {rc: '#64748B', rg: 'rgba(100,116,139,0.25)', lbl: 'GPS stale'},
     online:  { rc: "#10B981", rg: "rgba(16,185,129,0.32)",  lbl: "Moving"  },
     idle:    { rc: "#F59E0B", rg: "rgba(245,158,11,0.26)",  lbl: "Idle"    },
     delayed: { rc: "#F97316", rg: "rgba(249,115,22,0.26)",  lbl: "Delayed" },
@@ -292,18 +296,20 @@ const _popup = ({ name, driverId, shipmentId, lat, lng }, cfg) => `
  */
 export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, containerId = _defaultId) => {
     const e = _e(containerId);
-    if (!e.map || !lat || !lng || !driverId) {
-        // Always log skips so silent failures are visible during development.
-        console.warn("[updateMarker] skipped", {
-            driverId,
-            lat,
-            lng,
-            containerId,
-            hasMap: !!e.map,
-            reason: !e.map ? "no-map" : !driverId ? "no-driverId" : !lat ? "no-lat" : "no-lng",
-        });
+    if (!e.map || !validLocation(lat, lng) || !driverId) {
         return;
     }
+    const previous = e.markers[driverId]?._sysuLocation;
+    if (previous && previous.name === name && previous.status === status && previous.shipmentId === shipmentId) {
+        if (previous.lat !== lat || previous.lng !== lng) {
+            e.markers[driverId].setLatLng([lat, lng]);
+            e.markers[driverId].getPopup()?.setContent(_popup({name: safeText(name), driverId: safeText(driverId), shipmentId: safeText(shipmentId), lat, lng}, _st(status)));
+        }
+        e.markers[driverId]._sysuLocation = {lat, lng, name, status, shipmentId};
+        return;
+    }
+    const rawName = name;
+    name = safeText(name);
     _injectCSS();
 
     const cfg = _st(status);
@@ -327,12 +333,13 @@ export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, c
     if (e.markers[driverId]) {
         e.markers[driverId].setLatLng([lat, lng]);
         e.markers[driverId].setIcon(icon);
-        e.markers[driverId].getPopup()?.setContent(_popup({ name, driverId, shipmentId, lat, lng }, cfg));
+        e.markers[driverId].getPopup()?.setContent(_popup({ name, driverId: safeText(driverId), shipmentId: safeText(shipmentId), lat, lng }, cfg));
     } else {
         e.markers[driverId] = L.marker([lat, lng], { icon })
             .addTo(e.map)
-            .bindPopup(_popup({ name, driverId, shipmentId, lat, lng }, cfg), { className: "flm-pop", maxWidth: 260 });
+            .bindPopup(_popup({ name, driverId: safeText(driverId), shipmentId: safeText(shipmentId), lat, lng }, cfg), { className: "flm-pop", maxWidth: 260 });
     }
+    e.markers[driverId]._sysuLocation = {lat, lng, name: rawName, status, shipmentId};
 };
 
 /**
@@ -354,9 +361,9 @@ export const seedMarker = (input, containerId = _defaultId) => {
     const {driverId, name, shipmentId, lat, lng} = input;
     if (!driverId) return false;
 
-    const realLat = typeof lat === "number" && lat !== 0 ? lat : null;
-    const realLng = typeof lng === "number" && lng !== 0 ? lng : null;
-    const hasRealGps = realLat != null && realLng != null;
+    const realLat = lat;
+    const realLng = lng;
+    const hasRealGps = validLocation(lat, lng);
 
     // Do NOT draw ghost marker at fallback coords if the truck has not sent real GPS
     if (!hasRealGps) {
@@ -385,7 +392,7 @@ export const focusOnLocation = (lat, lng, containerId = _defaultId) =>
 export const clearMarkers = (containerId = _defaultId) => {
     const e = _e(containerId);
     Object.values(e.markers).forEach((m) => m.remove());
-    e.markers = {};
+    for (const id of Object.keys(e.markers)) delete e.markers[id];
 };
 
 /** Remove a single driver's marker from the map (used when driver explicitly ends trip with no last known position). */

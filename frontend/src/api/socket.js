@@ -4,6 +4,7 @@ import {auth} from "./firebase.js";
 
 let sessionGeneration = 0;
 let _driverSocket = null;
+let driverConnectionRequested = false;
 
 // Resolve the current account on every handshake/reconnect. An old async token
 // result must never be applied after logout or a newer account/token event.
@@ -34,7 +35,7 @@ const connectAuthenticated = async (target) => {
         return;
     }
     try {
-        await user.getIdToken(true);
+        await user.getIdToken();
         if (auth.currentUser === user && generation === sessionGeneration) target.connect();
     } catch (_) {
         if (auth.currentUser === user && generation === sessionGeneration) target.disconnect();
@@ -42,14 +43,17 @@ const connectAuthenticated = async (target) => {
 };
 
 export const connectSocket = () => connectAuthenticated(socket);
-export const connectDriverSocket = () => connectAuthenticated(getDriverSocket());
+export const connectDriverSocket = () => {
+    driverConnectionRequested = true;
+    return connectAuthenticated(getDriverSocket());
+};
 
 auth.onIdTokenChanged(async (user) => {
     const generation = ++sessionGeneration;
-    const reconnectDriver = _driverSocket?.active || _driverSocket?.connected;
+    const reconnectDriver = driverConnectionRequested || _driverSocket?.active || _driverSocket?.connected;
     socket.disconnect();
     _driverSocket?.disconnect();
-    if (!user) return;
+    if (!user) { driverConnectionRequested = false; return; }
     try {
         await user.getIdToken();
         if (auth.currentUser !== user || generation !== sessionGeneration) return;

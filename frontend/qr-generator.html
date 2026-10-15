@@ -319,6 +319,7 @@
                 </svg>
             </button>
             <div class="live" id="queue-status" role="status" aria-live="polite">Queue loading...</div>
+            <a href="/" id="queue-access">Sign in for driver details</a>
             <div id="clock">--:--:-- --</div>
         </div>
     </header>
@@ -356,8 +357,7 @@
 </div>
 
 <script>
-    const isLocal=location.hostname==="localhost"||location.hostname==="127.0.0.1";
-    const API=isLocal?"http://localhost:8080":"%VITE_API_URL%";
+    const API="%VITE_API_URL%";
     const QR_SEC=60;
     const TYPES=["AUV","4W","6W","10W","20F","40F"];
 
@@ -400,44 +400,59 @@
     });
 
     /* ── Helpers ── */
-    function esc(s){if(!s)return"";const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+    function esc(s){if(typeof s!=="string")return"";const d=document.createElement("div");d.textContent=s;return d.innerHTML}
 
     /* ── Public queue ── */
     // Anonymous display contains positions only; identity remains in staff/driver views.
-    function card(row){
-        return `<div class="qcard s-waiting">
+    function card(row,detailed){
+        const called=detailed&&row.status==="called";
+        return `<div class="qcard ${called?"s-called":"s-waiting"}">
 <div class="qcard-num">#${String(row.position).padStart(3,"0")}</div>
-<div class="qcard-st"><span class="sdot"></span>Naghihintay</div>
+<div class="qcard-st"><span class="sdot"></span>${called?"Tinatawag":"Naghihintay"}</div>
+${detailed?'<div class="qcard-sep"></div><div class="qcard-name">'+esc(row.driverName||"Driver")+'</div><div class="qcard-plate">'+esc(row.plateNumber||"Plate unavailable")+'</div>':""}
 </div>`;
     }
 
-    function render(queues){
+    function render(queues,detailed=false){
         TYPES.forEach(type=>{
             const body=document.getElementById("body-"+type),cnt=document.getElementById("cnt-"+type);
             const rows=(Array.isArray(queues[type])?queues[type]:[]).slice(0,100)
                 .filter(row=>Number.isInteger(row?.position)&&row.position>=1&&row.position<=100);
             cnt.textContent=rows.length;
             cnt.className="qcol-cnt "+(rows.length>0?"has":"zero");
-            body.innerHTML=rows.length===0?'<div class="empty">Wala pa</div>':rows.map(card).join("");
+            body.innerHTML=rows.length===0?'<div class="empty">Wala pa</div>':rows.map(row=>card(row,detailed)).join("");
         });
     }
 
     let queuePending=false;
+    let queueRevision=0;
+    window.addEventListener("kiosk-auth-changed",()=>{
+        queueRevision++;
+        render({});
+        document.getElementById("queue-access").textContent=window.kioskQueueUser?"Staff queue view":"Sign in for driver details";
+        fetchQueue();
+    });
     async function fetchQueue(){
         if(queuePending)return;
         queuePending=true;
+        const revision=queueRevision;
+        const user=window.kioskQueueUser;
         const status=document.getElementById("queue-status");
         try{
-            const response=await fetch(API+"/api/qr/queue-display",{signal:AbortSignal.timeout(8000)});
+            const options={signal:AbortSignal.timeout(8000)};
+            if(user)options.headers={Authorization:"Bearer "+await user.getIdToken()};
+            const response=await fetch(API+(user?"/api/qr/queue-cards":"/api/qr/queue-display"),options);
             if(!response.ok)throw new Error("Queue unavailable");
             const result=await response.json();
             if(!result.success||!result.data?.queues)throw new Error("Invalid queue response");
             const asOf=new Date(result.data.asOf);
             if(!Number.isFinite(asOf.getTime()))throw new Error("Invalid queue timestamp");
-            render(result.data.queues);
+            if(revision!==queueRevision)return;
+            render(result.data.queues,Boolean(user));
             status.textContent="Updated "+asOf.toLocaleTimeString()
                 +(result.data.truncated?" - first 100 queue entries":"");
         }catch{
+            if(revision!==queueRevision)return;
             status.textContent="Queue unavailable - retrying";
             TYPES.forEach(type=>{
                 document.getElementById("cnt-"+type).textContent="—";
@@ -445,6 +460,7 @@
             });
         }finally{
             queuePending=false;
+            if(revision!==queueRevision)fetchQueue();
         }
     }
     let cd=QR_SEC;
@@ -499,7 +515,8 @@
     document.getElementById("qr-token").className="tok";
     fetchQR();
     fetchQueue();
-    setInterval(fetchQueue,10000);
+    setInterval(fetchQueue,5000);
 </script>
+<script type="module" src="/src/pages/kioskAuth.js"></script>
 </body>
 </html>

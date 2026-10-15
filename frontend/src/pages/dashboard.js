@@ -2,7 +2,6 @@ import {
     initLeafletMap,
     switchMapTheme,
     updateMarker,
-    seedMarker,
     focusOnLocation,
     clearMarkers,
     markers,
@@ -15,6 +14,7 @@ import {
     fitAllDrivers,
     clearOfflineDrivers,
 } from "../components/MapTrackingPanel.js";
+import { acceptLocationUpdate, GPS_STALE_MS, savedLocationStatus } from "../components/locationState.js";
 import { EVENTS, socket, getDriverSocket, connectDriverSocket } from "../api/socket.js";
 import { AuthService } from "../api/authService.js";
 import { SAPService } from "../api/sapService.js";
@@ -292,71 +292,14 @@ export class Dashboard {
 
     async _seedLastKnownLocations() {
         try {
-            const { locations } = await SAPAssignmentService.fetchActiveLocations();
-            if (!Array.isArray(locations) || locations.length === 0) {
-                console.log("[locationSeed] no active driver locations");
-                return;
+            const {locations} = await SAPAssignmentService.fetchActiveLocations();
+            for (const loc of locations || []) {
+                this._applyTrackingUpdate({driverId: loc.driverId, lat: loc.lat, lng: loc.lng,
+                    name: loc.driverName, sapDocId: loc.dispatchKey, truckPlate: loc.truckPlate,
+                    shipmentNumber: loc.dispatchKey, tripStatus: loc.tripStatus, timestamp: loc.at || 0,
+                    status: savedLocationStatus(loc.tripStatus)}, 'location', 'firestore');
             }
-            console.log("[locationSeed] seeding", locations.length, "active locations");
-            const now = Date.now();
-            for (const loc of locations) {
-                console.log(
-                    "[locationSeed] entry:",
-                    JSON.stringify({
-                        dispatchKey: loc.dispatchKey,
-                        driverId: loc.driverId,
-                        driverName: loc.driverName,
-                        lat: loc.lat,
-                        lng: loc.lng,
-                        tripStatus: loc.tripStatus,
-                        hasCoords: !!(loc.lat && loc.lng && loc.lat !== 0 && loc.lng !== 0),
-                    }),
-                );
-                if (!loc.driverId) {
-                    console.log("[locationSeed] (skipped — missing driverId)");
-                    continue;
-                }
-
-                const realLat = typeof loc.lat === "number" && loc.lat !== 0 ? loc.lat : null;
-                const realLng = typeof loc.lng === "number" && loc.lng !== 0 ? loc.lng : null;
-                const hasRealGps = realLat != null && realLng != null;
-
-                const seeded = {
-                    driverId: loc.driverId,
-                    lat: realLat,
-                    lng: realLng,
-                    status: hasRealGps ? "offline" : "pending",
-                    name: loc.driverName || "Unknown Driver",
-                    sapDocId: loc.dispatchKey,
-                    shipmentNumber: loc.dispatchKey,
-                    truckPlate: loc.truckPlate || null,
-                    tripStatus: loc.tripStatus || null,
-                    lastSeen: typeof loc.at === "number" ? loc.at : now,
-                    awaitingGps: !hasRealGps,
-                };
-
-                this.state.liveScans[loc.driverId] = seeded;
-
-                // Only seed marker and live tracking if the truck has actual GPS coordinates
-                if (hasRealGps) {
-                    this.state.liveTracking[loc.driverId] = seeded;
-                    seedMarker(
-                        {
-                            driverId: loc.driverId,
-                            name: seeded.name,
-                            shipmentId: loc.dispatchKey,
-                            lat: realLat,
-                            lng: realLng,
-                        },
-                        "map",
-                    );
-                }
-            }
-            this._scheduleLiveScansRender();
-            this._renderAll();
-        } catch (err) {
-            console.warn("[locationSeed] failed:", err?.message ?? err);
-        }
+        } catch (_) { console.warn('Saved driver locations unavailable'); }
     }
 
     async _syncSAP(skipRender = false) {
@@ -1162,112 +1105,29 @@ export class Dashboard {
         }
     }
 
+    _applyTrackingUpdate(data, kind = 'location', source = 'socket') {
+        this._closedTrackingTrips ??= new Map();
+        const next = acceptLocationUpdate(this.state.liveTracking[data?.driverId], data,
+            {kind, source, closedAt: this._closedTrackingTrips.get(data?.driverId) || 0});
+        if (!next) return null;
+        if (next.removed) {
+            this._closedTrackingTrips.set(next.driverId, next.timestamp);
+            if (this._closedTrackingTrips.size > 1000) this._closedTrackingTrips.delete(this._closedTrackingTrips.keys().next().value);
+            removeMarker(next.driverId, 'map');
+            delete this.state.liveTracking[next.driverId];
+            delete this.state.liveScans[next.driverId];
+        } else {
+            this.state.liveTracking[next.driverId] = next;
+            this.state.liveScans[next.driverId] = {...this.state.liveScans[next.driverId], ...next};
+            updateMarker({...next, shipmentId: next.sapDocId}, 'map');
+        }
+        this._scheduleLiveScansRender();
+        return next;
+    }
+
     _setupSocket() {
-        // â"€â"€ update_admin_map â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // Forwarded from every driver_moving. Turns driver GREEN immediately
-        // even if they were previously RED (offline) —" handles reconnect race.
-        socket.on(EVENTS.DRIVER_MOVING, (data) => {
-            console.log(
-                "[socket/DRIVER_MOVING] driverId:", data?.driverId,
-                "lat:", data?.lat, "lng:", data?.lng,
-                "status:", data?.status, "name:", data?.name,
-            );
-            const existing = this.state.liveTracking[data.driverId];
-            const wasOffline = existing?.status === "offline";
-
-            // Only set "online" if the driver's last known status was NOT "offline".
-            // Prevents late/queued driver_moving (from before disconnect) from
-            // incorrectly resurrecting a RED marker to GREEN. Reconnect is still
-            // handled —" wasOffline + new driver_moving → turn GREEN.
-            const isCurrentlyOffline = existing?.status === "offline";
-            this.state.liveTracking[data.driverId] = {
-                ...existing,
-                ...data,
-                status: isCurrentlyOffline ? "offline" : "online",
-            };
-
-            // Validate coordinates - treat lat/lng = 0 same as null (no position sentinel)
-            const FALLBACK_LAT = 14.5995;
-            const FALLBACK_LNG = 120.9219;
-            const safeLat = !data.lat ? ((existing && existing.lat) || FALLBACK_LAT) : data.lat;
-            const safeLng = !data.lng ? ((existing && existing.lng) || FALLBACK_LNG) : data.lng;
-
-            if (wasOffline) {
-                // Driver was RED and just started moving → turn GREEN immediately
-                // using the fresh position from update_admin_map (with validated coordinates).
-                updateMarker({
-                    driverId: data.driverId,
-                    lat: safeLat,
-                    lng: safeLng,
-                    status: "online",
-                    name: data.name || existing?.name || "Unknown Driver",
-                });
-            } else {
-                // Update marker with validated coordinates
-                this.state.liveTracking[data.driverId].lat = safeLat;
-                this.state.liveTracking[data.driverId].lng = safeLng;
-                updateMarker(this.state.liveTracking[data.driverId]);
-            }
-
-            this._renderAll();
-        });
-
-        // â"€â"€ vendor_status_update â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // Emitted by server on every update_status from driver + on disconnect.
-        socket.on(EVENTS.STATUS_UPDATE, (data) => {
-            const { driverId, status, name, lat, lng } = data;
-
-            if (status === "online") {
-                // Driver reconnected → turn GREEN immediately.
-                const existing = this.state.liveTracking[driverId];
-                // Fallback to Manila center if no prior position (brand new driver
-                // with no SharedPreferences trip history —" first open, no driver_moving yet).
-                // Treat lat/lng = 0 same as null: FusedLocationProviderClient never sends
-                // real 0.0, 0.0 coords inside the Philippines (~4.5Â°N–21Â°N, 116Â°E–127Â°E).
-                const FALLBACK_LAT = 14.5995;
-                const FALLBACK_LNG = 120.9219;
-                // !lat catches null, undefined, AND 0 (the intentional "no position" sentinel).
-                const safeLat = !lat ? ((existing && existing.lat) || FALLBACK_LAT) : lat;
-                const safeLng = !lng ? ((existing && existing.lng) || FALLBACK_LNG) : lng;
-                this.state.liveTracking[driverId] = {
-                    ...this.state.liveTracking[driverId],
-                    driverId,
-                    lat: safeLat,
-                    lng: safeLng,
-                    status: "online",
-                    name: name || existing?.name || "Unknown Driver",
-                };
-                updateMarker(this.state.liveTracking[driverId]);
-            } else if (status === "offline") {
-                // !lat && !lng catches null, undefined, AND 0 (intentional sentinel per sysu-go spec).
-                if (lat != null && lng != null && !(lat === 0 || lng === 0)) {
-                    // Driver disconnected but we have their last known position.
-                    // → Turn RED and freeze marker at this position. Do NOT remove.
-                    this.state.liveTracking[driverId] = {
-                        ...this.state.liveTracking[driverId],
-                        lat, lng,
-                        status: "offline",
-                        name: name || this.state.liveTracking[driverId]?.name || "Unknown Driver",
-                    };
-                    updateMarker(this.state.liveTracking[driverId]);
-                } else {
-                    // Edge case: driver disconnected before sending any driver_moving
-                    // (e.g. opened app, immediately force-closed before GPS got a fix)
-                    // → Remove marker entirely — no position known to display.
-                    if (this.state.liveTracking[driverId]) {
-                        removeMarker(driverId);
-                        delete this.state.liveTracking[driverId];
-                    }
-                    // Also purge from liveScans so the Live Scans table stays in sync.
-                    if (this.state.liveScans[driverId]) {
-                        delete this.state.liveScans[driverId];
-                        this._scheduleLiveScansRender();
-                    }
-                }
-            }
-
-            this._renderAll();
-        });
+        socket.on(EVENTS.DRIVER_MOVING, data => this._applyTrackingUpdate(data));
+        socket.on(EVENTS.STATUS_UPDATE, data => this._applyTrackingUpdate(data, 'status'));
 
         socket.on(EVENTS.WAREHOUSE_BASE_UPDATED, (data) => {
             console.log("[socket/WAREHOUSE_BASE_UPDATED] Received warehouse base update:", data);
@@ -1309,176 +1169,48 @@ export class Dashboard {
     // Connects directly to sysu-go-production to receive driver_moving events
     // and joins them with sap_assignments Firestore docs for shipment/plate data.
     async _setupDriverLocationSocket() {
+        if (this._driverLocationSocket) return;
         const driverSocket = getDriverSocket();
-        if (!driverSocket) {
-            console.warn("[driverSocket] getDriverSocket() returned null — driver location feed unavailable");
-            return;
+        if (!driverSocket) return;
+        this._driverLocationSocket = driverSocket;
+        this._locationFetches = new Map();
+        driverSocket.on('update_admin_map', async data => {
+            const next = this._applyTrackingUpdate(data);
+            if (!next || next.removed || !next.sapDocId) return;
+            const scan = this.state.liveScans[next.driverId];
+            const id = next.sapDocId;
+            if (!this.state.sapDocCache[id]) {
+                if (!this._locationFetches.has(id)) {
+                    this._locationFetches.set(id, getDoc(doc(db, 'sap_assignments', id)).then(snapshot => {
+                        if (!snapshot.exists()) return;
+                        if (Object.keys(this.state.sapDocCache).length >= 100) delete this.state.sapDocCache[Object.keys(this.state.sapDocCache)[0]];
+                        const record = snapshot.data();
+                        this.state.sapDocCache[id] = {shipmentNumber: id, truckPlate: record.truckPlate || '?', tripStatus: record.tripStatus};
+                    }).catch(() => { console.warn('Tracking shipment details unavailable'); }).finally(() => this._locationFetches.delete(id)));
+                }
+                await this._locationFetches.get(id);
+            }
+            if (this.state.liveScans[next.driverId] === scan && this.state.sapDocCache[id]) {
+                Object.assign(scan, this.state.sapDocCache[id]);
+                this._scheduleLiveScansRender();
+            }
+        });
+        for (const event of ['update_status', 'vendor_status_update', 'driver_status_change']) {
+            driverSocket.on(event, data => this._applyTrackingUpdate(data, 'status'));
         }
-
-        console.log("[driverSocket] subscribing to update_admin_map + update_status; URL =", API_CONFIG.DRIVER_TRACKING_URL);
-
-        // â"€â"€ update_admin_map (broadcast from sysu-go Railway) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        driverSocket.on("update_admin_map", async (data) => {
-            const { driverId, sapDocId, lat, lng, status, name } = data;
-            const now = Date.now();
-
-            // Handle completed shipments - ignore location updates
-            if (status === "completed") {
-                console.log("[driverSocket/update_admin_map] ↘ ignoring location update for completed shipment:", driverId);
-                return;
-            }
-            console.log(
-                "[driverSocket/update_admin_map] driverId:", driverId,
-                "lat:", lat, "lng:", lng,
-                "status:", status, "name:", name,
-                "sapDocId:", sapDocId,
-                "hasValidCoords:", !!(lat && lng && lat !== 0 && lng !== 0),
-            );
-
-            // Keep latest location in state
-            this.state.liveScans[driverId] = {
-                ...(this.state.liveScans[driverId] || {}),
-                driverId,
-                lat,
-                lng,
-                status: status === "offline" ? "offline" : "online",
-                name: name || "Unknown Driver",
-                sapDocId: sapDocId || null,
-                lastSeen: now,
-            };
-
-            // â˜… Show the driver's truck on the overview #map immediately when location is received.
-            // This is the counterpart to MapTrackingPanel's _upsertMarker() —" that panel handles the
-            // #trackingMap; this handler ensures the Overview map also shows the driver marker.
-            // Validate coordinates - treat lat/lng = 0 same as null (no position sentinel)
-            // Fallback to Manila center if no prior position (brand new driver
-            // with no SharedPreferences trip history — first open, no driver_moving yet).
-            // Treat lat/lng = 0 same as null: FusedLocationProviderClient never sends
-            // real 0.0, 0.0 coords inside the Philippines (~4.5°N–21°N, 116°E–127°E).
-            const FALLBACK_LAT = 14.5995;
-            const FALLBACK_LNG = 120.9219;
-            // !lat catches null, undefined, AND 0 (the intentional "no position" sentinel).
-            const safeLat = !lat ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lat) || FALLBACK_LAT) : lat;
-            const safeLng = !lng ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lng) || FALLBACK_LNG) : lng;
-
-            const trackingPayload = {
-                driverId,
-                lat: safeLat,
-                lng: safeLng,
-                status: status === "offline" ? "offline" : "online",
-                name: name || "Unknown Driver",
-                shipmentId: sapDocId || null,
-            };
-
-            // Sync liveTracking in state
-            this.state.liveTracking[driverId] = trackingPayload;
-
-            // Show / update the driver's truck on the overview #map immediately
-            updateMarker(trackingPayload, "map");
-
-            // Fetch or use cached sap_assignments doc for shipment + plate
-            if (sapDocId) {
-                if (!this.state.sapDocCache[sapDocId]) {
-                    try {
-                        const { getDoc, doc } = await import("firebase/firestore");
-                        const docSnap = await getDoc(doc(db, "sap_assignments", sapDocId));
-                        if (docSnap.exists) {
-                            const d = docSnap.data();
-                            // Cache the doc (max 100 entries, FIFO eviction)
-                            const keys = Object.keys(this.state.sapDocCache);
-                            if (keys.length >= 100) {
-                                delete this.state.sapDocCache[keys[0]];
-                            }
-                            this.state.sapDocCache[sapDocId] = {
-                                shipmentNumber: sapDocId,
-                                truckPlate: d.truckPlate || "—",
-                                tripStatus: d.tripStatus || "in_transit",
-                            };
-                        }
-                    } catch (err) {
-                        console.warn("[liveScans] sap_doc fetch failed:", err.message);
-                    }
-                }
-
-                const cached = this.state.sapDocCache[sapDocId];
-                if (cached) {
-                    this.state.liveScans[driverId].shipmentNumber = cached.shipmentNumber;
-                    this.state.liveScans[driverId].truckPlate = cached.truckPlate;
-                    this.state.liveScans[driverId].tripStatus = cached.tripStatus;
+        this._locationAgeTimer = setInterval(() => {
+            let changed = false;
+            for (const [id, data] of Object.entries(this.state.liveTracking)) {
+                if (['online', 'stopped', 'returning_to_base'].includes(data.status) && Date.now() - data.lastSeen > GPS_STALE_MS) {
+                    data.status = 'stale';
+                    if (this.state.liveScans[id]) this.state.liveScans[id].status = 'stale';
+                    updateMarker(data, 'map');
+                    changed = true;
                 }
             }
-
-            this._scheduleLiveScansRender();
-        });
-
-        // â"€â"€ update_status (offline) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        driverSocket.on("update_status", (data) => {
-            const { driverId, status, name } = data || {};
-            if (!driverId) return;
-
-            // Handle completed shipments - remove marker AND all tracking state immediately without reload.
-            if (status === "completed") {
-                console.log("[driverSocket/update_status] ↘ trip completed — removing marker + tracking for:", driverId);
-                removeMarker(driverId);
-                delete this.state.liveScans[driverId];
-                delete this.state.liveTracking[driverId];
-                this._scheduleLiveScansRender();
-                return;
-            }
-
-            if (this.state.liveScans[driverId]) {
-
-                this.state.liveScans[driverId].status = status;
-                // Also grey-out the overview map marker so the truck disappears visually
-                updateMarker({ driverId, status, name: name || this.state.liveScans[driverId].name }, "map");
-                if (status === "offline") {
-                    // Remove from live scans after a short delay so table doesn't flash
-                    setTimeout(() => {
-                        if (this.state.liveScans[driverId]?.status === "offline") {
-                            delete this.state.liveScans[driverId];
-                            this._scheduleLiveScansRender();
-                        }
-                    }, 5000);
-                }
-                this._scheduleLiveScansRender();
-            }
-        });
-
-        // ── vendor_status_update (offline / completed from sysu-go server) ────────
-        // The sysu-go backend broadcasts this when a driver goes offline or completes
-        // a trip. Handles real-time marker removal without requiring a page reload.
-        driverSocket.on("vendor_status_update", (data) => {
-            const { driverId, status, name } = data || {};
-            if (!driverId) return;
-
-            if (status === "completed" || status === "offline") {
-                console.log(`[driverSocket/vendor_status_update] ↘ ${status} — removing marker for:`, driverId, name);
-                // Remove Leaflet marker from overview map immediately
-                removeMarker(driverId);
-                // Remove Leaflet marker from tracking map if present
-                removeMarker(driverId, "trackingMap");
-                // Clear all in-memory state
-                delete this.state.liveScans[driverId];
-                delete this.state.liveTracking[driverId];
-                this._scheduleLiveScansRender();
-            }
-        });
-
-        // Connect if not already connected (with Firebase auth token for sysu-go Railway)
-        if (!driverSocket.connected) {
-            await connectDriverSocket();
-        }
-
-        // Diagnostic listeners for the driver's secondary socket.
-        driverSocket.on("connect", () => {
-            console.log("[driverSocket] ✓ connected to", API_CONFIG.DRIVER_TRACKING_URL);
-        });
-        driverSocket.on("disconnect", (reason) => {
-            console.warn("[driverSocket] ✗ disconnected:", reason);
-        });
-        driverSocket.on("connect_error", (err) => {
-            console.error("[driverSocket] ✗ connect_error:", err?.message ?? err);
-        });
+            if (changed) this._scheduleLiveScansRender();
+        }, 5000);
+        if (!driverSocket.connected) await connectDriverSocket();
     }
 
     _liveScansRenderTimer = null;
@@ -3923,11 +3655,10 @@ export class Dashboard {
             }
         }
 
-        // Show under development overlay for Fleet Manager and Live Tracking views
+        // Keep the development overlay on the unfinished Fleet Manager view.
         const underDevOverlay = document.getElementById('underDevOverlay');
         if (underDevOverlay) {
-            if (viewId === 'drivers' || viewId === 'tracking') {
-                // Show overlay for Fleet Manager and Live Tracking views
+            if (viewId === 'drivers') {
                 underDevOverlay.style.opacity = "1";
                 underDevOverlay.style.pointerEvents = "auto";
             } else {
