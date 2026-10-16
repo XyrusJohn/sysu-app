@@ -161,6 +161,54 @@ test('live scan rows resolve generic socket metadata from the active assignment'
   expect(row.children[2].textContent).toBe('SYN-123');
 });
 
+test('live location is removed when its linked assignment becomes completed in Firestore', () => {
+  const remove = vi.spyOn(MapManager, 'removeMarker');
+  const now = Date.now();
+  dashboard.state.liveTracking['driver-uid'] = {driverId: 'driver-uid', sapDocId: dispatch, lat: 14.5, lng: 121, timestamp: now - 1000};
+  dashboard.state.liveScans['driver-uid'] = {...dashboard.state.liveTracking['driver-uid']};
+  dashboard.state.sapAssignments[dispatch] = {driverId: 'driver-uid', tripStatus: 'completed'};
+
+  dashboard._reconcileLiveScansWithAssignments(dashboard.state.sapAssignments);
+
+  expect(dashboard.state.liveTracking['driver-uid']).toBeUndefined();
+  expect(dashboard.state.liveScans['driver-uid']).toBeUndefined();
+  expect(remove).toHaveBeenCalledWith('driver-uid', 'map');
+  expect(dashboard._applyTrackingUpdate({driverId: 'driver-uid', sapDocId: dispatch, lat: 14.5, lng: 121, timestamp: now}, 'location')).toBeNull();
+  remove.mockRestore();
+});
+
+test('live location remains visible while its assignment is returning to base', () => {
+  const location = {driverId: 'driver-uid', sapDocId: dispatch, lat: 14.5, lng: 121, timestamp: Date.now()};
+  dashboard.state.liveTracking['driver-uid'] = location;
+  dashboard.state.liveScans['driver-uid'] = {...location};
+  dashboard.state.sapAssignments[dispatch] = {driverId: 'driver-uid', tripStatus: 'returning_to_base'};
+
+  dashboard._reconcileLiveScansWithAssignments(dashboard.state.sapAssignments);
+
+  expect(dashboard.state.liveTracking['driver-uid']).toBe(location);
+  expect(dashboard.state.liveScans['driver-uid'].sapDocId).toBe(dispatch);
+});
+
+test('when one linked shipment completes, live tracking follows another active shipment for the driver', () => {
+  const location = {driverId: 'driver-uid', sapDocId: 'old-dispatch', lat: 14.5, lng: 121, timestamp: Date.now() - 1000};
+  dashboard.state.liveTracking['driver-uid'] = location;
+  dashboard.state.liveScans['driver-uid'] = {...location};
+  dashboard.state.sapAssignments = {
+    'old-dispatch': {driverId: 'driver-uid', tripStatus: 'completed'},
+    'next-dispatch': {driverId: 'driver-uid', tripStatus: 'in_transit'},
+  };
+
+  dashboard._reconcileLiveScansWithAssignments(dashboard.state.sapAssignments);
+
+  expect(dashboard.state.liveTracking['driver-uid'].sapDocId).toBe('next-dispatch');
+  expect(dashboard.state.liveScans['driver-uid'].shipmentNumber).toBe('next-dispatch');
+  expect(dashboard._applyTrackingUpdate({driverId: 'driver-uid', sapDocId: 'old-dispatch', lat: 14.6, lng: 121.1,
+    timestamp: Date.now() + 1}, 'location')).toBeNull();
+  const linkedLocation = dashboard.state.liveTracking['driver-uid'];
+  expect(dashboard._applyTrackingUpdate({driverId: 'driver-uid', status: 'completed', timestamp: Date.now() + 2}, 'status')).toBeNull();
+  expect(dashboard.state.liveTracking['driver-uid']).toBe(linkedLocation);
+});
+
 test('same Ship-To customer and location collapse to additive summary with expandable OBD details', () => {
   const location = {
     ShipToParty: '0010002870', ShipToPartyName: 'Robinsons Supermarket - Malabon',

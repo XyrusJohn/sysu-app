@@ -1,5 +1,9 @@
 # Activity log
 
+## 2026-10-16 â€” Reconcile completed trips out of Overview Live Scans
+
+The assignment snapshot now removes a live row/map marker when its linked trip becomes terminal, even if the driver's completion socket event was missed. Return-to-base assignments remain visible; when one linked shipment completes but another remains active, tracking follows the remaining shipment and ignores late fixes linked to the completed one. Focused lifecycle/map tests passed 92/92; full frontend suite passed 160/160; Vite production build passed; ESLint reported 0 errors and 66 warnings. Local only; no production deployment.
+
 ## 2026-10-16 - Grouped Dispatch Details by Ship-To location
 
 Dispatch Details now combines OBDs with matching Ship-To, customer name, delivery address, and normalized coordinates into one summary row with summed cargo metrics. Expanding the row retains individual OBD amounts, POD previews, and delivery outcomes; incomplete location identity stays ungrouped. Focused delivery-filter tests passed 36/36, targeted ESLint had 0 errors and reported 13 warnings, and the Vite production build passed. No production deployment.

@@ -201,6 +201,7 @@ export class Dashboard {
         try {
             SAPService.subscribeToAssignments((data) => {
                 this.state.sapAssignments = data;
+                this._reconcileLiveScansWithAssignments(data);
                 this._rebuildShipmentGroups();
                 assignmentReady();
                 this._renderAll();
@@ -1125,6 +1126,17 @@ export class Dashboard {
 
     _applyTrackingUpdate(data, kind = 'location', source = 'socket') {
         this._closedTrackingTrips ??= new Map();
+        const dispatchKey = data?.sapDocId ?? data?.shipmentId;
+        const linkedAssignment = dispatchKey ? this.state.sapAssignments?.[dispatchKey] : null;
+        const linkedStatus = String(linkedAssignment?.tripStatus || '').trim().toLowerCase();
+        const terminalStatuses = ['completed', 'complete', 'delivered'];
+        const activeStatuses = ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base'];
+        const hasActiveAssignment = Object.values(this.state.sapAssignments || {}).some(assignment =>
+            assignment?.driverId === data?.driverId
+                && activeStatuses.includes(String(assignment.tripStatus || '').trim().toLowerCase()));
+        if (linkedAssignment?.driverId === data?.driverId && terminalStatuses.includes(linkedStatus)
+            && kind !== 'status') return null;
+        if (kind === 'status' && String(data?.status || '').trim().toLowerCase() === 'completed' && hasActiveAssignment) return null;
         const next = acceptLocationUpdate(this.state.liveTracking[data?.driverId], data,
             {kind, source, closedAt: this._closedTrackingTrips.get(data?.driverId) || 0});
         if (!next) return null;
@@ -1141,6 +1153,35 @@ export class Dashboard {
         }
         this._scheduleLiveScansRender();
         return next;
+    }
+
+    _reconcileLiveScansWithAssignments(assignments) {
+        const activeStatuses = new Set(['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base']);
+        const terminalStatuses = new Set(['completed', 'complete', 'delivered']);
+        for (const [driverId, location] of Object.entries(this.state.liveTracking || {})) {
+            const dispatchKey = location.sapDocId || location.shipmentId;
+            const linked = dispatchKey ? assignments?.[dispatchKey] : null;
+            const linkedStatus = String(linked?.tripStatus || '').trim().toLowerCase();
+            if (!linked || linked.driverId !== driverId || !terminalStatuses.has(linkedStatus)) continue;
+
+            const nextActive = Object.entries(assignments || {})
+                .filter(([, assignment]) => assignment?.driverId === driverId
+                    && activeStatuses.has(String(assignment.tripStatus || '').trim().toLowerCase()))
+                .sort((a, b) => Number(b[1].tripStatus === 'in_transit') - Number(a[1].tripStatus === 'in_transit'))[0];
+
+            if (!nextActive) {
+                this._applyTrackingUpdate({driverId, status: 'completed', timestamp: Date.now()}, 'status');
+                continue;
+            }
+
+            const [nextDispatchKey, assignment] = nextActive;
+            const updated = {...location, sapDocId: nextDispatchKey, shipmentId: nextDispatchKey,
+                shipmentNumber: nextDispatchKey, tripStatus: assignment.tripStatus};
+            this.state.liveTracking[driverId] = updated;
+            this.state.liveScans[driverId] = {...this.state.liveScans[driverId], ...updated};
+            updateMarker(updated, 'map');
+            this._scheduleLiveScansRender();
+        }
     }
 
     _setupSocket() {
