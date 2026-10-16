@@ -39,6 +39,8 @@ const { errorHandler } = require("./middleware/errorHandler");
 // ── Rate limiting ──
 app.set("trust proxy", runtimeConfig.trustProxy);
 
+const allowedOrigins = runtimeConfig.allowedOrigins;
+app.use(require("./middleware/corsPolicy")(allowedOrigins));
 
 const globalLimiter = rateLimit({
     windowMs: runtimeConfig.rateWindowMs,
@@ -60,12 +62,20 @@ const adminLimiter = rateLimit({
     legacyHeaders: false,
 });
 
-app.use(globalLimiter);
+// Frequent kiosk reads share a bounded quota without exhausting other API requests.
+const queueReadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use((req, res, next) => {
+    const isQueueRead = req.method === "GET" &&
+        ["/api/qr/queue-display", "/api/qr/queue-cards"].includes(req.path);
+    return (isQueueRead ? queueReadLimiter : globalLimiter)(req, res, next);
+});
 app.use("/api/auth", authLimiter);
 app.use("/api/users", adminLimiter);
-
-const allowedOrigins = runtimeConfig.allowedOrigins;
-app.use(require("./middleware/corsPolicy")(allowedOrigins));
 
 app.use(express.json({limit: "10kb"}));
 app.use("/api/auth", authRoutes);
@@ -136,7 +146,7 @@ io.use(async (socket, next) => {
         socket.data.uid = decoded.uid;
         const profile = await admin.firestore().collection('users').doc(decoded.uid).get();
         const userData = profile.data();
-        if (!profile.exists || !userData || ['inactive', 'disabled'].includes(userData.status)
+        if (!profile.exists || !userData || userData.status !== 'active'
             || !['driver', 'fleet_manager', 'admin', 'super_admin', 'viewer'].includes(userData.role)) {
             return next(new Error('Unauthorized'));
         }
@@ -158,7 +168,7 @@ io.on("connection", async (socket) => {
     expiryTimer.unref?.();
     const stopProfile = admin.firestore().collection('users').doc(socket.data.uid).onSnapshot(snapshot => {
         const data = snapshot.data();
-        if (!snapshot.exists || !data || ['inactive', 'disabled'].includes(data.status)
+        if (!snapshot.exists || !data || data.status !== 'active'
             || data.role !== socket.data.role) socket.disconnect(true);
     }, () => socket.disconnect(true));
     socket.once('disconnect', () => {
@@ -305,7 +315,8 @@ io.on("connection", async (socket) => {
             console.warn("[driver_moving] ✗ REJECTED — driverId mismatch:", data.driverId, "!=", socket.data.uid);
             return;
         }
-        io.to('dispatchers').emit("update_admin_map", {driverId: socket.data.uid, lat: data.lat, lng: data.lng});
+        io.to('dispatchers').emit("update_admin_map", {driverId: socket.data.uid, lat: data.lat, lng: data.lng,
+            timestamp: Number.isFinite(data.timestamp) ? data.timestamp : Date.now()});
 
         // ── Persist lastLocation to sap_assignments so the dispatcher can
         //    render the marker even when the driver app has just reconnected
@@ -321,7 +332,8 @@ io.on("connection", async (socket) => {
         // Smart Movement Check: Throttle Firestore write to once every 10 mins AND >=100m moved
         const now = Date.now();
         const lastRecord = lastDriverLocationPersist.get(data.driverId);
-        if (lastRecord) {
+        if (lastRecord?.inFlight || (lastRecord?.attemptAt != null && now - lastRecord.attemptAt < 30000)) return;
+        if (lastRecord?.time != null) {
             // Must be at least 10 minutes since last Firestore write
             if (now - lastRecord.time < LOCATION_PERSIST_THROTTLE_MS) {
                 return;
@@ -333,6 +345,9 @@ io.on("connection", async (socket) => {
             }
         }
 
+        // Reserve before querying so concurrent events and failed attempts stay bounded.
+        const attempt = {...lastRecord, attemptAt: now, inFlight: true};
+        lastDriverLocationPersist.set(data.driverId, attempt);
         const db = admin.firestore();
         db.collection("sap_assignments")
             .where("driverId", "==", data.driverId)
@@ -359,13 +374,14 @@ io.on("connection", async (socket) => {
             })
             .then((updatedId) => {
                 if (updatedId) {
-                    lastDriverLocationPersist.set(data.driverId, {time: now, lat, lng});
+                    Object.assign(attempt, {time: now, lat, lng});
                     console.log("[driver_moving] ✓ persisted lastLocation to", updatedId);
                 }
             })
             .catch((err) => {
                 console.error("[driver_moving] ✗ persist error:", err?.message ?? err);
-            });
+            })
+            .finally(() => { attempt.inFlight = false; });
     });
 
     // ── Driver Status Updates (completed / stopped / offline / online) ──
@@ -378,7 +394,7 @@ io.on("connection", async (socket) => {
             if (!driverId || !status) return;
 
             // Broadcast to dispatchers / admin map for immediate UI reaction
-            io.to('dispatchers').emit("update_status", {driverId, status});
+            io.to('dispatchers').emit("update_status", {driverId, status, timestamp: Date.now()});
 
             if (status === "stopped") {
                 io.to('dispatchers').emit("driver_stopped", {driverId});

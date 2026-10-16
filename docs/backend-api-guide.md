@@ -1,10 +1,12 @@
 # SYSU Backend — Feature & Code Documentation
 
+> **Review status (2026-10-15):** This guide contains historical examples. Only the route wiring and QR contract have been reconciled in this pass; other endpoint examples, file descriptions, and deployment details remain unverified. The current route source, tests, and [fix tracker](FIX_TRACKER.md) define live contracts.
+
 > **What this is:** Detailed breakdown of every piece of the Node.js/Express backend — what each file does, what the API endpoints are, and how it connects to SAP, Firebase, and the mobile app. For anyone working on the API, database, or WebSocket layer.
 
-**Stack:** Node.js 18+, Express 5, Firebase Admin SDK, CommonJS
+**Stack:** Node.js 24 (manifest), Express 5, Firebase Admin SDK, CommonJS
 **Auth:** Firebase ID tokens (frontend logs in via Firebase Auth; backend verifies tokens with Firebase Admin SDK)
-**Last verified:** May 2026
+**Last comprehensive verification:** May 2026; selected route review: 2026-10-15
 
 ---
 
@@ -207,57 +209,32 @@ Fetches shipment data from the SAP OData endpoint and proxies it to the frontend
 }
 ```
 
----
+### `POST /api/sap/dispatch-details`
 
-### `POST /api/qr/generate` — Generate QR Token (Unauthenticated)
+Protected by Firebase authentication and active `fleet_manager`, `admin`, or `super_admin` authorization. Accepts 1–100 dispatch keys. The backend returns the whitelisted SAP line fields only for existing `sap_assignments` and OBD numbers present in each assignment. This restores staff dashboard details for assigned shipments while leaving the driver-readable assignment document unchanged. Responses use `Cache-Control: no-store`.
 
-Generates a single-use QR token. No auth required — any caller can request one (rate limited to 30/minute).
+**Request:** `{"dispatchKeys":["0010136559"]}`
 
-**Response (200):**
+**Response data:** a dispatch-keyed object whose values are arrays of matching OBD rows, including route/planning dates, amount, volume, weight, Ship-To, address, and coordinates. Unknown or unassigned dispatch keys are omitted.
 
-```json
-{
-  "success": true,
-  "token": "SYS-A1B2C3D4E5F6",
-  "expiresAt": 1746966000000,
-  "tokenExpiryMs": 300000
-}
-```
+### `POST /api/sap/assign` — Create a driver assignment
 
-**Token format:** `SYS-` + 24 uppercase hex characters (96-bit entropy from `crypto.randomBytes(12)`)
-**Expiry:** 5 minutes
+The backend verifies each OBD, quantity, and customer against the current SAP dispatch before creating an assignment. The canonical driver-readable `lineItems` also include SAP-verified Ship-To, address, coordinates, volume, and weight when available. Amount is explicitly forbidden. Missing destination identity remains missing, so the mobile app must not merge those rows.
 
 ---
 
-### `GET /api/qr/verify?token=SYS-XXXXX` — Verify QR Token (Unauthenticated)
+### QR endpoints — current route contract reviewed 2026-10-15
 
-Verifies a scanned QR token. Called by the driver's phone browser when scanning a QR code.
+| Method and path | Access | Behavior |
+| --- | --- | --- |
+| `GET /api/qr/generate` | Public | Issues a QR token. |
+| `GET /api/qr/verify` | Public | Checks token validity without consuming it. |
+| `GET /api/qr/queue-display` | Public | Returns a bounded public queue projection. |
+| `GET /api/qr/queue-cards` | Authenticated `admin`, `super_admin`, or `qr_generator` | Returns authorized queue-card details. |
+| `POST /api/qr/scan` | Authenticated `driver` | Validates driver identity and admits the driver transactionally. |
+| `PATCH /api/qr/queue-status` | Authenticated `admin` or `super_admin` | Updates queue status. |
 
-**Response (200):** `{ "success": true, "message": "Token verified", "token": "SYS-A1B2..." }`
-**Response (404):** Token not found
-**Response (410):** Token already used or expired
-
-After a successful verification, the token is marked as `used: true` in Firestore.
-
----
-
-### `POST /api/qr/scan` — Add Driver to Queue (Unauthenticated)
-
-Called after token verification succeeds. Adds the driver to the Firestore `queue` collection.
-
-**Request:**
-
-```json
-{
-  "token": "SYS-A1B2C3D4E5F6",
-  "driverId": "drv_001",
-  "driverName": "Juan dela Cruz"
-}
-```
-
-**Response (200):** `{ "success": true, "message": "Successfully joined the queue" }`
-**Response (400):** Driver already in queue
-**Response (410):** Token expired or already used
+Token issuance uses cryptographic random bytes and a 48-hour expiry. Verification is read-only; admission consumes the token. These details are supported by [the QR route](../backend/src/routes/qrRoute.js), [controller](../backend/src/controllers/qrController.js), and [QR regression tests](../backend/tests/unit/qrAndErrors.test.js). Recheck them when changing the route contract.
 
 ---
 
@@ -414,26 +391,17 @@ io.on("connection", (socket) => {
 
 ---
 
-## Deployment Notes
+## Historical deployment examples — not revalidated
 
 | Concern | How it's handled |
 | ------- | --------------- |
 | CORS | `ALLOWED_ORIGINS` env var (comma-separated list); no wildcards |
 | SAP SSL | `rejectUnauthorized: true` always enforced — no toggle |
-| Firebase credentials | `FIREBASE_CONFIG_JSON` env var (Railway) or `service-account.json` |
-| Rate limiting | `globalLimiter` (100/15min), `authLimiter` (15/15min), `qrLimiter` (30/1min) |
+| Firebase credentials | See current backend Firebase configuration and deployment environment |
+| Rate limiting | See `backend/src/config/runtime.js` and `backend/src/server.js`; older values in this guide are obsolete |
 | Body size limits | `express.json({ limit: "10kb" })` |
 | Graceful shutdown | SIGTERM/SIGINT handlers close server + Socket.IO cleanly |
 
-**Production URL:** `https://sysu-web-production.up.railway.app`
+## Security and deployment references
 
----
-
-## Security Notes
-
-- **Helmet middleware** applies `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, HSTS, and other standard security headers
-- **Role values** are validated against `['admin', 'fleet_manager', 'pending', 'super_admin']` in `updateUserRole` — arbitrary strings are rejected with `400`
-- **Firebase token verification** protects: `/api/auth/*`, `/api/users/*`
-- **QR routes** (`/api/qr/*`) are **intentionally open** — drivers self-authenticate by possessing a valid single-use token
-- **Socket.IO** requires a valid Firebase ID token on handshake; drivers can only emit `driver_moving` for their own `driverId`
-- See [`SECURITY.md`](https://github.com/your-org/sysu-web/blob/main/SECURITY.md) for full vulnerability disclosure and remediation status
+This section was not comprehensively reconciled. Consult [SECURITY.md](../SECURITY.md), the actual route/middleware source, [runtime configuration](../backend/src/config/runtime.js), and deployment-specific evidence. This guide makes no claim about current deployed settings or advisory status.

@@ -6,7 +6,8 @@ const {createRequire} = require('node:module');
 const express = require('express');
 const serverPath = require.resolve('../../src/server.js');
 const source = fs.readFileSync(serverPath, 'utf8');
-const corsSource = source.slice(source.indexOf('const allowedOrigins ='), source.indexOf('app.use(express.json'));
+const corsRegistration = 'app.use(require("./middleware/corsPolicy")(allowedOrigins));';
+const corsSource = source.slice(source.indexOf('const allowedOrigins ='), source.indexOf(corsRegistration) + corsRegistration.length);
 async function request(origin, method = 'GET') {
   const app = express();
   vm.runInNewContext(corsSource, {app, runtimeConfig: {allowedOrigins: ['https://staging.example.invalid']}, require: createRequire(serverPath)});

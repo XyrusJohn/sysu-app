@@ -28,14 +28,20 @@ export function acceptLocationUpdate(previous, data, {source = 'socket', kind = 
     if ((data.lat != null || data.lng != null) && !hasCoords) return null;
     if (!hasCoords && !validLocation(previous?.lat, previous?.lng)) return null;
     const lastSeen = kind === 'location' && hasCoords ? time : (previous?.lastSeen || locationTime(data.locationTimestamp));
-    let status = data.status || (kind === 'location' && source === 'socket' ? 'online' : previous?.status) || 'online';
+    const rawStatus = data.status || (kind === 'location' && source === 'socket' ? 'online' : previous?.status) || 'online';
+    let status = rawStatus;
     if (!['online', 'in_transit', 'returning_to_base', 'stopped', 'offline', 'offline_in_transit', 'pending', 'stale'].includes(status)) return null;
+    let tripStatus = Object.hasOwn(data, 'tripStatus') ? data.tripStatus : (previous?.tripStatus ?? null);
+    if (!Object.hasOwn(data, 'tripStatus') && kind === 'status') {
+        if (rawStatus === 'in_transit' || rawStatus === 'offline_in_transit') tripStatus = 'in_transit';
+        else if (rawStatus === 'online' || rawStatus === 'returning_to_base') tripStatus = null;
+    }
     if (status === 'in_transit') status = 'online';
     if (status === 'offline_in_transit') status = 'offline';
     if (status === 'online' && previous?.status === 'returning_to_base') status = 'returning_to_base';
     if (source === 'firestore' && status === 'online') status = 'pending';
     if (status === 'online' && (!lastSeen || now - lastSeen > GPS_STALE_MS)) status = 'stale';
     return {...previous, ...data, lat: hasCoords ? data.lat : previous.lat, lng: hasCoords ? data.lng : previous.lng,
-        name: data.name || previous?.name || 'Driver', status, timestamp: time, lastSeen, source,
+        name: data.name || previous?.name || 'Driver', tripStatus, status, timestamp: time, lastSeen, source,
         sapDocId: Object.hasOwn(data, 'sapDocId') ? data.sapDocId : (data.shipmentId ?? previous?.sapDocId ?? null)};
 }

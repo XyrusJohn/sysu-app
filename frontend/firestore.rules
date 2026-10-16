@@ -50,15 +50,20 @@ service cloud.firestore {
       return data.lat is number && data.lat >= -90 && data.lat <= 90
         && data.lng is number && data.lng >= -180 && data.lng <= 180;
     }
+    function freshCapture(value) {
+      return value is timestamp
+        && value >= request.time - duration.value(15, 's')
+        && value <= request.time + duration.value(5, 's');
+    }
     function ownedLocation(data) {
       let shipment = data.get('sapDocId', null);
       return data.keys().hasOnly(['driverId', 'name', 'lat', 'lng', 'status', 'sapDocId', 'updatedAt'])
         && data.driverId == request.auth.uid && coordinates(data)
         && data.name is string && data.name.size() <= 100
-        && data.status in ['online', 'stopped'] && data.updatedAt == request.time
+        && data.status in ['online', 'stopped'] && freshCapture(data.updatedAt)
         && (shipment == null || (shipment is string && shipment.size() > 0 && shipment.size() <= 128
           && get(/databases/$(database)/documents/sap_assignments/$(shipment)).data.driverId == request.auth.uid
-          && get(/databases/$(database)/documents/sap_assignments/$(shipment)).data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']));
+          && get(/databases/$(database)/documents/sap_assignments/$(shipment)).data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base']));
     }
 
     // ─── User Profiles ───────────────────────────────────────────────────────
@@ -140,22 +145,18 @@ service cloud.firestore {
       allow delete: if driverUser() && request.auth.uid == driverId;
     }
 
-    match /driver_locations/{driverId} {
-      allow read: if staff() || (driverUser() && request.auth.uid == driverId);
-      allow create, update: if driverUser() && request.auth.uid == driverId && ownedLocation(request.resource.data);
-      allow delete: if driverUser() && request.auth.uid == driverId;
-    }
-
-    match /driver_locations/{driverId} {
-      allow read: if staff() || (driverUser() && request.auth.uid == driverId);
-      allow create, update: if driverUser() && request.auth.uid == driverId && ownedLocation(request.resource.data);
-      allow delete: if driverUser() && request.auth.uid == driverId;
-    }
-
     match /sap_assignments/{shipmentId} {
       allow read: if staff() || ownsDriver();
       allow create: if false; // Backend Admin SDK only
       allow delete: if false; // Backend Admin SDK only
+      allow update: if ownsDriver()
+        && resource.data.tripStatus == 'assigned' && request.resource.data.tripStatus == 'loading'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tripStatus', 'loadingStartedAt', 'updatedAt'])
+        && freshCapture(request.resource.data.loadingStartedAt);
+      allow update: if ownsDriver()
+        && resource.data.tripStatus == 'loading' && request.resource.data.tripStatus == 'fully_loaded'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tripStatus', 'fullyLoadedAt', 'updatedAt'])
+        && freshCapture(request.resource.data.fullyLoadedAt);
       allow update: if ownsDriver()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tripStatus', 'updatedAt'])
         && ((resource.data.tripStatus == 'assigned' && request.resource.data.tripStatus == 'loading')
@@ -163,28 +164,21 @@ service cloud.firestore {
           || (resource.data.tripStatus in ['loaded', 'fully_loaded'] && request.resource.data.tripStatus == 'in_transit')
           || (resource.data.tripStatus == 'in_transit' && request.resource.data.tripStatus == 'completed'));
       allow update: if ownsDriver()
-        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']
+        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base']
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLocation'])
         && request.resource.data.lastLocation.keys().hasOnly(['lat', 'lng', 'at'])
         && coordinates(request.resource.data.lastLocation)
-        && request.resource.data.lastLocation.at == request.time;
-      allow update: if ownsDriver()
-        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLocation'])
-        && request.resource.data.lastLocation.keys().hasOnly(['lat', 'lng', 'at'])
-        && coordinates(request.resource.data.lastLocation)
-        && request.resource.data.lastLocation.at == request.time;
-      allow update: if ownsDriver()
-        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit']
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLocation'])
-        && request.resource.data.lastLocation.keys().hasOnly(['lat', 'lng', 'at'])
-        && coordinates(request.resource.data.lastLocation)
-        && request.resource.data.lastLocation.at == request.time;
+        && freshCapture(request.resource.data.lastLocation.at);
 
       match /pod_images/{obdNumber} {
         allow read: if staff() || (active()
           && get(/databases/$(database)/documents/sap_assignments/$(shipmentId)).data.driverId == request.auth.uid);
         // Mobile upload schema and Storage contract need separate positive tests.
+        allow write: if false;
+      }
+      match /pod_groups/{groupPodId} {
+        allow read: if staff() || (active()
+          && get(/databases/$(database)/documents/sap_assignments/$(shipmentId)).data.driverId == request.auth.uid);
         allow write: if false;
       }
     }
@@ -194,6 +188,11 @@ service cloud.firestore {
       allow read: if staff() || ownsDriver();
       allow write: if false;
       match /pod_images/{obdNumber} {
+        allow read: if staff() || (active()
+          && get(/databases/$(database)/documents/sap_assignment_history/$(historyId)).data.driverId == request.auth.uid);
+        allow write: if false;
+      }
+      match /pod_groups/{groupPodId} {
         allow read: if staff() || (active()
           && get(/databases/$(database)/documents/sap_assignment_history/$(historyId)).data.driverId == request.auth.uid);
         allow write: if false;

@@ -10,6 +10,7 @@ const {authorize} = require("../middleware/authorize.js");
 router.get("/generate", qrController.generateToken);
 router.get("/verify", qrController.verifyToken);
 router.get('/queue-display', qrController.getPublicQueue);
+router.get('/queue-cards', protectRoute, authorize(['admin', 'super_admin', 'qr_generator']), qrController.getQueueCards);
 router.post("/scan", protectRoute, authorize(["driver"]), qrController.scanToken);
 router.patch("/queue-status", protectRoute, authorize(["admin", "super_admin"]), qrController.updateQueueStatus);
 

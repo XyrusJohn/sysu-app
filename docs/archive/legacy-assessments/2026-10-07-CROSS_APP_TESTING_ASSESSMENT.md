@@ -1,3 +1,7 @@
+# Historical snapshot — do not use as current test or release status
+
+This assessment is retained for audit history. It was superseded by the current [beta checklist](../../BETA_CHECKLIST.md) and [fix tracker](../../FIX_TRACKER.md); verify every claim against current code and test evidence.
+
 # SYSU-App & Cross-App Integration Testing & Technical Assessment
 > Date: 2026-10-07 | Branch: `feature/admin-module-enhancements`
 > Assessment Focus: Cross-app contract (`sysu-go` <-> `sysu-app`), test coverage, backend controller reliability, runtime errors & bugs.

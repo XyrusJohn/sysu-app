@@ -1,3 +1,7 @@
+# Historical snapshot — do not use as current release status
+
+This readiness backlog is retained for audit history. It was superseded by the current [beta checklist](../../BETA_CHECKLIST.md) and [fix tracker](../../FIX_TRACKER.md); verify every claim against current code and test evidence.
+
 # SYSU-App & Ecosystem — Master Production & Readiness Backlog
 > Huling Na-update: 2026-10-07 | Branch: `feature/admin-module-enhancements`
 > Kasama ang: `sysu-app` (Web + Backend) at Cross-App Integration sa `sysu-go` (Android)
@@ -21,30 +25,30 @@
 ## 🔴 CRITICAL BLOCKERS (Unahin Bago ang Release / Pilot)
 
 ### 1. Crash Bug sa `decideCancelAssignment` (`ReferenceError`)
-- **File:** [`backend/src/controllers/sapAssignmentController.js`](file:///C:/Users/xyver/sysu/sysu-app/backend/src/controllers/sapAssignmentController.js#L445)
+- **File:** [`backend/src/controllers/sapAssignmentController.js`](../../../backend/src/controllers/sapAssignmentController.js#L445)
 - **Problema:** Typo `remainingHShipments` sa halip na `remainingShipments`.
 - **Epekto:** Mag-500 server crash ang backend kapag inaprubahan ng admin ang shipment cancellation.
 - **Fix:** Palitan ng `remainingShipments`.
 
 ### 2. `pod_updated` Socket Event Hindi Pinapakinggan ng Dashboard
-- **Files:** [`frontend/src/pages/dashboard.js`](file:///C:/Users/xyver/sysu/sysu-app/frontend/src/pages/dashboard.js), [`backend/src/server.js`](file:///C:/Users/xyver/sysu/sysu-app/backend/src/server.js#L424)
+- **Files:** [`frontend/src/pages/dashboard.js`](../../../frontend/src/pages/dashboard.js), [`backend/src/server.js`](../../../backend/src/server.js#L424)
 - **Problema:** Nag-e-emit ang `sysu-go` ng `pod_updated`, ibinabato ng backend sa socket, pero walang `socket.on("pod_updated")` ang web dashboard.
 - **Epekto:** Kailangan pang i-refresh ng dispatcher ang page para makita ang bagong gawang POD.
 - **Fix:** Maglagay ng listener sa `dashboard.js` para mag-trigger ng instant UI update sa shipment row.
 
 ### 3. Missing `npm test` Script sa Frontend
-- **File:** [`frontend/package.json`](file:///C:/Users/xyver/sysu/sysu-app/frontend/package.json)
+- **File:** [`frontend/package.json`](../../../frontend/package.json)
 - **Problema:** May 5 test files (`dashboard.test.js`, `PodPreview.test.js`, atbp.) pero walang `"test"` script sa `package.json`.
 - **Epekto:** Walang automated testing sa frontend; bulag ang CI/CD sa frontend regressions.
 - **Fix:** I-setup ang test runner (Vitest/Jest) sa `frontend/package.json` at i-verify ang test suites.
 
 ### 4. 80 Debug `console.log` Statements sa `dashboard.js`
-- **File:** [`frontend/src/pages/dashboard.js`](file:///C:/Users/xyver/sysu/sysu-app/frontend/src/pages/dashboard.js)
+- **File:** [`frontend/src/pages/dashboard.js`](../../../frontend/src/pages/dashboard.js)
 - **Problema:** Nagkalat ang debug telemetry sa production build.
 - **Fix:** Alisin o i-wrap sa `if (import.meta.env.DEV)`.
 
 ### 5. Content Security Policy (CSP) Naka-disable
-- **File:** [`backend/src/server.js`](file:///C:/Users/xyver/sysu/sysu-app/backend/src/server.js#L50)
+- **File:** [`backend/src/server.js`](../../../backend/src/server.js#L50)
 - **Problema:** `helmet({ contentSecurityPolicy: false })`.
 - **Fix:** I-configure ang whitelist ng CSP directives (Firebase, OSM, Socket.IO, fonts).
 
@@ -96,6 +100,6 @@ Hakbang 6 ➔ Fix #6: Magdagdag ng controller tests sa backend (~1 hr)
 ---
 
 ## 🔗 Kaugnay na mga Dokumento
-- [`sysu-go/TODO_BUGS.md`](file:///C:/Users/xyver/sysu/sysu-go/TODO_BUGS.md) — Bug checklist para sa Android app
-- [`sysu-go/SYSU_GO_ASSESSMENT.md`](file:///C:/Users/xyver/sysu/sysu-go/SYSU_GO_ASSESSMENT.md) — Technical audit ng Android app
-- [`CROSS_APP_TESTING_ASSESSMENT.md`](file:///C:/Users/xyver/sysu/sysu-app/CROSS_APP_TESTING_ASSESSMENT.md) — Buong cross-app testing report
+- [Archived sysu-go bug backlog](../../../../sysu-go/docs/archive/legacy-assessments/2026-10-07-TODO_BUGS.md)
+- [Archived sysu-go assessment](../../../../sysu-go/docs/archive/legacy-assessments/2026-10-07-SYSU_GO_ASSESSMENT.md)
+- [Archived cross-app assessment](2026-10-07-CROSS_APP_TESTING_ASSESSMENT.md)

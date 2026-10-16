@@ -28,9 +28,12 @@ require.cache[ctrlPath] = { id: ctrlPath, filename: ctrlPath, loaded: true, expo
   'peekEarliest','assignDriver','requestOverride','decideOverride','revokeOverride',
   'requestCancelAssignment','decideCancelAssignment','revokeCancelAssignment','getActiveDriverLocations',
 ].map(name => [name, handler])) };
+const sapControllerPath = require.resolve('../../src/controller/sapController');
+require.cache[sapControllerPath] = {id:sapControllerPath,filename:sapControllerPath,loaded:true,exports:{getSapData:handler,getAssignedDispatchDetails:handler}};
 const app = express();
 app.use(express.json());
 app.use('/api/sap', require('../../src/routes/sapAssignmentRoute'));
+app.use('/api/sap', require('../../src/routes/sapRoute'));
 app.use('/api/drivers', require('../../src/routes/driverRoute'));
 app.use('/api/qr', require('../../src/routes/qrRoute'));
 let server, url;
@@ -42,8 +45,8 @@ test.before(async () => {
 test.after(async () => { await new Promise(resolve => server.close(resolve)); });
 for (const actor of ['driver', 'pending', 'inactive']) {
   test(`R09: ${actor} cannot access dispatch operations`, async () => {
-    for (const [method, route] of [['GET','peek'], ['POST','assign'], ['GET','locations'], ['POST','overrides/request'], ['POST','cancel/request']]) {
-      const response = await fetch(`${url}/api/sap/${route}`, { method, headers: { Authorization: `Bearer ${actor}` } });
+    for (const [method, route, body] of [['GET','peek'], ['POST','assign'], ['GET','locations'], ['POST','overrides/request'], ['POST','cancel/request'], ['GET','shipments'], ['POST','dispatch-details',JSON.stringify({dispatchKeys:['dispatch-a']})]]) {
+      const response = await fetch(`${url}/api/sap/${route}`, { method, headers: { Authorization: `Bearer ${actor}`, ...(body ? {'Content-Type':'application/json'} : {}) }, body });
       assert.equal(response.status, 403, `${actor}: ${method} ${route}`);
     }
   });
@@ -51,6 +54,8 @@ for (const actor of ['driver', 'pending', 'inactive']) {
 test('R09: active staff can access the dispatch boundary', async () => {
   const response = await fetch(`${url}/api/sap/peek`, { headers: { Authorization: 'Bearer staff' } });
   assert.equal(response.status, 200);
+  const details = await fetch(`${url}/api/sap/dispatch-details`, {method:'POST',headers:{Authorization:'Bearer staff','Content-Type':'application/json'},body:JSON.stringify({dispatchKeys:['dispatch-a']})});
+  assert.equal(details.status,200);
 });
 test('R02: driver document endpoint requires authentication', async () => {
   const response = await fetch(`${url}/api/drivers/driver`);

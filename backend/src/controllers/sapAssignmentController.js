@@ -25,11 +25,18 @@ const documentIdSchema = z.string().min(1).max(128).refine(value => value === va
     && [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 'Invalid document identifier');
 const reasonSchema = z.string().trim().min(1).max(2000);
 const quantitySchema = z.number().finite().positive().max(Number.MAX_SAFE_INTEGER);
+const nonnegativeSapNumberSchema = z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER).optional();
 
 const lineItemSchema = z.object({
     obdNumber: documentIdSchema,
     quantity: z.union([quantitySchema, z.string().max(32).regex(/^\d+(\.\d+)?$/).transform(Number).pipe(quantitySchema)]),
     customerName: z.string().trim().min(1).max(500),
+    shipTo: z.string().trim().max(128).optional(),
+    deliveryAddress: z.string().trim().max(1000).optional(),
+    volume: nonnegativeSapNumberSchema,
+    weight: nonnegativeSapNumberSchema,
+    latitude: z.number().finite().min(-90).max(90).optional(),
+    longitude: z.number().finite().min(-180).max(180).optional(),
     amount: z.undefined().optional(), // Explicitly forbid amount
 });
 
@@ -152,22 +159,28 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
 
         const queue = await loadQueueForType(truckType, tx);
 
+        const assignableQueueStatuses = ['waiting', 'available', 'assigned', 'loading', 'loaded', 'fully_loaded'];
         let requested = queue.find((d) => d.id === requestedDriverId);
-        if (!requested) {
-            requested = queue.find((d) => (d.driverId || "") === requestedDriverId);
-        }
         if (!requested) {
             const directQueueDoc = await tx.get(DB().collection(QUEUE_COLLECTION).doc(requestedDriverId));
             if (directQueueDoc.exists) {
                 requested = { id: directQueueDoc.id, ...directQueueDoc.data() };
-            } else {
-                const uidQueueSnap = await tx.get(
-                    DB().collection(QUEUE_COLLECTION).where("driverId", "==", requestedDriverId).limit(1)
-                );
-                if (!uidQueueSnap.empty) {
-                    requested = { id: uidQueueSnap.docs[0].id, ...uidQueueSnap.docs[0].data() };
-                }
             }
+        }
+        if (!requested) {
+            // Older clients send the Auth UID instead of the QR queue document ID.
+            // Resolve that UID only when exactly one eligible session exists.
+            const candidates = queue.filter((d) => d.driverId === requestedDriverId
+                && assignableQueueStatuses.includes(d.status)
+                && d.registrationComplete !== false);
+            if (candidates.length > 1) {
+                return {
+                    status: 409,
+                    code: 'DRIVER_SESSION_AMBIGUOUS',
+                    message: 'Multiple active queue sessions exist for this driver. Select a specific QR queue entry.',
+                };
+            }
+            requested = candidates[0];
         }
         if (!requested) {
             return {
@@ -178,7 +191,8 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             };
         }
 
-        if (!['waiting', 'available', 'assigned', 'loading', 'loaded', 'fully_loaded'].includes(requested.status)
+        if (!assignableQueueStatuses.includes(requested.status)
+            || requested.registrationComplete === false
             || String(requested.truckType || '').trim().toLowerCase() !== truckType.trim().toLowerCase()) {
             return {status: 409, code: 'DRIVER_INELIGIBLE', message: 'Queue entry is inactive or truck type does not match.'};
         }
@@ -186,18 +200,24 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
         const existingAssignmentsSnap = await tx.get(
             DB().collection(SAP_COLLECTION).where("driverId", "==", driverIdForLookup),
         );
-        const inTransitLoads = existingAssignmentsSnap.docs
-            .map((d) => d.data())
-            .filter((a) => (a.tripStatus || "").toLowerCase() === "in_transit");
+        const driverAssignments = existingAssignmentsSnap.docs.map((d) => ({id: d.id, ...d.data()}));
+        const isCurrentSession = (a) =>
+            a.queueId === requested.id || (!a.queueId && requested.isAssigned === true);
+        const preTransitStatuses = new Set(["assigned", "loading", "loaded", "fully_loaded"]);
+        const activeLoads = driverAssignments.filter((a) => {
+            const status = (a.tripStatus || "").toLowerCase().trim();
+            return ["in_transit", "returning_to_base"].includes(status)
+                || (!isCurrentSession(a) && preTransitStatuses.has(status));
+        });
 
-        if (inTransitLoads.length > 0 || requested.isFull === true) {
-            const activeDispatchKeys = inTransitLoads.map((a) => a.dispatchKey || a.id || null);
+        if (activeLoads.length > 0 || requested.isFull === true) {
+            const activeDispatchKeys = activeLoads.map((a) => a.dispatchKey || a.id || null);
             return {
                 status: 409,
                 code: "DRIVER_ON_ACTIVE_LOAD",
                 message: requested.isFull === true
                     ? "Requested truck is already fully loaded."
-                    : "Requested driver is already in transit (on the road). They cannot take another dispatch until the trip completes.",
+                    : "Requested driver is already in transit or returning to base and cannot take another dispatch.",
                 meta: {
                     requestedDriverId,
                     activeDispatchKeys,
@@ -205,11 +225,39 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             };
         }
 
-        const hasExistingPreTransit = existingAssignmentsSnap.docs
-            .map((d) => d.data())
-            .some((a) => ["assigned", "loading", "loaded", "fully_loaded"].includes((a.tripStatus || "").toLowerCase()));
+        // Assignment eligibility belongs to a QR queue session, not the
+        // driver's lifetime history. This lets a newly scanned queue entry
+        // use FIFO after an older trip completed without reopening that old
+        // completed session for another assignment.
+        const currentSessionAssignments = driverAssignments.filter(isCurrentSession);
+        const hasAssignableAssignment = currentSessionAssignments.some((a) =>
+            preTransitStatuses.has((a.tripStatus || "").toLowerCase().trim())
+        );
+        const completedStatuses = currentSessionAssignments.map((a) => (a.tripStatus || "").toLowerCase().trim());
+        const sessionIsCompleted = completedStatuses.length > 0
+            && completedStatuses.every((status) => ["completed", "complete"].includes(status));
 
-        if (!hasExistingPreTransit) {
+        if (sessionIsCompleted) {
+            return {
+                status: 409,
+                code: "DRIVER_SESSION_COMPLETED",
+                message: "This driver's queue session is complete and cannot receive another dispatch.",
+                meta: {requestedDriverId, queueId: requested.id},
+            };
+        }
+
+        if (currentSessionAssignments.length > 0 && !hasAssignableAssignment) {
+            return {
+                status: 409,
+                code: "DRIVER_SESSION_NOT_ASSIGNABLE",
+                message: "This driver's queue session already has a shipment that is no longer awaiting dispatch.",
+                meta: {requestedDriverId, queueId: requested.id},
+            };
+        }
+
+        const hasExistingAssignment = hasAssignableAssignment;
+
+        if (!hasExistingAssignment) {
             const earliestCheck = validateEarliest(queue, truckType, requestedDriverId);
             if (earliestCheck && !overrideTokenId) {
                 return {
@@ -351,7 +399,7 @@ exports.revokeCancelAssignment = asyncWrapper(async (req, res) => {
 exports.getActiveDriverLocations = asyncWrapper(async (req, res) => {
     const snap = await DB()
         .collection(SAP_COLLECTION)
-        .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit"])
+        .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit", "returning_to_base"])
         .get();
 
     const results = [];

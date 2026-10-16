@@ -34,6 +34,19 @@ test('SAP contract keeps allowed placeholders, six normalized truck types and al
   assert.deepEqual(rows(result).map(row=>row.OBDNumber),accepted.map(row=>row.OBDNumber));
   assert.ok(rows(result).every(row=>row.SAPDispatchNumber==='dispatch-a'));
 });
+test('assigned dispatch projection exposes only scoped OBD fields while shipment feed remains unassigned-only',async()=>{
+  const assigned={...base,Driver:'Synthetic Driver',Delivery:'IN TRANSIT',Route:'Route A',PlanningDate:'2026-10-17',ActualDelDate:'2026-10-18',Amount:'123.45',Volume:'2.5',Weight:'12',Latitude:0,Longitude:'121.5',InternalNote:'not projected'};
+  const handler=load(async()=>({data:{d:{results:[assigned,base]}}}));
+  const feed=await invoke(handler);
+  assert.equal(rows(feed).length,1);
+  const service=require('../../src/services/sapSource');
+  const details=await service.readDispatchDetails(['dispatch-a','missing']);
+  assert.equal(details['dispatch-a'].length,2);
+  assert.equal(details['dispatch-a'][0].Amount,'123.45');
+  assert.equal(details['dispatch-a'][0].Latitude,0);
+  assert.equal(details['dispatch-a'][0].InternalNote,undefined);
+  assert.deepEqual(details.missing,[]);
+});
 test('temporary review dispatch is returned even when SAP has a driver and missing truck type',async()=>{
   const review={...base,SAPDispatchNumber:'0010139586',TruckType:'',Driver:'F. PAANO',PlateNumber:'NLC 1406',ShipmentStart:'PT11H41M00S'};
   const result=await invoke(load(async()=>({data:{d:{results:[review]}}})));

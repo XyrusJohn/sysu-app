@@ -5,11 +5,31 @@ describe('Real Leaflet tracking markers', () => {
     let map;
     beforeAll(() => {
         document.body.innerHTML = '<div id="map"></div>';
+        const container = document.getElementById('map');
+        Object.defineProperties(container, {
+            clientWidth: {configurable: true, value: 1200},
+            clientHeight: {configurable: true, value: 700},
+        });
+        container.getBoundingClientRect = () => ({width: 1200, height: 700, left: 0, top: 0, right: 1200, bottom: 700});
         map = initLeafletMap();
     });
     beforeEach(() => clearMarkers());
     afterAll(() => { clearMarkers(); map.remove(); });
     const fix = {driverId: 'synthetic-driver', lat: 14.5, lng: 121, status: 'online', name: 'Synthetic Driver'};
+
+    it('keeps zooming and panning within the Philippines viewing area', () => {
+        expect(map.options.zoomSnap).toBe(0);
+        expect(map.getMinZoom()).toBeGreaterThanOrEqual(5);
+        expect(map.options.maxBounds.getSouthWest().lat).toBe(4.3);
+        expect(map.options.maxBounds.getSouthWest().lng).toBe(115.5);
+        expect(map.options.maxBounds.getNorthEast().lat).toBe(21.5);
+        expect(map.options.maxBounds.getNorthEast().lng).toBe(127.5);
+        expect(map.options.maxBoundsViscosity).toBe(1);
+        map.setZoom(0);
+        expect(map.getZoom()).toBe(map.getMinZoom());
+        expect(map.getBounds().contains(map.options.maxBounds)).toBe(true);
+        map.setZoom(11);
+    });
 
     it('moves an existing marker without rebuilding its icon', () => {
         updateMarker(fix);
@@ -30,6 +50,20 @@ describe('Real Leaflet tracking markers', () => {
         element.innerHTML = markers[fix.driverId].getPopup().getContent();
         expect(element.querySelector('img,script')).toBeNull();
         expect(element.textContent).toContain('<script>x</script>');
+    });
+    it('shows a generic map icon label only while the trip is in transit', () => {
+        updateMarker({...fix, tripStatus: 'loading'});
+        const marker = markers[fix.driverId];
+        expect(marker.options.icon.options.html).toContain('Synthetic Driver');
+
+        updateMarker({...fix, tripStatus: 'in_transit'});
+        expect(markers[fix.driverId]).toBe(marker);
+        expect(marker.options.icon.options.html).toContain('>Driver</div>');
+        expect(marker.options.icon.options.html).not.toContain('Synthetic Driver');
+        expect(marker.getPopup().getContent()).toContain('Synthetic Driver');
+
+        updateMarker({...fix, tripStatus: 'completed'});
+        expect(marker.options.icon.options.html).toContain('Synthetic Driver');
     });
     it('shows returning state and never seeds an invented location', () => {
         expect(seedMarker({driverId: fix.driverId})).toBe(false);

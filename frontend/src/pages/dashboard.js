@@ -18,7 +18,7 @@ import { acceptLocationUpdate, GPS_STALE_MS, savedLocationStatus } from "../comp
 import { EVENTS, socket, getDriverSocket, connectDriverSocket } from "../api/socket.js";
 import { AuthService } from "../api/authService.js";
 import { SAPService } from "../api/sapService.js";
-import { mergeAssignmentGroups, isDeliveredAssignment, assignmentDisplayStatus } from './shipmentDisplay.js';
+import { mergeAssignmentGroups, isDeliveredAssignment, assignmentDisplayStatus, obdDeliveryStatus, queueDriverDisplayName, groupObdRowsByShipTo, driverAssignmentFields } from './shipmentDisplay.js';
 import { SAPAssignmentService } from "../api/sapAssignmentService.js";
 import { API_CONFIG } from "../api/config.js";
 import { SecurityGuardService } from "../api/securityGuardService.js";
@@ -48,6 +48,11 @@ const escapeHtml = (str) => {
     div.textContent = str;
     return div.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 };
+const formatCoordinate = value => {
+    if (value === null || value === undefined || value === '') return '—';
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(6) : '—';
+};
 
 export class Dashboard {
     constructor() {
@@ -67,6 +72,7 @@ export class Dashboard {
             activeView: "overview",
             sapShipments: [],
             sapAssignments: {},
+            sapDispatchDetails: {},
             sapSortKey: "SAPDispatchNumber",
             sapSortDir: 1,
             user: null,
@@ -74,6 +80,7 @@ export class Dashboard {
             incidents: [],
             liveTracking: {},
             liveScans: {},      // driverId → {lat, lng, status, name, sapDocId, lastSeen, shipmentNumber, truckPlate}
+            liveScansLoading: true,
             sapDocCache: {},    // sapDocId → {shipmentNumber, truckPlate, tripStatus}
             sapFilter: "all",
             sapGroupedByDispatch: {},
@@ -103,6 +110,9 @@ export class Dashboard {
         };
 
         this.renderTimer = null;
+        this._sapDispatchDetailsPending = new Set();
+        this._sapDispatchDetailsFetchedAt = new Map();
+        this._sapDispatchDetailsRetryAfter = new Map();
         this._podPreviewEscapeListener = null;
         this._globalEscapeListener = null;
         this._bindMethods();
@@ -194,6 +204,8 @@ export class Dashboard {
                 this._rebuildShipmentGroups();
                 assignmentReady();
                 this._renderAll();
+                this._scheduleLiveScansRender();
+                this._refreshOpenDispatchDetail();
             });
         } catch (err) {
             assignmentReady(); // unblock even on failure
@@ -260,12 +272,14 @@ export class Dashboard {
                                 (d.updatedAt ? new Date(d.updatedAt) : new Date(0));
                     return getTs(a) - getTs(b);
                 });
+            this._scheduleLiveScansRender();
             this._renderAll();
         });
 
         this._setupSocket();
         this._setupDriverLocationSocket();
         this._setupPodSocket();
+        this._renderLiveScansTable();
         this._seedLastKnownLocations();
     }
 
@@ -300,6 +314,10 @@ export class Dashboard {
                     status: savedLocationStatus(loc.tripStatus)}, 'location', 'firestore');
             }
         } catch (_) { console.warn('Saved driver locations unavailable'); }
+        finally {
+            this.state.liveScansLoading = false;
+            this._scheduleLiveScansRender();
+        }
     }
 
     async _syncSAP(skipRender = false) {
@@ -1220,6 +1238,8 @@ export class Dashboard {
         this._liveScansRenderTimer = setTimeout(() => {
             this._liveScansRenderTimer = null;
             this._renderLiveScansTable();
+            this._renderFleetOperations();
+            this._renderFleetTree();
         }, 150);
     }
 
@@ -1234,6 +1254,29 @@ export class Dashboard {
         if (!container) return;
 
         const drivers = Object.values(this.state.liveScans);
+
+        if (this.state.liveScansLoading) {
+            const skeletonRows = Array.from({length: 3}, () => `
+                <tr aria-hidden="true" class="border-b border-db-border/50 animate-pulse">
+                    ${Array.from({length: 5}, () => '<td class="px-4 py-3"><div class="h-3 w-24 rounded bg-db-border/60"></div></td>').join("")}
+                </tr>`).join("");
+            container.innerHTML = `
+                <div class="overflow-y-auto h-full" role="status" aria-label="Loading live scans">
+                    <table class="w-full border-collapse">
+                        <thead class="sticky top-0 z-10 bg-db-panel/95 backdrop-blur-sm">
+                            <tr class="text-left border-b border-db-border">
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Shipment No.</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Driver Name</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Plate No.</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Current Lat / Lng</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest text-right">Last Update</th>
+                            </tr>
+                        </thead>
+                        <tbody>${skeletonRows}</tbody>
+                    </table>
+                </div>`;
+            return;
+        }
 
         if (drivers.length === 0) {
             container.innerHTML = `
@@ -1263,13 +1306,25 @@ export class Dashboard {
 
         const esc = escapeHtml;
 
+        const activeTripStatuses = new Set(["assigned", "loading", "loaded", "fully_loaded", "in_transit", "returning_to_base"]);
         const rows = drivers.map((d) => {
             const isOnline = d.status === "online";
-            const shipNo = d.shipmentNumber
-                ? `<span class="font-mono font-bold text-db-text text-[12px]">${esc(d.shipmentNumber)}</span>`
+            const linkedAssignment = Object.entries(this.state.sapAssignments || {})
+                .filter(([, assignment]) => assignment?.driverId === d.driverId && activeTripStatuses.has(assignment.tripStatus))
+                .sort((a, b) => Number(b[1].tripStatus === "in_transit") - Number(a[1].tripStatus === "in_transit"))[0];
+            const queueEntry = this.state.queue.find(entry => entry.driverId === d.driverId);
+            const profile = this.state.drivers.find(entry => entry.id === d.driverId);
+            const usableName = d.name && !["driver", "unknown", "unknown driver"].includes(d.name.trim().toLowerCase());
+            const driverName = usableName
+                ? d.name
+                : linkedAssignment?.[1]?.driverName || queueDriverDisplayName(queueEntry, [profile].filter(Boolean));
+            const shipmentNumber = d.shipmentNumber || linkedAssignment?.[0];
+            const truckPlate = d.truckPlate || linkedAssignment?.[1]?.truckPlate || queueEntry?.plateNumber || profile?.truckPlate;
+            const shipNo = shipmentNumber
+                ? `<span class="font-mono font-bold text-db-text text-[12px]">${esc(shipmentNumber)}</span>`
                 : `<span class="text-db-text3 italic text-[11px]">No shipment</span>`;
-            const plate = d.truckPlate
-                ? `<span class="font-mono text-[11px] text-db-text2">${esc(d.truckPlate)}</span>`
+            const plate = truckPlate
+                ? `<span class="font-mono text-[11px] text-db-text2">${esc(truckPlate)}</span>`
                 : `<span class="text-db-text3 text-[11px]">—"</span>`;
             const latLng = d.lat != null && d.lng != null
                 ? `<span class="font-mono text-[10.5px] text-db-text3">${this._formatCoord(d.lat)}</span>
@@ -1284,7 +1339,7 @@ export class Dashboard {
                 <td class="px-4 py-2.5">
                     <div class="flex items-center gap-1.5">
                         <div class="w-1.5 h-1.5 rounded-full ${isOnline ? "bg-green-500 animate-pulse" : "bg-db-text3"}"></div>
-                        <span class="text-[12px] font-semibold text-db-text">${esc(d.name || "Unknown")}</span>
+                        <span class="text-[12px] font-semibold text-db-text">${esc(driverName)}</span>
                     </div>
                 </td>
                 <td class="px-4 py-2.5">${plate}</td>
@@ -2505,6 +2560,7 @@ export class Dashboard {
         if (this.renderTimer) return;
         this.renderTimer = setTimeout(() => {
             this._renderFleetTree();
+            this._renderFleetOperations();
             this._renderSapTable();
             const view = this.state.activeView;
             if (view === "drivers" || view === "fleet" || view === "") this.renderFleet();
@@ -2517,61 +2573,119 @@ export class Dashboard {
         const tree = document.getElementById(this.config.fleetTreeId);
         if (!tree) return;
 
-        const groups = {};
+        const search = document.getElementById("driverDirectorySearch");
+        if (search && !search.dataset.searchWired) {
+            search.addEventListener("input", () => this._renderFleetTree());
+            search.dataset.searchWired = "true";
+        }
+        if (!tree.dataset.focusWired) {
+            tree.addEventListener("click", (event) => {
+                const button = event.target.closest("[data-focus-driver]");
+                if (button && !button.disabled) this.focusOnTruck(button.dataset.focusDriver);
+            });
+            tree.dataset.focusWired = "true";
+        }
 
-        this.state.drivers.forEach((p) => {
-            const live =
-                this.state.liveTracking[p.id] || this.state.liveTracking[p.phone];
-            const company = p.truckingCompany || p.company;
-            if (!company) return;
+        const term = (search?.value || "").trim().toLowerCase();
+        if (tree.querySelector("details") && !this._fleetSearchActive) {
+            this._fleetExpandedCompanies = new Set([...tree.querySelectorAll("details[open]")].map(group => group.dataset.company));
+        }
+        const expandedCompanies = this._fleetExpandedCompanies || new Set();
+        this._fleetSearchActive = Boolean(term);
+        const groups = Object.create(null);
+        this.state.drivers.forEach((profile) => {
+            const live = this.state.liveTracking[profile.id] || this.state.liveTracking[profile.phone];
+            const company = String(profile.truckingCompany || profile.company || "Other").trim() || "Other";
+            const name = String(profile.driverName || profile.name || "Unnamed driver");
+            if (term && !`${name} ${company}`.toLowerCase().includes(term)) return;
             if (!groups[company]) groups[company] = [];
-            groups[company].push({ ...p, ...(live || {}) });
+            groups[company].push({...profile, ...(live || {}), name, company, live});
         });
 
-        tree.innerHTML = Object.keys(groups)
-            .map((company) => {
-                const drivers = groups[company];
-                const sortAsc = true;
-                drivers.sort((a, b) => {
-                    const ta = a.entryTime?.toDate?.()?.getTime() || 0;
-                    const tb = b.entryTime?.toDate?.()?.getTime() || 0;
-                    return sortAsc ? ta - tb : tb - ta;
-                });
-                const displayLimit = 20;
-                const visibleDrivers = drivers.slice(0, displayLimit);
-                const hasMore = drivers.length > displayLimit;
+        const companies = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+        const total = companies.reduce((count, company) => count + groups[company].length, 0);
+        const countLabel = document.getElementById("fleetDirectoryCount");
+        if (countLabel) countLabel.textContent = `${total} ${total === 1 ? "driver" : "drivers"}`;
+        if (!total) {
+            tree.innerHTML = `<p class="px-2 py-3 text-center text-[11px] text-db-text3">${term ? "No drivers match your search." : "No drivers registered yet."}</p>`;
+            return;
+        }
 
+        tree.innerHTML = companies.map((company) => {
+            const drivers = groups[company].sort((a, b) => a.name.localeCompare(b.name));
+            const visibleDrivers = drivers.slice(0, 20);
+            const hasMore = drivers.length > visibleDrivers.length;
+            const rows = visibleDrivers.map((driver) => {
+                const live = driver.live;
+                const trackingStatus = live?.tripStatus === "in_transit" ? "in_transit" : live?.status;
+                const status = {
+                    online: ["Online", "bg-emerald-400", "text-emerald-300"],
+                    in_transit: ["In transit", "bg-emerald-400", "text-emerald-300"],
+                    returning_to_base: ["Returning", "bg-amber-400", "text-amber-300"],
+                    stopped: ["Stopped", "bg-amber-400", "text-amber-300"],
+                    stale: ["Stale", "bg-orange-400", "text-orange-300"],
+                }[trackingStatus] || ["Offline", "bg-db-text3", "text-db-text3"];
+                const id = String(driver.id || driver.driverId || "");
+                const hasLocation = Number.isFinite(live?.lat) && Number.isFinite(live?.lng);
                 return `
-          <div class="mb-2">
-              <div class="flex items-center justify-between px-2 py-1.5 hover:bg-db-item-hover rounded-md cursor-pointer transition-colors group" onclick="this.nextElementSibling.classList.toggle('hidden')">
-                  <div class="flex items-center gap-2 overflow-hidden">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-3.5 h-3.5 shrink-0 opacity-50"><polyline points="9 18 15 12 9 6"/></svg>
-                      <span class="text-[12px] font-medium text-db-text2 group-hover:text-db-text truncate">${escapeHtml(company)}</span>
-                  </div>
-                  <span class="text-[10px] font-bold text-db-text3 bg-db-item-hover px-1.5 rounded">${drivers.length}</span>
-              </div>
-              <div class="pl-5 mt-1">
-                  ${visibleDrivers
-                        .map(
-                            (d) => `
-                      <div class="flex items-center gap-2 py-1 cursor-pointer hover:text-sysu-red transition-colors" onclick="window.dashboard.focusOnTruck('${encodeURIComponent(d.id)}')">
-                          <div class="w-1.5 h-1.5 rounded-full ${d.status === "online" ? "bg-green-500" : "bg-red-500"}"></div>
-                          <span class="text-[11.5px] text-db-text3 truncate">${escapeHtml(d.name)}</span>
-                      </div>
-                  `,
-                        )
-                        .join("")}
-                  ${hasMore ? `<div class="text-[10px] text-db-text3 italic pl-3.5 py-1">+ ${drivers.length - displayLimit} more drivers</div>` : ""}
-              </div>
-          </div>
-      `;
-            })
-            .join("");
+                    <button type="button" data-focus-driver="${escapeHtml(id)}" ${hasLocation ? "" : "disabled"}
+                            aria-label="${escapeHtml(`Focus map on ${driver.name}`)}${hasLocation ? "" : "; no saved location"}"
+                            class="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left transition-colors ${hasLocation ? "cursor-pointer hover:bg-db-item-hover" : "cursor-default opacity-70"}">
+                        <span class="flex min-w-0 items-center gap-2">
+                            <span class="h-1.5 w-1.5 shrink-0 rounded-full ${status[1]}"></span>
+                            <span class="truncate text-[11.5px] text-db-text2">${escapeHtml(driver.name)}</span>
+                        </span>
+                        <span class="shrink-0 text-[9px] font-semibold ${status[2]}">${status[0]}</span>
+                    </button>`;
+            }).join("");
+            return `
+                <details class="group rounded-md" data-company="${escapeHtml(company)}" ${term || expandedCompanies.has(company) ? "open" : ""}>
+                    <summary class="flex items-center justify-between px-2 py-1.5 hover:bg-db-item-hover rounded-md cursor-pointer transition-colors list-none">
+                        <span class="min-w-0 truncate text-[11px] font-medium text-db-text2">${escapeHtml(company)}</span>
+                        <span class="ml-2 shrink-0 text-[10px] font-bold text-db-text3 bg-db-item-hover px-1.5 rounded">${drivers.length}</span>
+                    </summary>
+                    <div class="pl-1 mt-1 space-y-0.5">
+                        ${rows}
+                        ${hasMore ? `<div class="px-2 py-1 text-[10px] text-db-text3 italic">Showing ${visibleDrivers.length} of ${drivers.length}; refine search to find others.</div>` : ""}
+                    </div>
+                </details>`;
+        }).join("");
+    }
+
+    _renderFleetOperations() {
+        const transitEl = document.getElementById("fleetStatTransit");
+        const queueEl = document.getElementById("fleetStatQueue");
+        const returningEl = document.getElementById("fleetStatReturning");
+        if (!transitEl && !queueEl && !returningEl) return;
+
+        const transit = new Set();
+        const returning = new Set();
+        for (const assignment of Object.values(this.state.sapAssignments || {})) {
+            if (!assignment?.driverId) continue;
+            const status = String(assignment.tripStatus || "").toLowerCase();
+            if (status === "in_transit") transit.add(assignment.driverId);
+            if (status === "returning_to_base") returning.add(assignment.driverId);
+        }
+        for (const [key, location] of Object.entries(this.state.liveTracking || {})) {
+            const driverId = location.driverId || key;
+            if (location.tripStatus === "in_transit") transit.add(driverId);
+            if (location.tripStatus === "returning_to_base" || location.status === "returning_to_base") returning.add(driverId);
+        }
+        const queued = new Set((this.state.queue || [])
+            .filter(entry => ["waiting", "available"].includes(String(entry.status || "").toLowerCase())
+                && entry.isAssigned !== true && entry.registrationComplete !== false)
+            .map(entry => entry.driverId || entry.id)
+            .filter(Boolean));
+
+        if (transitEl) transitEl.textContent = String(transit.size);
+        if (queueEl) queueEl.textContent = String(queued.size);
+        if (returningEl) returningEl.textContent = String(returning.size);
     }
 
     focusOnTruck(id) {
-        const d = this.state.liveTracking[id];
-        if (d?.lat && d?.lng) focusOnLocation(d.lat, d.lng);
+        const profile = this.state.drivers.find(driver => driver.id === id);
+        const d = this.state.liveTracking[id] || this.state.liveTracking[profile?.phone];
+        if (Number.isFinite(d?.lat) && Number.isFinite(d?.lng)) focusOnLocation(d.lat, d.lng);
     }
 
     _renderSapTable() {
@@ -2608,7 +2722,8 @@ export class Dashboard {
         // Build grouped list with helper fields
         const groupedList = allKeys.map((key) => {
             const records = groups[key];
-            const rec = records[0]; // representative record
+            const rec = records.find(row => row.Route || row.PlanningDate || row.Planning_Date || row.ActualDelDate)
+                || records[0]; // prefer a row with dispatch-level date and route fields
 
             // â"€â"€ Skip records that are still in planning stage â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             // No SAPDispatchNumber → still planning, don't show
@@ -2818,6 +2933,8 @@ export class Dashboard {
       `;
             })
             .join("");
+
+        this._loadSapDispatchDetails(finalRenderList.map(group => group.key));
 
         // Wire the per-row action dropdown (Cancel / Change). One delegated
         // listener, attached once, so re-renders don't lose it.
@@ -3428,8 +3545,8 @@ export class Dashboard {
                     obdNumber: r.OBDNumber,
                     quantity: qtyStr,
                     quantityNumeric: parseFloat(qtyStr) || 0,
-                    volume: parseFloat(r.Volume) || 0,
                     customerName: r.ShipToPartyName || r.ShipToParty || "",
+                    ...driverAssignmentFields(r),
                     actualDelDate: this._normalizeDelDate(r.ActualDelDate),
                 };
             });
@@ -4216,19 +4333,58 @@ export class Dashboard {
         return groups;
     }
 
+    async _loadSapDispatchDetails(dispatchKeys) {
+        const now = Date.now();
+        const keys = [...new Set(dispatchKeys)].filter(key => this.state.sapAssignments[key]
+            && !this._sapDispatchDetailsPending.has(key)
+            && now - (this._sapDispatchDetailsFetchedAt.get(key) || 0) >= 5 * 60 * 1000
+            && now >= (this._sapDispatchDetailsRetryAfter.get(key) || 0));
+        if (!keys.length) return;
+
+        const batches = [];
+        for (let index = 0; index < keys.length; index += 100) batches.push(keys.slice(index, index + 100));
+        await Promise.all(batches.map(async batch => {
+            batch.forEach(key => this._sapDispatchDetailsPending.add(key));
+            try {
+                const details = await SAPService.fetchDispatchDetails(batch);
+                for (const key of batch) {
+                    this.state.sapDispatchDetails[key] = Array.isArray(details?.[key]) ? details[key] : [];
+                    this._sapDispatchDetailsFetchedAt.set(key, Date.now());
+                    this._sapDispatchDetailsRetryAfter.delete(key);
+                }
+                this._rebuildShipmentGroups();
+                this._renderSapTable();
+            } catch (error) {
+                for (const key of batch) this._sapDispatchDetailsRetryAfter.set(key, Date.now() + 30_000);
+                console.warn('Assigned shipment details unavailable');
+            } finally {
+                batch.forEach(key => this._sapDispatchDetailsPending.delete(key));
+            }
+        }));
+    }
+
     _rebuildShipmentGroups() {
         this.state.sapGroupedByDispatch = mergeAssignmentGroups(
-            this.groupByDispatch(this.state.sapShipments), this.state.sapAssignments,
+            this.groupByDispatch(this.state.sapShipments), this.state.sapAssignments, this.state.sapDispatchDetails,
         );
+    }
+
+    _refreshOpenDispatchDetail() {
+        const modal = document.getElementById('sapDispatchDetail');
+        if (!modal || modal.classList.contains('hidden') || !this._currentDispatchKey) return;
+        if (!this.state.sapGroupedByDispatch[this._currentDispatchKey]?.length) {
+            this.closeSapDispatchModal();
+            return;
+        }
+        this.openSapDispatchDetail(this._currentDispatchKey);
     }
 
     openSapDispatchDetail(dispatchNumber) {
         this._currentDispatchKey = dispatchNumber;
-        this._currentDispatchKey = dispatchNumber;
         const group = this.state.sapGroupedByDispatch[dispatchNumber];
         if (!group || group.length === 0) return;
 
-        const rec = group[0];
+        const rec = group.find(row => row.Route || row.PlanningDate || row.Planning_Date || row.ActualDelDate) || group[0];
         const asgn = this.state.sapAssignments[dispatchNumber];
 
         const set = (id, val) => {
@@ -4251,20 +4407,34 @@ export class Dashboard {
         set("sapDtlShipStart", this._parseSAPTime(rec.ShipmentStart));
         set("sapDtlRemarks", rec.PlanningRemarks || "—");
 
-        // Build OBD line items table
+        // Build grouped Ship-To summaries while retaining every source OBD in its expandable detail.
         let totalAmount = 0, totalVolume = 0, totalWeight = 0, totalQty = 0;
         const linesTbody = document.getElementById("sapDtlOBDLines");
         if (linesTbody) {
-            linesTbody.innerHTML = group.map((r) => {
-                const amt = Number(r.Amount) || 0;
-                const vol = Number(r.Volume) || 0;
-                const wgt = Number(r.Weight) || 0;
-                const qty = Number(r.Quantity) || 0;
-                totalAmount += amt;
-                totalVolume += vol;
-                totalWeight += wgt;
-                totalQty += qty;
+            if (!linesTbody.dataset.obdGroupToggleBound) {
+                linesTbody.addEventListener('click', event => {
+                    const button = event.target.closest('[data-obd-group-toggle]');
+                    if (!button || !linesTbody.contains(button)) return;
+                    const details = document.getElementById(button.getAttribute('aria-controls'));
+                    if (!details) return;
+                    details.hidden = !details.hidden;
+                    button.setAttribute('aria-expanded', String(!details.hidden));
+                    const icon = button.querySelector('[aria-hidden="true"]');
+                    if (icon) icon.textContent = details.hidden ? 'v' : '^';
+                });
+                linesTbody.dataset.obdGroupToggleBound = 'true';
+            }
 
+            const metrics = row => ({
+                amount: Number(row.Amount) || 0,
+                volume: Number(row.Volume) || 0,
+                weight: Number(row.Weight) || 0,
+                quantity: Number(row.Quantity) || 0,
+            });
+            const formatAmount = amount => amount > 0 ? `PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : "\u2014";
+            const formatMeasure = value => value > 0 ? value.toFixed(3) : "\u2014";
+            const renderObdRow = r => {
+                const amt = Number(r.Amount) || 0;
                 // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
                 const podMatch = asgn?.lineItems?.find(li => li.obdNumber === r.OBDNumber);
                 const asgnGuardSig = asgn?.guardSignatureBase64;
@@ -4278,20 +4448,63 @@ export class Dashboard {
 
                 return `
                     <tr class="border-b border-db-border/50 hover:bg-db-item-hover/30 transition-colors">
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "—")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${amt > 0 ? `PHP ${amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : "—"}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${vol > 0 ? vol.toFixed(3) : "—"}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${wgt > 0 ? wgt.toFixed(3) : "—"}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${qty > 0 ? qty.toFixed(3) : "—"}</td>
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "—")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "—")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "—")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—"}</td>
-                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—"}</td>
+                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "\u2014")}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatAmount(amt)}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(Number(r.Volume) || 0)}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(Number(r.Weight) || 0)}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(Number(r.Quantity) || 0)}</td>
+                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "\u2014")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "\u2014")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "\u2014")}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(r.Latitude)}</td>
+                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(r.Longitude)}</td>
                         <td class="py-2 text-center">
-                          ${asgn && ['in_transit', 'completed', 'returning_to_base'].includes(asgn.tripStatus?.toLowerCase()) && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
+                          ${asgn && ['in_transit', 'completed', 'returning_to_base'].includes(asgn.tripStatus?.toLowerCase()) && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber).replaceAll("'", "%27")}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
                         </td>
+                        <td class="py-2 px-3 text-center text-db-text text-[11px]" data-pod-status>${obdDeliveryStatus(podMatch)}</td>
                     </tr>`;
+            };
+
+            const rowGroups = groupObdRowsByShipTo(group);
+            linesTbody.innerHTML = rowGroups.map((rows, groupIndex) => {
+                for (const row of rows) {
+                    const values = metrics(row);
+                    totalAmount += values.amount;
+                    totalVolume += values.volume;
+                    totalWeight += values.weight;
+                    totalQty += values.quantity;
+                }
+                if (rows.length === 1) return renderObdRow(rows[0]);
+
+                const total = rows.reduce((sum, row) => {
+                    const values = metrics(row);
+                    return {
+                        amount: sum.amount + values.amount,
+                        volume: sum.volume + values.volume,
+                        weight: sum.weight + values.weight,
+                        quantity: sum.quantity + values.quantity,
+                    };
+                }, {amount: 0, volume: 0, weight: 0, quantity: 0});
+                const representative = rows[0];
+                const statuses = [...new Set(rows.map(row => obdDeliveryStatus(asgn?.lineItems?.find(li => li.obdNumber === row.OBDNumber))))];
+                const status = statuses.length === 1 ? statuses[0] : 'Mixed';
+                const detailsId = `sapObdGroupDetails-${groupIndex}`;
+                return `
+                    <tr class="border-b border-db-border/50 bg-db-panel/40">
+                        <td class="py-2 pr-3 text-center whitespace-nowrap"><button type="button" data-obd-group-toggle aria-expanded="false" aria-controls="${detailsId}" class="text-sysu-gold hover:text-white text-[11px] font-bold" aria-label="Show ${rows.length} OBD records">${rows.length} OBDs <span aria-hidden="true">v</span></button></td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatAmount(total.amount)}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(total.volume)}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(total.weight)}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(total.quantity)}</td>
+                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(representative.ShipToParty || "\u2014")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(representative.ShipToPartyName || "\u2014")}</td>
+                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(representative.Address || "\u2014")}</td>
+                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(representative.Latitude)}</td>
+                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(representative.Longitude)}</td>
+                        <td class="py-2 text-center text-db-text3 text-[11px]">See OBD details</td>
+                        <td class="py-2 px-3 text-center text-db-text text-[11px]" data-pod-status>${status}</td>
+                    </tr>
+                    <tr id="${detailsId}" hidden data-obd-group-details><td colspan="12" class="p-0"><table class="w-full"><tbody>${rows.map(renderObdRow).join('')}</tbody></table></td></tr>`;
             }).join("");
         }
 
@@ -4338,7 +4551,12 @@ export class Dashboard {
             try {
                 const podDocSnap = await getDoc(doc(db, "sap_assignments", key, "pod_images", obdNumber));
                 if (podDocSnap.exists()) {
-                    imageUrl = podDocSnap.data()?.base64Image || podDocSnap.data()?.imageUrl || podDocSnap.data()?.podImageUrl;
+                    const podRecord = podDocSnap.data();
+                    imageUrl = podRecord?.base64Image || podRecord?.imageUrl || podRecord?.podImageUrl;
+                    if (!imageUrl && podRecord?.groupPodId) {
+                        const groupSnap = await getDoc(doc(db, "sap_assignments", key, "pod_groups", podRecord.groupPodId));
+                        imageUrl = groupSnap.data()?.base64Image || '';
+                    }
                 }
             } catch (err) {
                 console.warn('Failed to fetch pod image from subcollection:', err);
@@ -5018,64 +5236,72 @@ export class Dashboard {
         };
 
         // â"€â"€ 1. Queue drivers eligible for FIRST assignment (not yet assigned) â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // isAssigned = false → driver not yet assigned any shipment → QUEUE tab.
-        // isAssigned = true  → driver already has a shipment → goes to ASSIGNED tab.
-        // QUEUE-INVALIDATION rule (per customer demo, 2026-08-11):
-        //   A queue entry is invalid the moment the same driver has ANY
-        //   sap_assignment — regardless of tripStatus. The queue is for
-        //   drivers who have never been assigned. Once a driver has been
-        //   assigned, their queue entry is dead and they move to the
-        //   Assigned tab. The dispatcher can then give them more
-        //   shipments via the Assigned tab (multi-shipment flow).
-        //
-        //   This handles the visible demo bug: a driver with `isAssigned:
-        //   false` on their queue entry but who already has a (completed)
-        //   sap_assignment was showing up in BOTH tabs. The queue entry's
-        //   `isAssigned` flag is stale — the driver app never updated it
-        //   when the previous shipment finished. Trusting the assignment
-        //   doc as the source of truth eliminates the double-count.
-        //
+        // Eligibility is scoped to the current QR queue session. A prior
+        // completed session must not hide a newly scanned waiting driver.
         // queue entries carry BOTH a doc id (`d.id`) and an Auth UID
         // (`d.driverId`). The driverId is the canonical key the rest of the
         // system uses to refer to a driver (see commit 8472e4d).
         const assignments = this.state.sapAssignments;
-        const ACTIVE_TRIP_STATUSES = new Set(["loading", "loaded", "in_transit", "completed"]);
+        const PRE_TRANSIT_ASSIGNABLE_STATUSES = new Set(["assigned", "loading", "loaded", "fully_loaded"]);
+        const ACTIVE_TRIP_STATUSES = new Set(["in_transit", "returning_to_base"]);
+        const COMPLETED_TRIP_STATUSES = new Set(["completed", "complete"]);
+        const assignmentsByDriver = new Map();
         const activeDriverIds = new Set();
-        // Set of driverIds that have ANY sap_assignment (any status).
-        // Queue entries for these drivers are invalid.
-        const assignedDriverIds = new Set();
         for (const asgn of Object.values(assignments)) {
             if (!asgn || !asgn.driverId) continue;
-            assignedDriverIds.add(asgn.driverId);
             const status = ((asgn.tripStatus || "").toLowerCase()).trim();
-            if (ACTIVE_TRIP_STATUSES.has(status)) {
-                activeDriverIds.add(asgn.driverId);
-            }
+            const driverAssignments = assignmentsByDriver.get(asgn.driverId) || [];
+            driverAssignments.push({...asgn, _status: status});
+            assignmentsByDriver.set(asgn.driverId, driverAssignments);
+            if (ACTIVE_TRIP_STATUSES.has(status)) activeDriverIds.add(asgn.driverId);
         }
-        const queueDrivers = this.state.queue.filter(
-            (d) => !d.isAssigned && d.status !== "completed" && d.status !== "complete" && truckMatch(d)
-        ).filter(
-            // Drop queue entries whose driver has any sap_assignment at all.
-            // The dispatcher must use the Assigned tab to give that driver
-            // another shipment.
-            (d) => !assignedDriverIds.has(d.driverId || d.id)
-        );
+        const queueStatus = (d) => ((d.status || "").toLowerCase()).trim();
+        const queueHasDispatch = (queueEntry, dispatchKey) =>
+            queueEntry.assignedShipment === dispatchKey
+            || (Array.isArray(queueEntry.assignedShipments)
+                && queueEntry.assignedShipments.some((item) =>
+                    (typeof item === "string" ? item : item?.dispatchKey) === dispatchKey
+                ));
+        const queueDrivers = this.state.queue.filter((d) => {
+            const status = queueStatus(d);
+            const driverId = d.driverId || d.id;
+            const driverHistory = assignmentsByDriver.get(driverId) || [];
+            const currentSession = driverHistory.filter((asgn) => asgn.queueId === d.id);
+            const anotherOpenSession = driverHistory.some((asgn) =>
+                asgn.queueId !== d.id
+                && (PRE_TRANSIT_ASSIGNABLE_STATUSES.has(asgn._status) || ACTIVE_TRIP_STATUSES.has(asgn._status))
+            );
+
+            return !d.isAssigned
+                && d.registrationComplete !== false
+                && ["waiting", "available"].includes(status)
+                && currentSession.length === 0
+                && !activeDriverIds.has(driverId)
+                && !anotherOpenSession
+                && truckMatch(d);
+        });
 
         // â"€â"€ 2. Build assigned-driver records from sap_assignments —"â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // One record per driverId —" merges multiple assignments for the same driver.
-        // FIFO rule:
-        //   —¢ Prefers queueEntry.entryTime (exact check-in time) whenever available.
-        //   —¢ For drivers no longer in queue (e.g. queue status = complete): uses the
-        //     EARLIEST assignedAt across ALL their dispatches as proxy for check-in order.
+        // One record per driverId, tied to its eligible QR queue session.
+        // Completed history cannot create an Assigned row by itself.
+        // FIFO uses the current queue entry's check-in time.
         // Fullness: a driver with driverDeclaredFull: true in ANY assignment is flagged full.
         // (Reuses `assignments` declared above for the queue-invalidation set.)
         const driverAssignments = {}; // driverId → merged driver record
 
         for (const [dispatchKey, asgn] of Object.entries(assignments)) {
-            const dId = asgn.driverId;
+            const dId = asgn?.driverId;
             if (!dId) continue;
+            const assignmentStatus = ((asgn.tripStatus || "").toLowerCase()).trim();
+            if (!PRE_TRANSIT_ASSIGNABLE_STATUSES.has(assignmentStatus)) continue;
+            const queueEntry = this.state.queue.find((q) =>
+                (q.driverId || q.id) === dId
+                && q.registrationComplete !== false
+                && ["waiting", "available", "assigned", "loading", "loaded", "fully_loaded"].includes(queueStatus(q))
+                && (asgn.queueId === q.id || (!asgn.queueId && q.isAssigned === true && queueHasDispatch(q, dispatchKey)))
+            );
+            if (!queueEntry) continue;
             const driver = this.state.drivers.find((drv) => drv.id === dId) || {};
-            const queueEntry = this.state.queue.find((q) => q.id === dId);
             // Truck type can live on the queue entry, the drivers doc,
             // OR the most recent sap_assignments doc (which the server
             // writes when a driver is assigned — see controller line
@@ -5105,11 +5331,16 @@ export class Dashboard {
                     truckType: driverTruckType,
                     truckCompany: asgn.truckCompany || queueEntry?.truckCompany || driver?.truckingCompany || driver?.company || "—",
                     entryTime: queueEntry?.entryTime || asgn.assignedAt || null,
+                    driverId: dId,
+                    isFull: queueEntry.isFull === true,
+                    _queueId: queueEntry.id,
+                    _queueIds: new Set([queueEntry.id]),
                     _fromAssignment: true,
                     _latestAssignment: dispatchKey,
                     _driverDeclaredFull: !!asgn.driverDeclaredFull,
                 };
             } else {
+                driverAssignments[dId]._queueIds.add(queueEntry.id);
                 // Already seen —" update FIFO key to whichever is earlier
                 if (!queueEntry?.entryTime && asgn.assignedAt) {
                     const existingTime = driverAssignments[dId].entryTime;
@@ -5127,29 +5358,22 @@ export class Dashboard {
                 if (asgn.driverDeclaredFull === true) {
                     driverAssignments[dId]._driverDeclaredFull = true;
                 }
+                if (queueEntry.isFull === true) driverAssignments[dId].isFull = true;
             }
         }
 
-        // Active tripStatuses block a driver from taking another dispatch.
-        // "assigned" → driver has not started loading yet — STILL ELIGIBLE for multi-shipment
-        // "loading"  → driver is at the warehouse
-        // "loaded"   → ready to depart (this is the actual stored value in
-        //              Firestore; the spec called it "fully_loaded" but the
-        //              field has historically been set as "loaded" when
-        //              guard verification completes and PODs are uploaded)
-        // "in_transit" → en route
-        // Only "completed" frees the driver up again.
+        // A driver may take multiple dispatches in the same queue session until
+        // the first shipment starts in_transit. Returning to base remains busy.
+        // A new QR scan creates a new queue session; completed history from an
+        // older session must not turn that new queue entry into an Assigned row.
         //
-        // IMPORTANT: "assigned" must NOT be in this set. Multi-shipment requires
-        // that a driver with an existing assignment in "assigned" state (not
-        // yet loading) can still receive a new dispatch. Once the assignment
-        // transitions to loading/loaded/in_transit, the driver is BUSY and
-        // cannot take another dispatch.
+        // Pre-transit states stay eligible for more dispatches in this session.
+        // The active set contains only in_transit and returning_to_base.
         //
         // We reuse the precomputed `activeDriverIds` Set (built above for the
         // queue-invalidation filter). O(1) lookup per assigned driver.
         const assignedDrivers = Object.values(driverAssignments)
-            .filter((d) => truckMatch(d))
+            .filter((d) => d._queueIds.size === 1 && truckMatch(d))
             .map((d) => {
                 // Collect every tripStatus this driver currently has across
                 // their assignments.
@@ -5157,9 +5381,23 @@ export class Dashboard {
                     (asgn) => asgn.driverId === d.id
                 );
                 const tripStatuses = driverAssignmentsList.map(
-                    (asgn) => ((asgn.tripStatus || "<none>").toLowerCase()).trim()
+                    (asgn) => ((asgn.tripStatus || "").toLowerCase()).trim()
                 );
-                const hasActiveLoad = activeDriverIds.has(d.id);
+                const queueEntry = this.state.queue.find((q) => q.id === d._queueId);
+                const queueTripStatus = queueStatus(queueEntry || {});
+                const hasActiveLoad = activeDriverIds.has(d.id) || ACTIVE_TRIP_STATUSES.has(queueTripStatus);
+                const currentSessionAssignments = Object.entries(assignments)
+                    .filter(([dispatchKey, asgn]) => asgn?.driverId === d.id
+                        && (asgn.queueId === queueEntry.id
+                            || (!asgn.queueId && queueEntry.isAssigned === true && queueHasDispatch(queueEntry, dispatchKey))))
+                    .map(([, asgn]) => asgn);
+                const hasSelectableAssignment = currentSessionAssignments.some((asgn) =>
+                    PRE_TRANSIT_ASSIGNABLE_STATUSES.has(((asgn.tripStatus || "").toLowerCase()).trim())
+                );
+                const sessionCompleted = currentSessionAssignments.length > 0
+                    && currentSessionAssignments.every((asgn) =>
+                        COMPLETED_TRIP_STATUSES.has(((asgn.tripStatus || "").toLowerCase()).trim())
+                    );
                 if (window.__SYSU_DEBUG_MULTISHIP__) {
                     console.log(
                         "[multiShip] driver:", d.id, d.driverName,
@@ -5167,30 +5405,25 @@ export class Dashboard {
                         "hasActiveLoad:", hasActiveLoad,
                     );
                 }
-                return { ...d, _hasActiveLoad: hasActiveLoad };
+                return { ...d, _hasActiveLoad: hasActiveLoad, _sessionCompleted: sessionCompleted, _hasSelectableAssignment: hasSelectableAssignment };
             });
 
-        // Drivers on an active load cannot take another dispatch — they
-        // still appear in the modal (under the Assigned tab) so the
-        // dispatcher can see WHY they're not selectable, but they are
-        // marked busy and the row is non-clickable.
-        const busyDrivers = assignedDrivers.filter((d) => d._hasActiveLoad);
-        const availableAssigned = assignedDrivers.filter((d) => !d._hasActiveLoad)
-            .filter((d) => {
-                const queueEntry = this.state.queue.find((q) => q.id === d.id);
-                if (queueEntry) return queueEntry.status !== "completed";
-                // Driver not in queue — if they have no active load (already
-                // filtered above), they ARE eligible.
-                return true;
-            });
+        // Pre-transit assignments in the current queue session remain selectable.
+        const availableAssigned = assignedDrivers.filter((d) => {
+            const queueEntry = this.state.queue.find((q) => q.id === d._queueId);
+            const queueEntryIsUnassigned = queueEntry
+                && !queueEntry.isAssigned
+                && ["waiting", "available"].includes(queueStatus(queueEntry));
+            return !d._hasActiveLoad
+                && !d._sessionCompleted
+                && d._hasSelectableAssignment
+                && !queueEntryIsUnassigned;
+        });
 
         // â"€â"€ 3. Merge —" queue first, then assigned-only drivers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         // ── 3. Merge — queue first, then assigned drivers (busy drivers DROPPED) ──
-        // Per updated product rule: a driver with ANY active load
-        // (loading / loaded / in_transit) is removed from the modal
-        // entirely. Their queue role has been fulfilled — they cannot take
-        // another dispatch until the active load completes. The server
-        // (sapAssignmentController) enforces the same DRIVER_ON_ACTIVE_LOAD
+        // Once a driver is in transit or returning to base, they are removed
+        // from the modal. The server enforces the same DRIVER_ON_ACTIVE_LOAD
         // gate, so the modal must mirror that to keep UI and server in sync.
         const queuedIds = new Set(queueDrivers.map((d) => d.id));
         const extraAssigned = availableAssigned.filter((d) => !queuedIds.has(d.id));
@@ -5213,15 +5446,17 @@ export class Dashboard {
                 if (match) phone = match.phone || "";
             }
             // Look up isFull from driver doc —" queue entries don't have it directly
-            const drv = this.state.drivers.find((x) =>
+            const drv = this.state.drivers.find((x) => x.id === (d.driverId || d.id)) || this.state.drivers.find((x) =>
                 (x.name || "").toLowerCase().trim() === (d.driverName || "").toLowerCase().trim()
             );
-            const isFull = drv?.isFull === true || d.isFull === true;
+            const isFull = drv?.isFull === true || d.isFull === true || d._driverDeclaredFull === true;
             return {
                 ...d,
+                id: d._queueId || d.id,
+                driverName: queueDriverDisplayName(d, this.state.drivers),
                 _lookupPhone: phone,
                 _isFull: isFull,
-                _fromAssignment: assignedDriverIds.has(d.driverId || d.id)
+                _fromAssignment: !!d._queueId
             };
         });
     }
@@ -5350,10 +5585,7 @@ export class Dashboard {
                     </div>
                 </div>
             `}).join("") + assignedRows.map((d) => {
-                    // Drivers on an active load (loading/loaded/in_transit) cannot
-                    // take another dispatch — they appear in the Assigned tab so
-                    // the dispatcher can see why they're unavailable, but the row
-                    // is locked and shows a BUSY badge.
+                    // Active-route drivers are filtered out before this list is rendered.
                     const isAssignedEarliest = d.id === assignedEarliestId;
                     return `
                 <div class="driver-row p-4 border-b border-db-border cursor-pointer hover:bg-db-item-hover transition-colors flex items-center justify-between"
@@ -5376,7 +5608,7 @@ export class Dashboard {
                         <div class="text-[10px] text-db-text3 font-mono text-right">
                             ${d.entryTime ? new Date(d.entryTime.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
                         </div>
-                        <span class="text-[9px] text-db-accent opacity-60 font-mono">âœ" assigned</span>
+                        <span class="text-[9px] text-db-accent opacity-60 font-mono">Assigned</span>
                     </div>
                 </div>
                 `;
@@ -5719,8 +5951,8 @@ export class Dashboard {
                         obdNumber: r.OBDNumber,
                         quantity: qtyStr,
                         quantityNumeric: parseFloat(qtyStr) || 0,
-                        volume: parseFloat(r.Volume) || 0,
                         customerName: r.ShipToPartyName || r.ShipToParty || "",
+                        ...driverAssignmentFields(r),
                         actualDelDate: this._normalizeDelDate(r.ActualDelDate),
                     };
                 });
@@ -5789,7 +6021,10 @@ export class Dashboard {
                     this._showAssignBanner("Driver is no longer in the queue. Refresh and try again.");
                 },
                 DRIVER_ON_ACTIVE_LOAD: () => {
-                    this._showAssignBanner("Driver is already on an active load. They cannot take another dispatch until it completes.");
+                    this._showAssignBanner("Driver is in transit or returning to base and cannot take another dispatch.");
+                },
+                DRIVER_SESSION_AMBIGUOUS: () => {
+                    this._showAssignBanner("This driver has multiple active QR sessions. Refresh the queue and select the correct entry.");
                 },
                 DISPATCH_TAKEN: () => {
                     this._showAssignBanner("Another dispatcher assigned this dispatch. The list will refresh.");

@@ -5,7 +5,8 @@ const require = createRequire(import.meta.url);
 const admin = require('firebase-admin');
 let db, sapRows;
 const sourceRow = (dispatchKey='test-dispatch',quantity='10') => ({SAPDispatchNumber:dispatchKey,OBDNumber:'000001',
-  OBDItem:'001',Quantity:quantity,ShipToPartyName:'Synthetic',TruckType:'4W',Driver:'',Delivery:'',PgiStatus:'X'});
+  OBDItem:'001',Quantity:quantity,ShipToParty:'0010000001',ShipToPartyName:'Synthetic',Address:'Synthetic destination',
+  Latitude:'14.6628',Longitude:'120.9578',Volume:'0.045',Weight:'21.36',TruckType:'4W',Driver:'',Delivery:'',PgiStatus:'X'});
 before(() => {
   assert.equal(process.env.FIRESTORE_EMULATOR_HOST, '127.0.0.1:8085');
   admin.initializeApp({projectId: 'demo-sysu-security'});
@@ -43,6 +44,18 @@ test('R15: positive decimal quantity strings are accepted', async () => {
   const result = await invoke(ctrl.assignDriver,assignment('10.5'));
   assert.equal(result.status,200);
   assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).data().lineItems[0].quantity,10.5);
+});
+test('assigned driver receives location identity and physical metrics from SAP',async()=>{
+  const ctrl=require('../../src/controllers/sapAssignmentController');
+  assert.equal((await invoke(ctrl.assignDriver,assignment(10))).status,200);
+  const item=(await db.collection('sap_assignments').doc('test-dispatch').get()).data().lineItems[0];
+  assert.equal(item.shipTo,'0010000001');
+  assert.equal(item.deliveryAddress,'Synthetic destination');
+  assert.equal(item.latitude,14.6628);
+  assert.equal(item.longitude,120.9578);
+  assert.equal(item.volume,0.045);
+  assert.equal(item.weight,21.36);
+  assert.equal(Object.hasOwn(item,'amount'),false);
 });
 
 for(const [name,patch] of [
@@ -149,6 +162,57 @@ test('R12 historical completed queue cannot bypass eligibility through an older 
   assert.equal((await invoke(ctrl.assignDriver, assignment(10))).status, 409);
   assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).exists, false);
 });
+test('R12 completed assignment in the same queue session cannot receive another dispatch', async () => {
+  await db.collection('queue').doc('queue-a').update({isAssigned: false, status: 'waiting'});
+  await db.collection('sap_assignments').doc('older').set({driverId: 'driver-a', queueId: 'queue-a', tripStatus: 'completed'});
+  const ctrl = require('../../src/controllers/sapAssignmentController');
+  const result = await invoke(ctrl.assignDriver, assignment(10));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, 'DRIVER_SESSION_COMPLETED');
+  assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).exists, false);
+});
+test('new QR queue session is eligible after an older completed session', async () => {
+  await db.collection('sap_assignments').doc('older').set({driverId: 'driver-a', queueId: 'old-queue', tripStatus: 'completed'});
+  const ctrl = require('../../src/controllers/sapAssignmentController');
+  const result = await invoke(ctrl.assignDriver, assignment(10));
+  assert.equal(result.status, 200);
+  assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).data().queueId, 'queue-a');
+});
+test('UID fallback selects the eligible queue rather than an older completed queue', async () => {
+  await db.collection('queue').doc('aaa-old').set({driverId: 'driver-a', truckType: '4W', status: 'completed', isAssigned: false});
+  await db.collection('sap_assignments').doc('older').set({driverId: 'driver-a', queueId: 'aaa-old', tripStatus: 'completed'});
+  const ctrl = require('../../src/controllers/sapAssignmentController');
+  const result = await invoke(ctrl.assignDriver, assignment(10));
+  assert.equal(result.status, 200);
+  assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).data().queueId, 'queue-a');
+});
+test('UID fallback rejects two eligible queue sessions rather than choosing one arbitrarily', async () => {
+  await db.collection('queue').doc('queue-b').set({driverId: 'driver-a', truckType: '4W', status: 'waiting', isAssigned: false});
+  const ctrl = require('../../src/controllers/sapAssignmentController');
+  const result = await invoke(ctrl.assignDriver, assignment(10));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, 'DRIVER_SESSION_AMBIGUOUS');
+  assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).exists, false);
+});
+for (const status of ['assigned', 'loading', 'loaded', 'fully_loaded']) {
+  test(`same-session ${status} driver can receive another dispatch before transit`, async () => {
+    await db.collection('queue').doc('queue-a').update({isAssigned: true, status: 'loading'});
+    await db.collection('sap_assignments').doc('older').set({driverId: 'driver-a', queueId: 'queue-a', tripStatus: status});
+    const ctrl = require('../../src/controllers/sapAssignmentController');
+    assert.equal((await invoke(ctrl.assignDriver, assignment(10))).status, 200);
+  });
+}
+for (const status of ['in_transit', 'returning_to_base']) {
+  test(`${status} driver cannot receive another dispatch`, async () => {
+    await db.collection('queue').doc('queue-a').update({isAssigned: true, status: 'loading'});
+    await db.collection('sap_assignments').doc('older').set({driverId: 'driver-a', queueId: 'queue-a', tripStatus: status});
+    const ctrl = require('../../src/controllers/sapAssignmentController');
+    const result = await invoke(ctrl.assignDriver, assignment(10));
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, 'DRIVER_ON_ACTIVE_LOAD');
+    assert.equal((await db.collection('sap_assignments').doc('test-dispatch').get()).exists, false);
+  });
+}
 test('R15 pre-transit fast path cannot assign a mismatched truck type', async () => {
   await db.collection('sap_assignments').doc('older').set({driverId: 'driver-a', tripStatus: 'assigned'});
   const ctrl = require('../../src/controllers/sapAssignmentController');

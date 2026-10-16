@@ -169,7 +169,7 @@ function _applyDriverUpdate(data, source = 'socket', kind = 'location') {
     return;
   }
   _driverMeta.set(next.driverId, next);
-  _upsertMarker(next.driverId, next.lat, next.lng, next.status, next.name);
+  _upsertMarker(next.driverId, next.lat, next.lng, next.status, next.name, next.tripStatus);
   _refreshDriverList();
 }
 
@@ -177,7 +177,7 @@ function _refreshLocationAges() {
   for (const [id, data] of _driverMeta) {
     if (['online', 'returning_to_base', 'stopped'].includes(data.status) && Date.now() - data.lastSeen > GPS_STALE_MS) {
       data.status = 'stale';
-      _upsertMarker(id, data.lat, data.lng, data.status, data.name);
+      _upsertMarker(id, data.lat, data.lng, data.status, data.name, data.tripStatus);
     }
   }
   _refreshDriverList();
@@ -186,10 +186,10 @@ function _refreshLocationAges() {
 function _onDriverMoving(data) { _applyDriverUpdate(data); }
 function _onDriverStatus(data) { _applyDriverUpdate(data, 'socket', 'status'); }
 
-function _upsertMarker(driverId, lat, lng, status, name) {
+function _upsertMarker(driverId, lat, lng, status, name, tripStatus) {
   // updateMarker handles both create and update (checks trackingMarkers[driverId] internally).
   // No need for a separate setLatLng — updateMarker rebuilds the icon and sets position.
-  updateMarker({ driverId, lat, lng, status, name }, "trackingMap");
+  updateMarker({ driverId, lat, lng, status, name, tripStatus }, "trackingMap");
 
   if (!_markerStore[driverId]) {
     _markerStore[driverId] = trackingMarkers[driverId] ?? null;

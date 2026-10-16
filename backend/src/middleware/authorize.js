@@ -16,7 +16,7 @@ const authorize = (allowedRoles = []) => {
             const userDoc = await admin.firestore().collection("users").doc(currentUserId).get();
             const userData = userDoc.data();
 
-            if (!userData || userData.status === 'inactive' || userData.status === 'disabled' || !allowedRoles.includes(userData.role)) {
+            if (!userData || userData.status !== 'active' || !allowedRoles.includes(userData.role)) {
                 return res.status(403).json({
                     message: `Forbidden: Access restricted to ${allowedRoles.join(", ")} roles`
                 });

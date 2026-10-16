@@ -429,23 +429,37 @@
 
         <div class="h-[1px] bg-db-border mx-3 my-2"></div>
 
-        <!-- Tree View Module (Dynamically populated) -->
-        <div class="px-2 pb-0.5">
-            <div class="flex items-center justify-between px-1 pt-3 pb-1">
-            <span
-                    class="text-[10.5px] font-semibold text-db-text3 uppercase tracking-[0.05em]"
-            >Fleet Regions</span
-            >
-                <button
-                        class="w-5 h-5 rounded-md border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all hover:bg-db-item-hover hover:text-db-text2"
-                >
-                    <svg viewBox="0 0 24 24" class="w-3.5 h-3.5">
-                        <line x1="12" y1="5" x2="12" y2="19"/>
-                        <line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                </button>
+        <section class="px-3 pb-3" aria-labelledby="fleetOpsHeading">
+            <h3 id="fleetOpsHeading" class="px-1 pt-1 pb-2 text-[10.5px] font-semibold text-db-text3 uppercase tracking-[0.05em]">Operations at a glance</h3>
+            <div class="grid grid-cols-3 gap-1.5">
+                <div class="rounded-md border border-db-border bg-db-bg/40 px-2 py-2 text-center">
+                    <div id="fleetStatTransit" class="text-[16px] font-bold text-emerald-400 tabular-nums">0</div>
+                    <div class="mt-0.5 text-[9px] font-semibold text-db-text3 leading-tight">In transit</div>
+                </div>
+                <div class="rounded-md border border-db-border bg-db-bg/40 px-2 py-2 text-center">
+                    <div id="fleetStatQueue" class="text-[16px] font-bold text-sky-400 tabular-nums">0</div>
+                    <div class="mt-0.5 text-[9px] font-semibold text-db-text3 leading-tight">In queue</div>
+                </div>
+                <div class="rounded-md border border-db-border bg-db-bg/40 px-2 py-2 text-center">
+                    <div id="fleetStatReturning" class="text-[16px] font-bold text-amber-400 tabular-nums">0</div>
+                    <div class="mt-0.5 text-[9px] font-semibold text-db-text3 leading-tight">Returning</div>
+                </div>
             </div>
-            <div id="fleetTree"></div>
+        </section>
+
+        <div class="h-[1px] bg-db-border mx-3 my-1"></div>
+
+        <section class="px-2 pb-3" aria-labelledby="fleetDirectoryHeading">
+            <div class="flex items-center justify-between px-1 pt-3 pb-2">
+                <div class="min-w-0">
+                    <h3 id="fleetDirectoryHeading" class="text-[10.5px] font-semibold text-db-text3 uppercase tracking-[0.05em]">Driver Directory</h3>
+                    <p id="fleetDirectoryCount" class="mt-0.5 text-[10px] text-db-text3">0 drivers</p>
+                </div>
+            </div>
+            <label class="sr-only" for="driverDirectorySearch">Search drivers or companies</label>
+            <input id="driverDirectorySearch" type="search" autocomplete="off" placeholder="Search drivers or company"
+                   class="mb-2 w-full rounded-md border border-db-border bg-db-bg/70 px-2.5 py-2 text-[11px] text-db-text placeholder:text-db-text3 outline-none focus:border-sysu-red/60">
+            <div id="fleetTree" class="space-y-1"></div>
         </div>
     </div>
 </aside>
@@ -544,7 +558,7 @@
                 </div>
             </div>
 
-            <div id="tableWrap"></div>
+            <div id="tableWrap" class="flex-1 min-h-0 overflow-hidden"></div>
         </section>
     </div>
 
@@ -1520,20 +1534,21 @@
                 <div class="text-[10px] font-bold text-sysu-red uppercase tracking-widest mb-3">Outbound Line Items (All
                     OBDs)
                 </div>
-                <div class="overflow-hidden">
-                    <table class="w-full text-left border-collapse text-sm table-fixed">
+                <div class="overflow-x-auto">
+                    <table class="w-full min-w-[1200px] text-left border-collapse text-sm table-fixed">
                         <colgroup>
+                            <col class="w-[8%]">
                             <col class="w-[9%]">
+                            <col class="w-[6%]">
+                            <col class="w-[6%]">
+                            <col class="w-[6%]">
+                            <col class="w-[7%]">
                             <col class="w-[12%]">
-                            <col class="w-[9%]">
-                            <col class="w-[10%]">
-                            <col class="w-[8%]">
-                            <col class="w-[10%]">
                             <col class="w-[14%]">
-                            <col class="w-[20%]">
-                            <col class="w-[8%]">
-                            <col class="w-[8%]">
-                            <col class="w-[8%]">
+                            <col class="w-[7%]">
+                            <col class="w-[7%]">
+                            <col class="w-[7%]">
+                            <col class="w-[11%]">
                         </colgroup>
                         <thead>
                         <tr class="border-b border-db-border">
@@ -1548,6 +1563,7 @@
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Latitude</th>
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Longitude</th>
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-4 text-center whitespace-nowrap w-[80px]">POD Preview</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 px-3 text-center whitespace-nowrap">Delivery Status</th>
                         </tr>
                         </thead>
                         <tbody id="sapDtlOBDLines">
@@ -1563,6 +1579,7 @@
                             <td class="pt-3 pr-3"></td>
                             <td class="pt-3 pr-3"></td>
                             <td class="pt-3 pr-3"></td>
+                            <td class="pt-3"></td>
                             <td class="pt-3"></td>
                             <td class="pt-3"></td>
                         </tr>
@@ -1673,7 +1690,7 @@
         <!-- Filter hint -->
         <div class="px-5 py-2 bg-db-bg/30 border-b border-db-border shrink-0">
             <p class="text-[10px] text-db-text3 italic">
-                Queue shows drivers with no prior assignment (FIFO). Drivers who already have a shipment — active or completed — are hidden from Queue; use the Assigned tab to give them another.
+                Queue shows eligible drivers for their current QR session in FIFO order. Assigned shows pre-transit drivers who can still take shipments, including while loading/loaded. Drivers in transit or returning to base cannot receive more shipments; completed sessions require a new QR scan.
             </p>
         </div>
 

@@ -3,9 +3,11 @@ import {beforeEach, expect, test, vi} from 'vitest';
 vi.mock('../api/firebase.js', () => ({db: {}, auth: {}}));
 vi.mock('../api/socket.js', () => ({EVENTS: {}, socket: {}, getDriverSocket: vi.fn(), connectDriverSocket: vi.fn()}));
 vi.mock('../api/authService.js', () => ({AuthService: {}}));
-vi.mock('../api/sapService.js', () => ({SAPService: {fetchShipments: vi.fn(), parseDate: value => value || '—'}}));
+vi.mock('../api/sapService.js', () => ({SAPService: {fetchShipments: vi.fn(), fetchDispatchDetails: vi.fn(), parseDate: value => value || '—'}}));
 import {Dashboard} from './dashboard.js';
 import {SAPService} from '../api/sapService.js';
+import * as MapManager from '../components/MapManager.js';
+import {obdDeliveryStatus, queueDriverDisplayName, groupObdRowsByShipTo, driverAssignmentFields, mergeAssignmentGroups} from './shipmentDisplay.js';
 
 const dispatch = '0010136559';
 const stored = (tripStatus = 'returning_to_base') => ({
@@ -16,11 +18,368 @@ const stored = (tripStatus = 'returning_to_base') => ({
   ],
 });
 let dashboard;
+test.each([
+  ['All Delivered', true, 'Delivered'],
+  ['Rejected', true, 'Rejected'],
+  ['Delivered w/ Rejection', true, 'Delivered w/ rejection'],
+  ['  ALL DELIVERED  ', true, 'Delivered'],
+  ['All Delivered', false, 'Pending POD'],
+  [undefined, true, 'Unknown'],
+  ['<img src=x onerror=alert(1)>', true, 'Unknown'],
+  [42, true, 'Unknown'],
+])('OBD outcome %s with completion %s displays %s', (deliveryStatus, isPodCompleted, expected) => {
+  expect(obdDeliveryStatus({deliveryStatus, isPodCompleted})).toBe(expected);
+});
+
+test('absent POD data stays pending', () => {
+  expect(obdDeliveryStatus(undefined)).toBe('Pending POD');
+});
+
+test('sidebar operations summary counts unique active, returning, and queued drivers', () => {
+  document.body.insertAdjacentHTML('beforeend', '<span id="fleetStatTransit"></span><span id="fleetStatQueue"></span><span id="fleetStatReturning"></span>');
+  dashboard.state.sapAssignments = {
+    transitA: {driverId: 'driver-a', tripStatus: 'in_transit'},
+    transitB: {driverId: 'driver-a', tripStatus: 'in_transit'},
+    returning: {driverId: 'driver-b', tripStatus: 'returning_to_base'},
+  };
+  dashboard.state.liveTracking = {
+    'driver-a': {driverId: 'driver-a', tripStatus: 'in_transit'},
+    'driver-c': {driverId: 'driver-c', status: 'returning_to_base'},
+  };
+  dashboard.state.queue = [
+    {id: 'queue-a', driverId: 'driver-d', status: 'waiting', registrationComplete: true},
+    {id: 'queue-b', driverId: 'driver-d', status: 'waiting', registrationComplete: true},
+    {id: 'queue-c', driverId: 'driver-e', status: 'waiting', registrationComplete: false},
+    {id: 'queue-d', driverId: 'driver-f', status: 'completed', registrationComplete: true},
+  ];
+
+  dashboard._renderFleetOperations();
+
+  expect(document.getElementById('fleetStatTransit').textContent).toBe('1');
+  expect(document.getElementById('fleetStatQueue').textContent).toBe('1');
+  expect(document.getElementById('fleetStatReturning').textContent).toBe('2');
+});
+
+test('Driver Directory searches company and name, shows status, and focuses valid zero coordinates', () => {
+  document.body.insertAdjacentHTML('beforeend', '<input id="driverDirectorySearch"><span id="fleetDirectoryCount"></span><div id="fleetTree"></div>');
+  dashboard.state.drivers = [
+    {id: 'driver-a', name: 'Alice Driver', truckingCompany: 'Acme Transit'},
+    {id: 'driver-b', name: 'Bob Driver', truckingCompany: 'Beta Freight'},
+    {id: 'driver-c', name: 'Casey Driver'},
+  ];
+  dashboard.state.liveTracking = {
+    'driver-a': {driverId: 'driver-a', lat: 0, lng: 0, status: 'online'},
+  };
+  dashboard._renderFleetTree();
+
+  const tree = document.getElementById('fleetTree');
+  expect(document.getElementById('fleetDirectoryCount').textContent).toBe('3 drivers');
+  expect(tree.textContent).toContain('Other');
+  expect(tree.textContent).toContain('Online');
+  const focus = vi.spyOn(MapManager, 'focusOnLocation');
+  tree.querySelector('[data-focus-driver="driver-a"]').click();
+  expect(focus).toHaveBeenCalledWith(0, 0);
+  focus.mockRestore();
+
+  const search = document.getElementById('driverDirectorySearch');
+  search.value = 'beta';
+  search.dispatchEvent(new Event('input'));
+  expect(tree.textContent).toContain('Bob Driver');
+  expect(tree.textContent).toContain('Beta Freight');
+  expect(tree.textContent).not.toContain('Alice Driver');
+  expect(tree.querySelector('details').open).toBe(true);
+  expect(document.getElementById('fleetDirectoryCount').textContent).toBe('1 driver');
+});
+
+test('Driver Directory preserves expanded company groups during live refreshes', () => {
+  document.body.insertAdjacentHTML('beforeend', '<input id="driverDirectorySearch"><span id="fleetDirectoryCount"></span><div id="fleetTree"></div>');
+  dashboard.state.drivers = [
+    {id: 'driver-a', name: 'Alice Driver', truckingCompany: 'Acme Transit'},
+    {id: 'driver-b', name: 'Bob Driver', truckingCompany: 'Beta Freight'},
+  ];
+  dashboard._renderFleetTree();
+
+  const tree = document.getElementById('fleetTree');
+  tree.querySelector('[data-company="Acme Transit"]').open = true;
+  dashboard.state.liveTracking = {'driver-a': {driverId: 'driver-a', status: 'online'}};
+  dashboard._renderFleetTree();
+
+  expect(tree.querySelector('[data-company="Acme Transit"]').open).toBe(true);
+  expect(tree.querySelector('[data-company="Beta Freight"]').open).toBe(false);
+});
+
+test('Driver Directory restores expanded groups after a search with no matches', () => {
+  document.body.insertAdjacentHTML('beforeend', '<input id="driverDirectorySearch"><span id="fleetDirectoryCount"></span><div id="fleetTree"></div>');
+  dashboard.state.drivers = [
+    {id: 'driver-a', name: 'Alice Driver', truckingCompany: 'Acme Transit'},
+    {id: 'driver-b', name: 'Bob Driver', truckingCompany: 'Beta Freight'},
+  ];
+  dashboard._renderFleetTree();
+
+  const tree = document.getElementById('fleetTree');
+  tree.querySelector('[data-company="Acme Transit"]').open = true;
+  const search = document.getElementById('driverDirectorySearch');
+  search.value = 'no matching driver';
+  search.dispatchEvent(new Event('input'));
+  expect(tree.querySelector('details')).toBeNull();
+
+  search.value = '';
+  search.dispatchEvent(new Event('input'));
+  expect(tree.querySelector('[data-company="Acme Transit"]').open).toBe(true);
+  expect(tree.querySelector('[data-company="Beta Freight"]').open).toBe(false);
+});
+
+test('live scans show skeleton rows while the initial location snapshot is loading', () => {
+  document.body.insertAdjacentHTML('beforeend', '<div id="tableWrap" class="flex-1 min-h-0 overflow-hidden"></div>');
+  dashboard.state.liveScansLoading = true;
+
+  dashboard._renderLiveScansTable();
+
+  const container = document.getElementById('tableWrap');
+  expect(container.querySelector('[aria-label="Loading live scans"]')).not.toBeNull();
+  expect(container.querySelectorAll('tbody tr')).toHaveLength(3);
+  expect(container.firstElementChild.classList.contains('overflow-y-auto')).toBe(true);
+  expect(container.textContent).not.toContain('No active drivers');
+});
+
+test('live scan rows resolve generic socket metadata from the active assignment', () => {
+  document.body.insertAdjacentHTML('beforeend', '<div id="tableWrap" class="flex-1 min-h-0 overflow-hidden"></div>');
+  dashboard.state.liveScansLoading = false;
+  dashboard.state.liveScans['driver-uid'] = {
+    driverId: 'driver-uid', name: 'Driver', lat: 14.5, lng: 121, status: 'online', lastSeen: Date.now(),
+  };
+  dashboard.state.sapAssignments = {
+    '0010123456': {driverId: 'driver-uid', driverName: 'Synthetic Driver', truckPlate: 'SYN-123', tripStatus: 'in_transit'},
+  };
+
+  dashboard._renderLiveScansTable();
+
+  const row = document.querySelector('#tableWrap tbody tr');
+  expect(row.closest('.overflow-y-auto')).not.toBeNull();
+  expect(row.children[0].textContent).toBe('0010123456');
+  expect(row.children[1].textContent).toContain('Synthetic Driver');
+  expect(row.children[2].textContent).toBe('SYN-123');
+});
+
+test('same Ship-To customer and location collapse to additive summary with expandable OBD details', () => {
+  const location = {
+    ShipToParty: '0010002870', ShipToPartyName: 'Robinsons Supermarket - Malabon',
+    Address: 'Ca Road DagatDagatan Cor., 1475, Letre M', Latitude: 14.6628, Longitude: 120.9578,
+  };
+  const rows = [
+    {...location, OBDNumber: '6051578245', Amount: '5539.31', Volume: '0.045', Weight: '21.360', Quantity: '7.000'},
+    {...location, ShipToPartyName: '  ROBINSONS   SUPERMARKET - MALABON ', Latitude: '14.662800', Longitude: '120.957800', OBDNumber: '6051578246', Amount: '5539.31', Volume: '0.045', Weight: '21.360', Quantity: '7.000'},
+  ];
+  dashboard.state.sapGroupedByDispatch[dispatch] = rows;
+  dashboard.state.sapAssignments[dispatch] = {
+    tripStatus: 'in_transit',
+    lineItems: [
+      {obdNumber: '6051578245', isPodCompleted: true, deliveryStatus: 'All Delivered', podImageUrl: 'saved_in_subcollection'},
+      {obdNumber: '6051578246', isPodCompleted: true, deliveryStatus: 'Rejected', podImageUrl: 'saved_in_subcollection'},
+    ],
+  };
+
+  dashboard.openSapDispatchDetail(dispatch);
+
+  const lines = document.getElementById('sapDtlOBDLines');
+  const [summaryRow, detailsRow] = lines.querySelectorAll(':scope > tr');
+  expect(lines.querySelectorAll(':scope > tr')).toHaveLength(2);
+  expect(summaryRow.children[0].textContent).toContain('2 OBDs');
+  expect([...summaryRow.children].map(cell => cell.textContent)).toContain('PHP 11,078.62');
+  expect([...summaryRow.children].map(cell => cell.textContent)).toContain('0.090');
+  expect([...summaryRow.children].map(cell => cell.textContent)).toContain('42.720');
+  expect([...summaryRow.children].map(cell => cell.textContent)).toContain('14.000');
+  expect(summaryRow.querySelector('[data-pod-status]').textContent).toBe('Mixed');
+  expect(document.getElementById('sapDtlTotalAmount').textContent).toBe('PHP 11,078.62');
+  expect(detailsRow.hidden).toBe(true);
+  expect(detailsRow.textContent).toContain('6051578245');
+  expect(detailsRow.textContent).toContain('6051578246');
+  expect(detailsRow.querySelectorAll('[data-pod-status]')).toHaveLength(2);
+  expect([...detailsRow.querySelectorAll('[data-pod-status]')].map(cell => cell.textContent)).toEqual(['Delivered', 'Rejected']);
+  expect(detailsRow.querySelectorAll('button[title="Preview POD"]')).toHaveLength(2);
+
+  const toggle = summaryRow.querySelector('[data-obd-group-toggle]');
+  toggle.click();
+  expect(detailsRow.hidden).toBe(false);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  toggle.click();
+  expect(detailsRow.hidden).toBe(true);
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+});
+
+test('OBDs with missing location data or different customer locations are not merged', () => {
+  const rows = [
+    {ShipToParty: '1', ShipToPartyName: 'Same', Address: 'Address A', OBDNumber: 'a'},
+    {ShipToParty: '1', ShipToPartyName: 'Same', Address: 'Address B', OBDNumber: 'b'},
+    {ShipToParty: '1', ShipToPartyName: 'Different customer', Address: 'Address A', OBDNumber: 'c'},
+    {ShipToParty: '1', ShipToPartyName: 'Same', OBDNumber: 'd'},
+    {ShipToParty: '1', ShipToPartyName: 'Same', OBDNumber: 'e'},
+  ];
+  expect(groupObdRowsByShipTo(rows).map(group => group.map(row => row.OBDNumber))).toEqual([['a'], ['b'], ['c'], ['d'], ['e']]);
+});
+
+test('destination grouping requires complete identity and uses six-decimal coordinate equivalence', () => {
+  const destination = {ShipToParty: '1', ShipToPartyName: 'Same', Address: 'Address A', Latitude: 14.6628001, Longitude: 120.9578001};
+  const rows = [
+    {...destination, OBDNumber: 'a'},
+    {...destination, Latitude: '14.6628004', Longitude: '120.9578004', OBDNumber: 'b'},
+    {...destination, Latitude: '', OBDNumber: 'c'},
+    {...destination, Longitude: '181', OBDNumber: 'd'},
+  ];
+  expect(groupObdRowsByShipTo(rows).map(group => group.map(row => row.OBDNumber))).toEqual([['a', 'b'], ['c'], ['d']]);
+});
+
+test('assignment queue name falls back to the matching driver profile by UID', () => {
+  const drivers = [{id: 'driver-uid', name: 'Profile Driver'}];
+  expect(queueDriverDisplayName({id: 'queue-doc', driverId: 'driver-uid'}, drivers)).toBe('Profile Driver');
+  expect(queueDriverDisplayName({id: 'driver-uid'}, drivers)).toBe('Profile Driver');
+  expect(queueDriverDisplayName({id: 'driver-uid', driverName: 'Queue Driver'}, drivers)).toBe('Queue Driver');
+  expect(queueDriverDisplayName({id: 'missing'}, drivers)).toBe('Unknown Driver');
+  dashboard.state.drivers = drivers;
+  dashboard.state.queue = [{id: 'queue-doc', driverId: 'driver-uid', truckType: '4W', status: 'waiting'}];
+  expect(dashboard._getAvailableDrivers('4W')[0].driverName).toBe('Profile Driver');
+});
+
+test.each([
+  ['assigned', 1],
+  ['loading', 1],
+  ['loaded', 1],
+  ['fully_loaded', 1],
+  ['completed', 0],
+  ['in_transit', 0],
+  ['returning_to_base', 0],
+])('assignment history with status %s yields %i selectable drivers', (tripStatus, expectedCount) => {
+  dashboard.state.queue = [{id: 'queue-doc', driverId: 'driver-uid', truckType: 'AUV', status: 'waiting', isAssigned: true}];
+  dashboard.state.sapAssignments = {
+    previous: {driverId: 'driver-uid', queueId: 'queue-doc', driverName: 'Profile Driver', truckType: 'AUV', tripStatus},
+  };
+
+  const available = dashboard._getAvailableDrivers('auv');
+
+  expect(available).toHaveLength(expectedCount);
+  if (expectedCount) {
+    expect(available[0]._fromAssignment).toBe(true);
+    expect(available[0]._hasActiveLoad).toBe(false);
+  }
+});
+
+test('a pre-transit assignment in another queue session cannot make a new scan selectable', () => {
+  dashboard.state.queue = [{id: 'new-queue-doc', driverId: 'driver-uid', truckType: 'AUV', status: 'waiting', isAssigned: false, registrationComplete: true}];
+  dashboard.state.sapAssignments = {
+    previous: {driverId: 'driver-uid', queueId: 'old-queue-doc', truckType: 'AUV', tripStatus: 'loading'},
+  };
+
+  expect(dashboard._getAvailableDrivers('auv')).toHaveLength(0);
+});
+
+test('an in-transit queue status locks assignment even if an assignment snapshot is stale', () => {
+  dashboard.state.queue = [{id: 'queue-doc', driverId: 'driver-uid', truckType: 'AUV', status: 'in_transit', isAssigned: true}];
+  dashboard.state.sapAssignments = {
+    previous: {driverId: 'driver-uid', queueId: 'queue-doc', truckType: 'AUV', tripStatus: 'loaded'},
+  };
+
+  expect(dashboard._getAvailableDrivers('auv')).toHaveLength(0);
+});
+
+test('new QR queue session is visible despite a completed prior session', () => {
+  dashboard.state.queue = [{id: 'new-queue-doc', driverId: 'driver-uid', truckType: 'AUV', status: 'waiting', isAssigned: false, registrationComplete: true}];
+  dashboard.state.sapAssignments = {
+    previous: {driverId: 'driver-uid', queueId: 'old-queue-doc', truckType: 'AUV', tripStatus: 'completed'},
+  };
+
+  const available = dashboard._getAvailableDrivers('auv');
+
+  expect(available).toHaveLength(1);
+  expect(available[0].id).toBe('new-queue-doc');
+  expect(available[0]._fromAssignment).toBe(false);
+});
+
+test('completed current QR queue session is neither Queue nor Assigned', () => {
+  dashboard.state.queue = [{id: 'queue-doc', driverId: 'driver-uid', truckType: 'AUV', status: 'waiting', isAssigned: false, registrationComplete: true}];
+  dashboard.state.sapAssignments = {
+    previous: {driverId: 'driver-uid', queueId: 'queue-doc', truckType: 'AUV', tripStatus: 'completed'},
+  };
+
+  expect(dashboard._getAvailableDrivers('auv')).toHaveLength(0);
+});
+
+test('assigned driver truck type falls back to queue matched by auth UID', () => {
+  dashboard.state.queue = [{id: 'auto-queue-doc', driverId: 'driver-uid', truckType: 'AUV', status: 'waiting', isAssigned: true}];
+  dashboard.state.drivers = [];
+  dashboard.state.sapAssignments = {
+    previous: {driverId: 'driver-uid', queueId: 'auto-queue-doc', tripStatus: 'assigned'},
+  };
+
+  const available = dashboard._getAvailableDrivers('auv');
+
+  expect(available).toHaveLength(1);
+  expect(available[0].truckType).toBe('AUV');
+  expect(available[0]._fromAssignment).toBe(true);
+});
+
+test('completed history from separate accounts with the same display name stays out of Assigned', () => {
+  dashboard.state.queue = [
+    {id: 'old-queue-a', driverId: 'uid-a', truckType: 'AUV', status: 'loading', isAssigned: true},
+    {id: 'old-queue-b', driverId: 'uid-b', truckType: 'AUV', status: 'loading', isAssigned: true},
+    {id: 'new-queue-a', driverId: 'uid-a', truckType: 'AUV', status: 'waiting', isAssigned: false, registrationComplete: true},
+  ];
+  dashboard.state.sapAssignments = {
+    oldA: {driverId: 'uid-a', queueId: 'old-queue-a', driverName: 'Same Name', truckPlate: 'SYN-123', tripStatus: 'completed'},
+    oldB: {driverId: 'uid-b', queueId: 'old-queue-b', driverName: 'Same Name', truckPlate: 'SYN-123', tripStatus: 'completed'},
+  };
+
+  const available = dashboard._getAvailableDrivers('auv');
+  expect(available).toHaveLength(1);
+  expect(available[0].id).toBe('new-queue-a');
+  expect(available[0]._fromAssignment).toBe(false);
+});
+
+test('Assigned uses the current QR queue ID when an older queue exists for the same UID', () => {
+  dashboard.state.queue = [
+    {id: 'old-queue', driverId: 'driver-uid', truckType: 'AUV', status: 'loading', isAssigned: true},
+    {id: 'current-queue', driverId: 'driver-uid', truckType: 'AUV', status: 'loading', isAssigned: true},
+  ];
+  dashboard.state.sapAssignments = {
+    old: {driverId: 'driver-uid', queueId: 'old-queue', truckType: 'AUV', tripStatus: 'completed'},
+    current: {driverId: 'driver-uid', queueId: 'current-queue', truckType: 'AUV', tripStatus: 'loaded'},
+  };
+
+  const available = dashboard._getAvailableDrivers('auv');
+  expect(available).toHaveLength(1);
+  expect(available[0].id).toBe('current-queue');
+  expect(available[0].driverId).toBe('driver-uid');
+  expect(available[0]._fromAssignment).toBe(true);
+});
+
+test('legacy assignment without queueId needs an explicit dispatch link to its current queue', () => {
+  dashboard.state.queue = [{id: 'queue-doc', driverId: 'driver-uid', truckType: 'AUV', status: 'loading', isAssigned: true}];
+  dashboard.state.sapAssignments = {
+    current: {driverId: 'driver-uid', truckType: 'AUV', tripStatus: 'loaded'},
+  };
+  expect(dashboard._getAvailableDrivers('auv')).toHaveLength(0);
+
+  dashboard.state.queue[0].assignedShipment = 'current';
+  expect(dashboard._getAvailableDrivers('auv')[0].id).toBe('queue-doc');
+});
+
+test('two open assigned sessions for one UID cannot produce an ambiguous Assigned row', () => {
+  dashboard.state.queue = [
+    {id: 'queue-one', driverId: 'driver-uid', truckType: 'AUV', status: 'loading', isAssigned: true},
+    {id: 'queue-two', driverId: 'driver-uid', truckType: 'AUV', status: 'loading', isAssigned: true},
+  ];
+  dashboard.state.sapAssignments = {
+    one: {driverId: 'driver-uid', queueId: 'queue-one', truckType: 'AUV', tripStatus: 'assigned'},
+    two: {driverId: 'driver-uid', queueId: 'queue-two', truckType: 'AUV', tripStatus: 'assigned'},
+  };
+
+  expect(dashboard._getAvailableDrivers('auv')).toHaveLength(0);
+});
 beforeEach(() => {
-  document.body.innerHTML = '<table><tbody id="sapBody"></tbody><tbody id="sapDtlOBDLines"></tbody></table><input id="sapSearch"><span id="sapStatAll"></span><span id="sapStatDel"></span><span id="sapStatTransit"></span><span id="sapResultCount"></span><div id="sapDispatchDetail" class="hidden"></div>';
+  document.body.innerHTML = '<table><tbody id="sapBody"></tbody><tbody id="sapDtlOBDLines"></tbody></table><input id="sapSearch"><span id="sapStatAll"></span><span id="sapStatDel"></span><span id="sapStatTransit"></span><span id="sapResultCount"></span><div id="sapDispatchDetail" class="hidden"><span id="sapDtlPlanDate"></span><span id="sapDtlActualDate"></span><span id="sapDtlTotalAmount"></span><span id="sapDtlTotalVolume"></span><span id="sapDtlTotalWeight"></span><span id="sapDtlTotalQty"></span></div>';
   dashboard = new Dashboard();
   dashboard.state.sapAssignments = {[dispatch]: stored()};
   SAPService.fetchShipments.mockResolvedValue([]);
+  SAPService.fetchDispatchDetails.mockResolvedValue({});
 });
 async function render(filter = 'all') {
   await dashboard._syncSAP(true);
@@ -54,6 +413,31 @@ test('returning shipment with an incomplete OBD is not labelled delivered', asyn
   const body = await render('delivered');
   expect(body.textContent).not.toContain('Test Driver');
   expect(document.getElementById('sapStatDel').textContent).toBe('0');
+});
+
+test('detail shows each OBD outcome beside its preview and refreshes after POD or retake', async () => {
+  const lines = dashboard.state.sapAssignments[dispatch].lineItems;
+  lines[1].deliveryStatus = 'Rejected';
+  lines.push({...lines[0], obdNumber: 'synthetic-third', deliveryStatus: 'Delivered w/ Rejection'});
+  await render();
+  dashboard.openSapDispatchDetail(dispatch);
+  const statuses = () => [...document.querySelectorAll('[data-pod-status]')].map(el => el.textContent);
+  expect(statuses()).toEqual(['Delivered', 'Rejected', 'Delivered w/ rejection']);
+  for (const cell of document.querySelectorAll('[data-pod-status]')) {
+    expect(cell.previousElementSibling.querySelector('button')).not.toBeNull();
+    expect(cell.parentElement.children).toHaveLength(12);
+  }
+  lines[0].isPodCompleted = false;
+  dashboard._rebuildShipmentGroups();
+  dashboard._refreshOpenDispatchDetail();
+  expect(statuses()[0]).toBe('Pending POD');
+  lines[0].isPodCompleted = true;
+  lines[0].deliveryStatus = 'Rejected';
+  dashboard._refreshOpenDispatchDetail();
+  expect(statuses()[0]).toBe('Rejected');
+  dashboard.closeSapDispatchModal();
+  dashboard._refreshOpenDispatchDetail();
+  expect(document.getElementById('sapDispatchDetail').classList.contains('hidden')).toBe(true);
 });
 test('only fresh SAP shipments appear in For Assignment, with no duplicate assigned rows', async () => {
   SAPService.fetchShipments.mockResolvedValue([
@@ -94,6 +478,33 @@ test('In Transit filter and counter use the stored trip lifecycle', async () => 
   expect((await render('in_transit')).textContent).toContain('Test Driver');
   expect(document.getElementById('sapStatTransit').textContent).toBe('1');
 });
+test.each([
+  ['all', 'in_transit'], ['in_transit', 'in_transit'], ['delivered', 'completed'],
+  ['assigned', 'assigned'], ['loading', 'loading'], ['fully_loaded', 'fully_loaded'], ['planned', 'assigned'],
+])('assigned SAP line details remain visible in the %s filter', async (filter, tripStatus) => {
+  dashboard.state.sapAssignments[dispatch] = stored(tripStatus);
+  dashboard.state.sapAssignments[dispatch].lineItems[0].actualDelDate = '';
+  const detailRows = [
+    {SAPDispatchNumber:dispatch, OBDNumber:'6801001522', Route:'Route A --> Destination A', PlanningDate:'2026-10-17', ActualDelDate:'/Date(1788912000000)/', Amount:'1234.5', Volume:'9.25', Weight:'44.5', ShipToParty:'00500001', ShipToPartyName:'Test Customer', Address:'Synthetic delivery address', Latitude:0, Longitude:'121.123456'},
+    {SAPDispatchNumber:dispatch, OBDNumber:'6801001523', Route:'Route A --> Destination A', PlanningDate:'2026-10-17', ActualDelDate:'/Date(1788912000000)/', Amount:'250', Volume:'3', Weight:'12', ShipToParty:'00500002', ShipToPartyName:'Second Customer', Address:'Second synthetic address', Latitude:'14.5', Longitude:'120.9'},
+  ];
+  SAPService.fetchDispatchDetails.mockResolvedValue({[dispatch]:detailRows});
+  dashboard.state.sapFilter = filter;
+  await dashboard._loadSapDispatchDetails([dispatch]);
+
+  const body = document.getElementById('sapBody');
+  expect(body.textContent).toContain('Destination A');
+  expect(body.textContent).toContain('2026-10-17');
+  dashboard.openSapDispatchDetail(dispatch);
+  const lines = document.getElementById('sapDtlOBDLines');
+  expect(lines.textContent).toContain('1,234.50');
+  expect(lines.textContent).toContain('00500001');
+  expect(lines.textContent).toContain('Synthetic delivery address');
+  expect(lines.textContent).toContain('0.000000');
+  expect(lines.textContent).toContain('121.123456');
+  expect(document.getElementById('sapDtlPlanDate').textContent).toBe('2026-10-17');
+  expect(document.getElementById('sapDtlActualDate').textContent).toContain('2026');
+});
 test('assigned detail keeps repeated stored OBD rows and quantities when SAP overlaps', async () => {
   const assignment = dashboard.state.sapAssignments[dispatch];
   assignment.lineItems.push({...assignment.lineItems[0], quantity: 2});
@@ -128,4 +539,17 @@ test.each([1791476416000, {seconds: 1791476416}, undefined])('POD preview handle
   expect(document.getElementById('podPreviewModal').classList.contains('hidden')).toBe(false);
   expect(document.getElementById('podTimestamp').textContent).not.toContain('Invalid Date');
   dashboard.closePodPreview();
+});
+test('driver assignment fields preserve SAP destination identity and physical metrics without amount', () => {
+  const fields = driverAssignmentFields({ShipToParty: '0010002870', Address: ' Synthetic address ', Latitude: '14.662800',
+    Longitude: '120.957800', Volume: '0.045', Weight: '21.360', Amount: '5539.31'});
+  expect(fields).toEqual({shipTo: '0010002870', deliveryAddress: 'Synthetic address', latitude: 14.6628,
+    longitude: 120.9578, volume: 0.045, weight: 21.36});
+  const merged = mergeAssignmentGroups({}, {dispatch: {lineItems: [{obdNumber: 'OBD-1', customerName: 'Synthetic', quantity: 7, ...fields}]}});
+  expect(merged.dispatch[0]).toMatchObject({ShipToParty: '0010002870', Address: 'Synthetic address',
+    Latitude: 14.6628, Longitude: 120.9578, Volume: 0.045, Weight: 21.36});
+});
+test('missing SAP location identity is not fabricated for driver grouping', () => {
+  expect(driverAssignmentFields({ShipToParty: '0010002870', Address: '', Latitude: '', Longitude: '', Volume: '', Weight: ''}))
+    .toEqual({shipTo: '0010002870', deliveryAddress: undefined, latitude: undefined, longitude: undefined, volume: undefined, weight: undefined});
 });

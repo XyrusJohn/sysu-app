@@ -1,9 +1,11 @@
 # SYSU Frontend — Feature & Code Documentation
 
+> **Review status (2026-10-15):** Historical code guide; only build entry points and routing/development configuration were sampled in this pass. Verify other file descriptions against current source before relying on them.
+
 > **What this is:** Detailed breakdown of every piece of the frontend — what it does, how it works, and what each file is responsible for. For anyone touching the UI, API integration, or dashboard logic.
 
-**Last verified:** May 2026 (post cleanup)
-**Stack:** Vite 8 + React-style vanilla JS (ES modules), TailwindCSS v4, Firebase SDK, Socket.IO Client, Leaflet
+**Last comprehensive verification:** May 2026 (post cleanup); selected configuration review: 2026-10-15
+**Stack:** Vite 8, JavaScript ES modules, Tailwind CSS 4, Firebase SDK, Socket.IO Client, and Leaflet; React packages are declared, but React usage was not audited here.
 
 ---
 
@@ -344,11 +346,11 @@ this.state = {
 
 ## Routing & Deploy
 
-**Backend serves the frontend:** In production (Railway deployment), `backend/src/server.js` serves `frontend/dist/` as static files via `express.static()`. This means both use the same origin — no CORS needed for API calls.
+**Frontend delivery:** `frontend/vite.config.js` builds multiple HTML entry points. The backend entry point inspected in this audit does not configure `express.static()`; do not rely on this guide's historical same-origin deployment description.
 
 **Firebase Hosting:** In the standard setup, Firebase Hosting serves the frontend separately. The `firebase.json` specifies `public: "dist"` — so `dist/` must be built before deploying.
 
-**Vite proxy (local dev):** Requests to `/api/*` are proxied to `http://localhost:3000` so the frontend dev server can talk to the backend without CORS issues.
+**Vite proxy (local dev):** `/api/*` and `/socket.io` use the origins resolved by `src/api/releaseConfig.js`. Local mode requires explicit loopback URLs and a demo Firebase project; see [release configuration](../frontend/src/api/releaseConfig.js).
 
 ---
 

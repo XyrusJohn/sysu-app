@@ -1,4 +1,4 @@
-# Railway production recovery — 2026-10-09
+﻿# Railway production recovery â€” 2026-10-09
 
 ## Warehouse socket regression and production data verification
 
@@ -12,7 +12,7 @@ A legacy super_admin profile without status was identified, but reading the actu
 
 ## Mobile Google sign-in configuration recovery
 
-After the user reported Google sign-in error 10 from Android Studio Run/Build, the default debug target and signing registration were checked against actual APK resources/certificate and the current Firebase Android configuration. Default debug had used demo Firebase/package `com.sysu.go.debug`, while the workstation key was absent from production Android OAuth registration. Default debug now uses existing production Firebase/services/package; SDK emulator attachment is controlled by an explicit flag and isolated variant. Current SHA-1/SHA-256 were added while retaining previous registrations, and the refreshed SDK configuration confirms the matching Android OAuth client. Both actual debug/liveTest APKs pass 4/4 project/package/signing/audience checks; 43 Kotlin cases pass per debug/liveTest/emulator variant; build/lint pass; EnvironmentPolicy coverage is 100% lines/branches. No connected device was available: actual Google login is not claimed. Mobile source GREEN `861391f`; G-25 remains IN PROGRESS for phone acceptance. See [mobile Google login evidence](../../sysu-go/docs/GOOGLE_LOGIN_RECOVERY_2026-10-09.md).
+After the user reported Google sign-in error 10 from Android Studio Run/Build, the default debug target and signing registration were checked against actual APK resources/certificate and the current Firebase Android configuration. Default debug had used demo Firebase/package `com.sysu.go.debug`, while the workstation key was absent from production Android OAuth registration. Default debug now uses existing production Firebase/services/package; SDK emulator attachment is controlled by an explicit flag and isolated variant. Current SHA-1/SHA-256 were added while retaining previous registrations, and the refreshed SDK configuration confirms the matching Android OAuth client. Both actual debug/liveTest APKs pass 4/4 project/package/signing/audience checks; 43 Kotlin cases pass per debug/liveTest/emulator variant; build/lint pass; EnvironmentPolicy coverage is 100% lines/branches. No connected device was available: actual Google login is not claimed. Mobile source GREEN `861391f`; G-25 remains IN PROGRESS for phone acceptance. See [mobile Google login evidence](../../../sysu-go/docs/GOOGLE_LOGIN_RECOVERY_2026-10-09.md).
 
 ## W-02: Delivery Filter and POD display recovery
 
@@ -30,7 +30,7 @@ Final verification:
 | ESLint frontend source | 0 errors; 64 existing warnings |
 | Production `npm run build` | PASS, 77 modules |
 | Playwright current-source desktop and Pixel 7 browser flows | 10/10 PASS, 34.5 seconds final rerun |
-| Delivery browser scenario | Login → stored assignment absent from SAP → Delivered → search second OBD → detail → subcollection POD preview → For Assignment exclusion → live In Transit update → assignment removal |
+| Delivery browser scenario | Login â†’ stored assignment absent from SAP â†’ Delivered â†’ search second OBD â†’ detail â†’ subcollection POD preview â†’ For Assignment exclusion â†’ live In Transit update â†’ assignment removal |
 | Existing browser regressions | Staff profile save/logout, anonymous access, disabled-session termination, assignment/approved cancellation/archive/reassignment all pass on both browser projects |
 | Production read-only projection | HTTP200; 12 stored assignments / 12 displayable; 40 stored line rows / 40 projected; 8 delivered, 2 in transit |
 | Firebase Hosting | `firebase deploy --only hosting --project sysu-web-5a25d` completed with final dashboard asset `dashboard-BxvCpPnx.js` |

@@ -1,5 +1,7 @@
 # SYSU migration v2 runbook
 
+Historical implementation and local evidence are documented here. Recheck current source, tests, target isolation, and approvals before any future run. This document does not authorize a migration or establish production readiness. Current release status: [FIX_TRACKER](FIX_TRACKER.md).
+
 The existing CLI filenames now delegate to the version 2 runner in `backend/src/migrations/releaseMigration.js`. Historical implementations remain in Git. Install backend dependencies from `backend/package-lock.json`; the CLI does not depend on an accidental root Firebase install.
 
 ## Target and default mode

@@ -39,6 +39,22 @@ export const SAPService = {
         }
     },
 
+    async fetchDispatchDetails(dispatchKeys) {
+        const token = await AuthService.getToken();
+        const response = await fetch(`${API_CONFIG.BASE_URL}/api/sap/dispatch-details`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`,
+            },
+            body: JSON.stringify({dispatchKeys}),
+        });
+        if (!response.ok) throw new Error(`Dispatch details fetch failed: HTTP ${response.status}`);
+        const json = await response.json();
+        if (json.success === false) throw new Error("Dispatch details are unavailable");
+        return json.data || {};
+    },
+
     subscribeToAssignments(callback) {
         const assignmentsRef = collection(db, "sap_assignments");
 

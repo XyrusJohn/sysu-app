@@ -11,6 +11,33 @@ const PUBLIC_TRUCK_TYPES = ['AUV', '4W', '6W', '10W', '20F', '40F'];
 let publicQueueCache;
 let publicQueuePending;
 
+async function getRegisteredQueue() {
+    if (!publicQueueCache || publicQueueCache.expiresAt <= Date.now()) {
+        if (!publicQueuePending) {
+            publicQueuePending = (async () => {
+                const snap = await DB().collection(QUEUE_COLLECTION)
+                    .where('registrationComplete', '==', true)
+                    .where('status', 'in', ['waiting', 'called'])
+                    .orderBy('entryTime', 'asc').limit(101).get();
+                const queues = Object.fromEntries(PUBLIC_TRUCK_TYPES.map(type => [type, []]));
+                const text = (value, max) => typeof value === 'string' ? value.slice(0, max) : '';
+                for (const doc of snap.docs.slice(0, 100)) {
+                    const data = doc.data();
+                    const type = text(data.truckType, 10).toUpperCase();
+                    if (!PUBLIC_TRUCK_TYPES.includes(type) || data.isAssigned === true || data.registrationComplete !== true) continue;
+                    queues[type].push({position: queues[type].length + 1,
+                        driverName: text(data.driverName, 100), plateNumber: text(data.plateNumber, 20),
+                        status: data.status === 'called' ? 'called' : 'waiting'});
+                }
+                publicQueueCache = {expiresAt: Date.now() + 5000,
+                    data: {queues, truncated: snap.docs.length > 100, asOf: new Date().toISOString()}};
+            })().finally(() => {publicQueuePending = null;});
+        }
+        await publicQueuePending;
+    }
+    return publicQueueCache.data;
+}
+
 const scanTokenSchema = z.object({
     token: z.string().min(1),
     driverId: z.string().min(1),
@@ -28,25 +55,18 @@ const updateStatusSchema = z.object({
 
 module.exports = {
     getPublicQueue: asyncWrapper(async (req, res) => {
-        if (!publicQueueCache || publicQueueCache.expiresAt <= Date.now()) {
-            if (!publicQueuePending) {
-                publicQueuePending = (async () => {
-                    const snap = await DB().collection(QUEUE_COLLECTION).where('status', '==', 'waiting')
-                        .orderBy('entryTime', 'asc').limit(101).get();
-                    const queues = Object.fromEntries(PUBLIC_TRUCK_TYPES.map(type => [type, []]));
-                    for (const doc of snap.docs.slice(0, 100)) {
-                        const data = doc.data();
-                        const type = String(data.truckType || '').toUpperCase();
-                        if (!PUBLIC_TRUCK_TYPES.includes(type) || data.isAssigned === true) continue;
-                        queues[type].push({position: queues[type].length + 1});
-                    }
-                    publicQueueCache = {expiresAt: Date.now() + 10000,
-                        data: {queues, truncated: snap.docs.length > 100, asOf: new Date().toISOString()}};
-                })().finally(() => {publicQueuePending = null;});
-            }
-            await publicQueuePending;
+        const data = await getRegisteredQueue();
+        const queues = Object.fromEntries(Object.entries(data.queues)
+            .map(([type, rows]) => [type, rows.map(({position}) => ({position}))]));
+        return res.json({success: true, data: {...data, queues}});
+    }),
+    getQueueCards: asyncWrapper(async (req, res) => {
+        // Defense in depth: role authorization also requires an explicitly active profile.
+        if (!req.userData || (req.userData.status !== undefined && req.userData.status !== 'active')) {
+            return res.status(403).json({success: false, message: 'Active staff account required'});
         }
-        return res.json({success: true, data: publicQueueCache.data});
+        res.set('Cache-Control', 'no-store');
+        return res.json({success: true, data: await getRegisteredQueue()});
     }),
     generateToken: asyncWrapper(async (req, res) => {
         const randomPart = crypto.randomBytes(12).toString("hex").toUpperCase();
@@ -95,7 +115,7 @@ module.exports = {
     }),
 
     scanToken: asyncWrapper(async (req, res) => {
-        if (req.userData?.role !== 'driver' || ['inactive', 'disabled'].includes(req.userData?.status)) {
+        if (req.userData?.role !== 'driver' || req.userData?.status !== 'active') {
             return res.status(403).json({success: false, message: 'Active driver account required'});
         }
         const body = scanTokenSchema.parse(req.body);

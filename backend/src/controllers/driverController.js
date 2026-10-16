@@ -65,7 +65,7 @@ const failure = (message, statusCode) => Object.assign(new Error(message), {stat
 async function checkStaff(tx, db, uid, roles) {
     const actor = await tx.get(db.collection('users').doc(uid));
     const data = actor.data();
-    if (!actor.exists || !roles.includes(data?.role) || ['inactive', 'disabled'].includes(data?.status)) {
+    if (!actor.exists || !roles.includes(data?.role) || data?.status !== 'active') {
         throw failure('Staff authorization required', 403);
     }
 }
@@ -78,7 +78,7 @@ exports.saveDriverProfile = asyncWrapper(async (req, res) => {
         await checkStaff(tx, db, req.user.uid, ['fleet_manager', 'admin', 'super_admin']);
         const target = await tx.get(db.collection('users').doc(id));
         const user = target.data();
-        if (!target.exists || user?.role !== 'driver' || ['inactive', 'disabled'].includes(user?.status)) {
+        if (!target.exists || user?.role !== 'driver' || user?.status !== 'active') {
             throw failure('Select an active registered driver account; phone-only profiles require reconciliation', 409);
         }
         const queues = await tx.get(db.collection('queue').where('driverId', '==', id).limit(101));

@@ -4,7 +4,7 @@ const ROLES = ['admin', 'driver', 'fleet_manager', 'pending', 'super_admin', 'qr
 const POSITIONS = {admin:'Admin', driver:'Driver', fleet_manager:'Fleet Manager', pending:'Pending Approval', super_admin:'Super Admin', qr_generator:'QR Generator'};
 function forbidden(message) { return Object.assign(new Error('Forbidden: ' + message), {statusCode:403}); }
 function requireReviewer(data) {
-    if (!data || !['admin','super_admin'].includes(data.role) || ['inactive','disabled'].includes(data.status)) throw forbidden('Admin privileges required');
+    if (!data || !['admin','super_admin'].includes(data.role) || data.status !== 'active') throw forbidden('Admin privileges required');
 }
 function notify(event, result, uid) {
     if (!global._io) return;

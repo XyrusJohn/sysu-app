@@ -1,6 +1,6 @@
-# SYSU release testing and remediation plan
+﻿# SYSU release testing and remediation plan
 
-Date: 2026-10-07. Companion: [source review and observed results](PRODUCTION_RELEASE_REVIEW_2026-10-07.md). This is a planned suite and release procedure; only the commands reported in that review have been executed. New commands below must be implemented before they can be used as gates.
+Historical plan dated 2026-10-07; it is not release approval or current deployment evidence. Companion: [source review and observed results](archive/PRODUCTION_RELEASE_REVIEW_2026-10-07.md). This is a planned suite and release procedure; only the commands reported in that review have been executed. New commands below must be implemented before they can be used as gates.
 
 ## 1. Safe, reproducible test environment
 
@@ -23,7 +23,7 @@ Record the commit, lockfile hashes, Node version, container digest, rules/index 
 
 Track R01-R51 as individual issues with owner, fix commit, test IDs, artifacts and closure date. P0 must close. P1 must close or have a demonstrated technical constraint eliminating the risk; an informal promise is not closure. P2/P3 exceptions require explicit owner, rationale and deadline.
 
-## 3. Authorization matrix — test every transport
+## 3. Authorization matrix â€” test every transport
 
 Actors: anonymous, missing-profile authenticated user, pending, inactive, driver A, driver B, fleet manager, QR generator, admin, super admin, expired-token user, revoked/disabled/deleted Auth user. Include profile-role changes during an active session. Do not infer backend access from frontend navigation.
 
@@ -55,7 +55,7 @@ Implement rule tests with the Firebase rules testing SDK using both `assertSucce
 | FIFO-03 | Many different dispatches concurrently assigned to same pre-transit driver | No lost entries; queue list/count equals stored active assignments; documented capacity respected | R12 |
 | FIFO-04 | Driver becomes full/departs or queue order changes between selection and commit | Transaction retries/rejects; no stale eligibility or wrong FIFO winner | R12, R15 |
 | FIFO-05 | UID versus queue document ID; several historical queue records; numeric/leading-zero dispatch keys | Canonical Auth UID stored and returned; correct active queue selected; identifiers preserved | R13, R48 |
-| OVR-01 | Request → approve → assign alternate | One valid token, one atomic consumption, assignment and request state agree | R08 |
+| OVR-01 | Request â†’ approve â†’ assign alternate | One valid token, one atomic consumption, assignment and request state agree | R08 |
 | OVR-02 | Expired/replayed/wrong-dispatch/wrong-driver token; two concurrent consumers | All invalid attempts denied; at most one successful use | R08 |
 | OVR-03 | Approve versus approve/deny/revoke; crash after issuance | Exactly one legal final decision; no orphan usable token; safe retry | R13 |
 | CAN-01 | Cancel sole or one of several pre-transit assignments | Counts/list/latest pointer/status coherent; audit retained; corrected typo covered | R13 |
@@ -81,8 +81,8 @@ Run against both staging socket services and the supported Android client versio
 - Test missing/invalid/expired/revoked tokens at handshake and during established connections. Demotion, disabled account, deletion and logout must stop privileged data/events.
 - Test null payload, invalid coordinates, NaN-like values, extreme numbers, excessive strings, unknown event fields, spoofed driver ID and unrelated POD shipment. Process stays alive and database/map stays unchanged.
 - Test high event volume, socket connection churn and public `/qr` connections with bounded resources and defined disconnect/rate-limit feedback.
-- Driver moves → dispatcher sees owned marker → stops → resumes → loads → transit → completion removes marker; stale delayed transit events must not resurrect completed trips.
-- POD upload/photo/signature → persisted owned object → socket invalidation → preview refresh without manual page reload. Duplicate/out-of-order notifications must be harmless.
+- Driver moves â†’ dispatcher sees owned marker â†’ stops â†’ resumes â†’ loads â†’ transit â†’ completion removes marker; stale delayed transit events must not resurrect completed trips.
+- POD upload/photo/signature â†’ persisted owned object â†’ socket invalidation â†’ preview refresh without manual page reload. Duplicate/out-of-order notifications must be harmless.
 - Drop each server separately, lose internet, background/kill/reopen Android, expire token, restart server, reconnect with missed events. Recover from persisted source of truth and show stale/disconnected state.
 - Repeat across two dispatchers and one driver, multiple pre-transit dispatches, UID/legacy ID fixtures, and temporary Firestore write failure.
 - Verify secondary socket disconnects on logout and refreshes credentials on reconnect. Explicitly decide whether any tokenless connection is permitted.
@@ -115,7 +115,7 @@ Manual details to record as individual defects: focus starts in modal and return
 | OPS-03 | Liveness/readiness during Firestore/Auth/SAP outage | Bounded readiness response, correct routing policy, alert and recovery; no restart storm |
 | OPS-04 | Rolling restart/SIGTERM during request/transaction/driver updates | Bounded drain, no acknowledged lost writes, reconnect/resync and no duplicate jobs |
 | OPS-05 | Real staging index/query inventory and permission-denied tests | All release queries succeed with deployed rules/indexes; denied cases fail intentionally |
-| OPS-06 | Migration dry-run → apply → rerun → interrupted batch → restore using >500 mixed records | Explicit target, idempotency, correct per-item data, count/checksum report, resumable progress and tested backup |
+| OPS-06 | Migration dry-run â†’ apply â†’ rerun â†’ interrupted batch â†’ restore using >500 mixed records | Explicit target, idempotency, correct per-item data, count/checksum report, resumable progress and tested backup |
 | OPS-07 | Cleanup boundary times, >500 records, missing timestamps, overlapping/repeated job and mid-batch failure | Only retention-approved records removed, references/storage handled, bounded memory, retry/reporting and correct timezone |
 | SEC-01 | Approved current dependency/lockfile and container advisory checks; tracked/history/image secret checks | No untriaged reachable critical/high issue; rotated exposed credentials where applicable; redacted report |
 | SEC-02 | CSP/framing/referrer/HSTS/CORS/OPTIONS/cache/proxy tests at actual hosts | Intended allowed origins, no spoofing bypass, no public private-data cache, login/QR/map/POD remain functional |
@@ -126,13 +126,13 @@ Manual details to record as individual defects: focus starts in modal and return
 | PERF-03 | 8-hour staging soak with reconnects, login/logout and listener creation | No monotonic listener/socket/cache/memory growth; stable freshness and operational cost |
 | DR-01 | Restore synthetic backup and roll back frontend/backend/rules/data-compatible version | Recovery time/data loss recorded, evidence against agreed RTO/RPO, previous artifact restored and critical smoke green |
 
-Define expected peak drivers/dispatchers, GPS frequency, collection sizes and kiosk issuance before load testing. Proposed initial targets for review: exercise 2× expected peak for 30 minutes plus an 8-hour soak; healthy cached API p95 <1s; committed notification-to-dashboard p95 <2s; no lost/duplicate authoritative writes; error rate <1%; no sustained memory growth after steady state. Separate SAP upstream latency from application latency. These are proposed acceptance targets, not measured results or existing service promises.
+Define expected peak drivers/dispatchers, GPS frequency, collection sizes and kiosk issuance before load testing. Proposed initial targets for review: exercise 2Ã— expected peak for 30 minutes plus an 8-hour soak; healthy cached API p95 <1s; committed notification-to-dashboard p95 <2s; no lost/duplicate authoritative writes; error rate <1%; no sustained memory growth after steady state. Separate SAP upstream latency from application latency. These are proposed acceptance targets, not measured results or existing service promises.
 
 Agree backup frequency/RPO/RTO, privacy/retention requirements and cost budget with the release owner. Observe HTTP latency/status, authorization failures, socket connections/event rejection, GPS age, SAP latency/cache behavior, Firestore failures, transaction retries, scheduler last-success, readiness, heap/CPU and daily read/write/egress costs. Define concrete alert recipients and runbooks.
 
 ## 8. CI and release artifact requirements
 
-After package ownership is corrected, use pinned supported Node tooling and committed lockfiles. Candidate pipeline: clean install → lint/syntax/import checks → current unit/component tests → rule and HTTP/socket integration tests → production frontend build → isolated backend image startup → staging deployment of same artifacts and rules/indexes → staging browser/mobile smoke → release approval.
+After package ownership is corrected, use pinned supported Node tooling and committed lockfiles. Candidate pipeline: clean install â†’ lint/syntax/import checks â†’ current unit/component tests â†’ rule and HTTP/socket integration tests â†’ production frontend build â†’ isolated backend image startup â†’ staging deployment of same artifacts and rules/indexes â†’ staging browser/mobile smoke â†’ release approval.
 
 Proposed script names to implement: `test:rules`, `test:integration`, `test:contract`, `test:e2e`, `test:smoke`, `lint`, `test:coverage`. Existing commands are only backend/frontend `npm test` and frontend `npm run build`; the root package currently has no orchestration scripts.
 

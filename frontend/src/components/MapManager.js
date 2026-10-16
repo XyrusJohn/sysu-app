@@ -15,6 +15,7 @@ const safeText = value => String(value ?? '').replaceAll('&', '&amp;').replaceAl
 const _defaultId = "map";
 const _reg = {};
 const _e = (id = _defaultId) => (_reg[id] ??= { map: null, tileLayer: null, markers: {} });
+const PHILIPPINES_BOUNDS = L.latLngBounds([[4.3, 115.5], [21.5, 127.5]]);
 
 export const markers         = _e(_defaultId).markers;
 export const trackingMarkers = _e("trackingMap").markers;
@@ -32,9 +33,33 @@ export const initLeafletMap = (containerId = _defaultId) => {
     e.map = L.map(containerId, {
         center: [14.5995, 120.9842],
         zoom: 11,
+        zoomSnap: 0,
+        minZoom: 5,
+        maxBounds: PHILIPPINES_BOUNDS,
+        maxBoundsViscosity: 1,
         zoomControl: false,
         attributionControl: false,
     });
+    const constrainPhilippinesView = () => {
+        const size = e.map.getSize().subtract(L.point(48, 48));
+        if (!size.x || !size.y) return;
+        const northWest = PHILIPPINES_BOUNDS.getNorthWest();
+        const southEast = PHILIPPINES_BOUNDS.getSouthEast();
+        const boundsSize = L.bounds(e.map.project(southEast, 0), e.map.project(northWest, 0)).getSize();
+        const scale = Math.min(size.x / boundsSize.x, size.y / boundsSize.y);
+        const fitZoom = e.map.getScaleZoom(scale, 0);
+        if (Number.isFinite(fitZoom)) {
+            const minZoom = L.Browser.any3d ? fitZoom : Math.max(5, Math.floor(fitZoom));
+            e.map.setMinZoom(minZoom);
+        }
+    };
+    e.map.on("resize", constrainPhilippinesView);
+    e.map.on("zoomend", () => {
+        if (e.map.getZoom() <= e.map.getMinZoom() + 0.001) {
+            e.map.panTo(PHILIPPINES_BOUNDS.getCenter(), {animate: false});
+        }
+    });
+    constrainPhilippinesView();
 
     const initialTileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
     console.log(`[MapManager:${containerId}] Creating L.tileLayer with URL:`, initialTileUrl);
@@ -84,7 +109,10 @@ export const initLeafletMap = (containerId = _defaultId) => {
 
     _injectCSS();
 
-    setTimeout(() => e.map.invalidateSize(), 400);
+    setTimeout(() => {
+        e.map.invalidateSize();
+        constrainPhilippinesView();
+    }, 400);
     if (containerId === _defaultId) window.map = e.map;
 
     return e.map;
@@ -291,16 +319,16 @@ const _popup = ({ name, driverId, shipmentId, lat, lng }, cfg) => `
 // ── Marker API ─────────────────────────────────────────────────────────────────
 
 /**
- * @param {{ driverId, lat, lng, name, status, shipmentId }} driver
+ * @param {{ driverId, lat, lng, name, status, shipmentId, tripStatus }} driver
  * @param {string} [containerId="map"]
  */
-export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, containerId = _defaultId) => {
+export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId, tripStatus }, containerId = _defaultId) => {
     const e = _e(containerId);
     if (!e.map || !validLocation(lat, lng) || !driverId) {
         return;
     }
     const previous = e.markers[driverId]?._sysuLocation;
-    if (previous && previous.name === name && previous.status === status && previous.shipmentId === shipmentId) {
+    if (previous && previous.name === name && previous.status === status && previous.shipmentId === shipmentId && previous.tripStatus === tripStatus) {
         if (previous.lat !== lat || previous.lng !== lng) {
             e.markers[driverId].setLatLng([lat, lng]);
             e.markers[driverId].getPopup()?.setContent(_popup({name: safeText(name), driverId: safeText(driverId), shipmentId: safeText(shipmentId), lat, lng}, _st(status)));
@@ -314,6 +342,7 @@ export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, c
 
     const cfg = _st(status);
     const isLive = status === "online";
+    const markerLabel = String(tripStatus ?? '').trim().toLowerCase() === 'in_transit' ? 'Driver' : name || 'Unknown Driver';
 
     const icon = L.divIcon({
         className: "",
@@ -323,7 +352,7 @@ export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, c
           ${isLive ? `<div class="flm-ping"></div>` : ""}
           <div class="flm-trk">${truckSvg}</div>
         </div>
-        <div class="flm-tip" style="--rc:${cfg.rc}">${name || "Unknown Driver"}</div>
+        <div class="flm-tip" style="--rc:${cfg.rc}">${markerLabel}</div>
       </div>`,
         iconSize: [54, 54],
         iconAnchor: [27, 27],
@@ -339,7 +368,7 @@ export const updateMarker = ({ driverId, lat, lng, name, status, shipmentId }, c
             .addTo(e.map)
             .bindPopup(_popup({ name, driverId: safeText(driverId), shipmentId: safeText(shipmentId), lat, lng }, cfg), { className: "flm-pop", maxWidth: 260 });
     }
-    e.markers[driverId]._sysuLocation = {lat, lng, name: rawName, status, shipmentId};
+    e.markers[driverId]._sysuLocation = {lat, lng, name: rawName, status, shipmentId, tripStatus};
 };
 
 /**

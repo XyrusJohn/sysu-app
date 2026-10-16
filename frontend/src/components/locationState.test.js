@@ -38,6 +38,18 @@ describe('Phone-to-web location ordering and lifecycle', () => {
     it('keeps the last real coordinate while offline', () => {
         const next = accept(live(), {driverId: fix.driverId, status: 'offline_in_transit'}, {...options, kind: 'status'});
         expect(next.status).toBe('offline'); expect(next.lat).toBe(fix.lat); expect(next.lastSeen).toBe(now);
+        expect(next.tripStatus).toBe('in_transit');
+    });
+    it('preserves transit state through GPS updates and clears it on an explicit status transition', () => {
+        const transit = accept(live(), {driverId: fix.driverId, status: 'in_transit'}, {...options, kind: 'status'});
+        expect(transit.status).toBe('online');
+        expect(transit.tripStatus).toBe('in_transit');
+
+        const moving = accept(transit, {...fix, timestamp: now + 1, status: 'online'}, {...options, now: now + 1});
+        expect(moving.tripStatus).toBe('in_transit');
+
+        const available = accept(moving, {driverId: fix.driverId, status: 'online'}, {...options, now: now + 2, kind: 'status'});
+        expect(available.tripStatus).toBeNull();
     });
     it('a fresh GPS packet restores online after an offline event', () => {
         const offline = accept(live(), {driverId: fix.driverId, status: 'offline'}, {...options, kind: 'status'});

@@ -6,7 +6,7 @@ let expired = false;
 let queueLimit;
 const snapshot = () => ({ exists: true, data: () => ({ used: false, isUsed: false, expiresAt: { toMillis: () => Date.now() + (expired ? -1 : 60000) } }) });
 const ref = { id: 'queue', get: async () => snapshot(), update: async () => { writes++; } };
-const queueQuery={where(){return this;},orderBy(){return this;},limit(value){queueLimit=value;return this;},get:async()=>({docs:[{id:'private-driver',data:()=>({driverId:'private-driver',driverName:'PRIVATE-NAME',plateNumber:'PRIVATE-PLATE',truckCompany:'PRIVATE-COMPANY',truckType:'4W',status:'waiting',isAssigned:false})}]})};
+const queueQuery={where(){return this;},orderBy(){return this;},limit(value){queueLimit=value;return this;},get:async()=>({docs:[{id:'private-driver',data:()=>({driverId:'private-driver',driverName:'PRIVATE-NAME',plateNumber:'PRIVATE-PLATE',truckCompany:'PRIVATE-COMPANY',truckType:'4W',status:'waiting',registrationComplete:true,isAssigned:false})}]})};
 const db = { collection: () => ({ ...queueQuery, doc: () => ref }), runTransaction: async (fn) => fn({ get: async () => snapshot(), set: () => { writes++; }, update: () => { writes++; } }) };
 const firestore = () => db;
 firestore.FieldValue = { serverTimestamp: () => 'time' };
