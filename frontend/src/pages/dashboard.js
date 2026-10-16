@@ -945,6 +945,8 @@ export class Dashboard {
             .getElementById(this.config.logoutBtnId)
             ?.addEventListener("click", this.handleLogout);
 
+        this._initLiveScansPanel();
+
         // Profile pill → open modal with current user data
         document.getElementById("uPill")?.addEventListener("click", () => {
             const profile = AuthService.getUserProfile();
@@ -1006,7 +1008,6 @@ export class Dashboard {
             "Overview",
             "Orders",
             "Drivers",
-            "Tracking",
             "Fleet",
             "Docs",
             "Settings",
@@ -1282,6 +1283,117 @@ export class Dashboard {
             this._renderFleetOperations();
             this._renderFleetTree();
         }, 150);
+    }
+
+    _initLiveScansPanel() {
+        const panel = document.getElementById("resizePanel");
+        const handle = document.getElementById("liveScansResizeHandle");
+        if (!panel || !handle || this._liveScansPanelInitialized) return;
+
+        this._liveScansPanelInitialized = true;
+        this._liveScansExpandedHeight = 240;
+        this._setLiveScansPanelHeight(this._liveScansExpandedHeight);
+
+        let dragStart = null;
+        let suppressClick = false;
+        const stopDragging = (event) => {
+            if (!dragStart) return;
+            window.removeEventListener("pointermove", moveHandle);
+            window.removeEventListener("pointerup", stopDragging);
+            window.removeEventListener("pointercancel", stopDragging);
+            dragStart = null;
+            if (event.type === "pointercancel") {
+                suppressClick = false;
+            } else if (suppressClick) {
+                setTimeout(() => { suppressClick = false; }, 0);
+            }
+        };
+        const moveHandle = (event) => {
+            if (!dragStart) return;
+            const delta = dragStart.y - event.clientY;
+            if (Math.abs(delta) > 3) suppressClick = true;
+            this._setLiveScansPanelHeight(dragStart.height + delta);
+        };
+
+        handle.addEventListener("pointerdown", (event) => {
+            if (event.button !== undefined && event.button !== 0) return;
+            event.preventDefault();
+            dragStart = {
+                y: event.clientY,
+                height: panel.getBoundingClientRect().height || Number.parseFloat(panel.style.height) || 240,
+            };
+            window.addEventListener("pointermove", moveHandle);
+            window.addEventListener("pointerup", stopDragging);
+            window.addEventListener("pointercancel", stopDragging);
+        });
+        handle.addEventListener("click", () => {
+            if (suppressClick) {
+                suppressClick = false;
+                return;
+            }
+            const collapsed = panel.dataset.collapsed === "true";
+            this._setLiveScansPanelHeight(collapsed ? this._liveScansExpandedHeight : 56);
+        });
+        handle.addEventListener("keydown", (event) => {
+            const height = panel.getBoundingClientRect().height || Number.parseFloat(panel.style.height) || 240;
+            if (event.key === "ArrowUp") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(height + 24);
+            } else if (event.key === "ArrowDown") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(height - 24);
+            } else if (event.key === "Home") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(56);
+            } else if (event.key === "End") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(this._getLiveScansPanelMaxHeight());
+            }
+        });
+        window.addEventListener("resize", () => {
+            if (panel.dataset.collapsed !== "true") {
+                this._setLiveScansPanelHeight(Number.parseFloat(panel.style.height) || 240);
+            }
+        });
+    }
+
+    _getLiveScansPanelMaxHeight() {
+        const panel = document.getElementById("resizePanel");
+        const availableHeight = panel?.parentElement?.clientHeight || 680;
+        return Math.max(140, availableHeight - 350);
+    }
+
+    _setLiveScansPanelHeight(requestedHeight) {
+        const panel = document.getElementById("resizePanel");
+        const handle = document.getElementById("liveScansResizeHandle");
+        if (!panel || !handle) return;
+
+        const collapsed = requestedHeight <= 64;
+        const minHeight = collapsed ? 56 : 140;
+        const height = collapsed
+            ? 56
+            : Math.min(this._getLiveScansPanelMaxHeight(), Math.max(minHeight, requestedHeight));
+        if (!collapsed) this._liveScansExpandedHeight = height;
+
+        panel.style.height = `${height}px`;
+        panel.dataset.collapsed = String(collapsed);
+        handle.setAttribute("aria-expanded", String(!collapsed));
+        handle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} Live Scans panel; drag to resize`);
+        handle.title = `Drag to resize; click to ${collapsed ? "expand" : "collapse"}`;
+        document.getElementById("liveScansHeader")?.classList.toggle("py-1", collapsed);
+        document.getElementById("liveScansHeader")?.classList.toggle("py-3", !collapsed);
+        document.querySelectorAll("[data-live-scans-detail], #shipmentTabs, #tableWrap")
+            .forEach((element) => element.classList.toggle("hidden", collapsed));
+
+        if (!this._liveScansMapResizeFrame) {
+            const refreshMapSize = () => {
+                this._liveScansMapResizeFrame = null;
+                window.map?.invalidateSize({pan: false});
+            };
+            this._liveScansMapResizeFrame = typeof requestAnimationFrame === "function"
+                ? requestAnimationFrame(refreshMapSize)
+                : setTimeout(refreshMapSize, 0);
+        }
     }
 
     _formatCoord(val, digits = 5) {
@@ -2658,25 +2770,13 @@ export class Dashboard {
             const hasMore = drivers.length > visibleDrivers.length;
             const rows = visibleDrivers.map((driver) => {
                 const live = driver.live;
-                const trackingStatus = live?.tripStatus === "in_transit" ? "in_transit" : live?.status;
-                const status = {
-                    online: ["Online", "bg-emerald-400", "text-emerald-300"],
-                    in_transit: ["In transit", "bg-emerald-400", "text-emerald-300"],
-                    returning_to_base: ["Returning", "bg-amber-400", "text-amber-300"],
-                    stopped: ["Stopped", "bg-amber-400", "text-amber-300"],
-                    stale: ["Stale", "bg-orange-400", "text-orange-300"],
-                }[trackingStatus] || ["Offline", "bg-db-text3", "text-db-text3"];
                 const id = String(driver.id || driver.driverId || "");
                 const hasLocation = Number.isFinite(live?.lat) && Number.isFinite(live?.lng);
                 return `
                     <button type="button" data-focus-driver="${escapeHtml(id)}" ${hasLocation ? "" : "disabled"}
                             aria-label="${escapeHtml(`Focus map on ${driver.name}`)}${hasLocation ? "" : "; no saved location"}"
                             class="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left transition-colors ${hasLocation ? "cursor-pointer hover:bg-db-item-hover" : "cursor-default opacity-70"}">
-                        <span class="flex min-w-0 items-center gap-2">
-                            <span class="h-1.5 w-1.5 shrink-0 rounded-full ${status[1]}"></span>
-                            <span class="truncate text-[11.5px] text-db-text2">${escapeHtml(driver.name)}</span>
-                        </span>
-                        <span class="shrink-0 text-[9px] font-semibold ${status[2]}">${status[0]}</span>
+                        <span class="min-w-0 truncate text-[11.5px] text-db-text2">${escapeHtml(driver.name)}</span>
                     </button>`;
             }).join("");
             return `

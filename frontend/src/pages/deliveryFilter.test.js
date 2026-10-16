@@ -1,4 +1,6 @@
 import {beforeEach, expect, test, vi} from 'vitest';
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
 
 vi.mock('../api/firebase.js', () => ({db: {}, auth: {}}));
 vi.mock('../api/socket.js', () => ({EVENTS: {}, socket: {}, getDriverSocket: vi.fn(), connectDriverSocket: vi.fn()}));
@@ -60,7 +62,7 @@ test('sidebar operations summary counts unique active, returning, and queued dri
   expect(document.getElementById('fleetStatReturning').textContent).toBe('2');
 });
 
-test('Driver Directory searches company and name, shows status, and focuses valid zero coordinates', () => {
+test('Driver Directory searches company and name without status labels and focuses valid zero coordinates', () => {
   document.body.insertAdjacentHTML('beforeend', '<input id="driverDirectorySearch"><span id="fleetDirectoryCount"></span><div id="fleetTree"></div>');
   dashboard.state.drivers = [
     {id: 'driver-a', name: 'Alice Driver', truckingCompany: 'Acme Transit'},
@@ -75,7 +77,7 @@ test('Driver Directory searches company and name, shows status, and focuses vali
   const tree = document.getElementById('fleetTree');
   expect(document.getElementById('fleetDirectoryCount').textContent).toBe('3 drivers');
   expect(tree.textContent).toContain('Other');
-  expect(tree.textContent).toContain('Online');
+  expect(tree.textContent).not.toMatch(/\b(Online|Offline|In transit|Returning|Stopped|Stale)\b/);
   const focus = vi.spyOn(MapManager, 'focusOnLocation');
   tree.querySelector('[data-focus-driver="driver-a"]').click();
   expect(focus).toHaveBeenCalledWith(0, 0);
@@ -140,6 +142,95 @@ test('live scans show skeleton rows while the initial location snapshot is loadi
   expect(container.querySelectorAll('tbody tr')).toHaveLength(3);
   expect(container.firstElementChild.classList.contains('overflow-y-auto')).toBe(true);
   expect(container.textContent).not.toContain('No active drivers');
+});
+
+test('dashboard navigation omits the standalone tracking entry and obsolete live-scan filters', () => {
+  const html = readFileSync(resolve(globalThis.process.cwd(), 'dashboard.html'), 'utf8');
+
+  expect(html).not.toContain('id="rTracking"');
+  expect(html).not.toContain('id="lTracking"');
+  expect(html).not.toContain('data-tab="transit"');
+  expect(html).not.toContain('data-tab="delivered"');
+  expect(html).toContain('id="liveScansResizeHandle"');
+  expect(html).toContain('data-tab="all"');
+});
+
+test('Live Scans panel defaults expanded and its handle collapses and restores it', () => {
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="mainContent">
+      <section id="resizePanel" style="height: 0px">
+        <button id="liveScansResizeHandle" aria-expanded="true"></button>
+        <div id="liveScansHeader"><span data-live-scans-detail></span><div id="shipmentTabs"></div></div>
+        <div id="tableWrap"></div>
+      </section>
+    </div>`);
+
+  dashboard._initLiveScansPanel();
+  const panel = document.getElementById('resizePanel');
+  const handle = document.getElementById('liveScansResizeHandle');
+
+  expect(panel.style.height).toBe('240px');
+  expect(handle.getAttribute('aria-expanded')).toBe('true');
+  handle.click();
+  expect(panel.style.height).toBe('56px');
+  expect(handle.getAttribute('aria-expanded')).toBe('false');
+  expect(document.getElementById('tableWrap').classList.contains('hidden')).toBe(true);
+  handle.click();
+  expect(panel.style.height).toBe('240px');
+  expect(document.getElementById('tableWrap').classList.contains('hidden')).toBe(false);
+});
+
+test('Live Scans resize handle supports pointer dragging and keyboard adjustments', () => {
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="mainContent">
+      <section id="resizePanel" style="height: 240px">
+        <button id="liveScansResizeHandle" aria-expanded="true"></button>
+        <div id="liveScansHeader"><span data-live-scans-detail></span><div id="shipmentTabs"></div></div>
+        <div id="tableWrap"></div>
+      </section>
+    </div>`);
+
+  dashboard._initLiveScansPanel();
+  const handle = document.getElementById('liveScansResizeHandle');
+  const panel = document.getElementById('resizePanel');
+  handle.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, button: 0, clientY: 100}));
+  window.dispatchEvent(new MouseEvent('pointermove', {clientY: 50}));
+  window.dispatchEvent(new MouseEvent('pointerup'));
+  handle.click();
+  expect(panel.style.height).toBe('290px');
+
+  handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', bubbles: true}));
+  expect(panel.style.height).toBe('266px');
+  handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'Home', bubbles: true}));
+  expect(panel.style.height).toBe('56px');
+});
+
+test('Live Scans resize handle does not swallow clicks after an outside release or canceled drag', async () => {
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="mainContent">
+      <section id="resizePanel" style="height: 240px">
+        <button id="liveScansResizeHandle" aria-expanded="true"></button>
+        <div id="liveScansHeader"><span data-live-scans-detail></span><div id="shipmentTabs"></div></div>
+        <div id="tableWrap"></div>
+      </section>
+    </div>`);
+
+  dashboard._initLiveScansPanel();
+  const handle = document.getElementById('liveScansResizeHandle');
+  const panel = document.getElementById('resizePanel');
+  handle.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, button: 0, clientY: 100}));
+  window.dispatchEvent(new MouseEvent('pointermove', {clientY: 70}));
+  window.dispatchEvent(new MouseEvent('pointerup'));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  handle.click();
+  expect(panel.style.height).toBe('56px');
+
+  handle.click();
+  handle.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, button: 0, clientY: 100}));
+  window.dispatchEvent(new MouseEvent('pointermove', {clientY: 70}));
+  window.dispatchEvent(new Event('pointercancel'));
+  handle.click();
+  expect(panel.style.height).toBe('56px');
 });
 
 test('live scan rows resolve generic socket metadata from the active assignment', () => {

@@ -142,20 +142,6 @@
         >
     </button>
 
-    <!-- Driver Location Tracking -->
-    <button
-            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
-            id="rTracking"
-    >
-        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] stroke-[1.7]">
-                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                <circle cx="12" cy="10" r="3"/>
-            </svg>
-        </span>
-        <span class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]">Live Tracking</span>
-    </button>
-
     <button
             class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
             id="rDrivers"
@@ -400,16 +386,6 @@
             </button>
             <button
                     class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text"
-                    id="lTracking"
-            >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4 shrink-0 opacity-70">
-                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                    <circle cx="12" cy="10" r="3"/>
-                </svg>
-                <span>Driver Tracking</span>
-            </button>
-            <button
-                    class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text"
                     id="lFleet"
             >
                 <svg
@@ -514,16 +490,24 @@
         <section
                 id="resizePanel"
                 class="h-[240px] bg-db-panel border-t border-db-border flex flex-col overflow-hidden relative transition-[height] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] shrink-0"
+                style="height: 240px"
         >
+            <div class="h-4 shrink-0 flex items-center justify-center bg-db-panel/80">
+                <button id="liveScansResizeHandle" type="button" aria-label="Resize or collapse Live Scans panel" aria-expanded="true" aria-controls="tableWrap" title="Drag to resize; click to collapse or expand" class="w-16 h-3 flex items-center justify-center rounded-full border-0 bg-transparent cursor-ns-resize touch-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sysu-gold">
+                    <span class="w-9 h-1 rounded-full bg-db-text3/60"></span>
+                </button>
+            </div>
             <div
                     class="flex items-center justify-between px-5 py-3 border-b border-db-border shrink-0 bg-db-bg/40"
+                    id="liveScansHeader"
             >
                 <div class="flex items-center gap-3">
               <span class="text-[15px] font-black text-white tracking-tight"
-              >Live Scans</span
+              id="liveScansTitle">Live Scans</span
               >
                     <div
                             class="flex items-center gap-1.5 px-2 py-0.5 bg-green-500/10 border border-green-500/20 rounded-full text-[10px] font-black text-green-400"
+                            data-live-scans-detail
                     >
                         <div
                                 class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"
@@ -532,6 +516,7 @@
                     </div>
                     <div
                             class="flex items-center gap-1 text-[10px] text-db-text3 font-bold uppercase tracking-wider"
+                            data-live-scans-detail
                     >
                         <span class="text-green-500">●</span> Connected
                     </div>
@@ -542,18 +527,6 @@
                             data-tab="all"
                     >
                         All
-                    </button>
-                    <button
-                            class="px-3 py-1 text-[10px] font-bold rounded text-db-text3 hover:text-db-text cursor-pointer transition-all"
-                            data-tab="transit"
-                    >
-                        Scans
-                    </button>
-                    <button
-                            class="px-3 py-1 text-[10px] font-bold rounded text-db-text3 hover:text-db-text cursor-pointer transition-all"
-                            data-tab="delivered"
-                    >
-                        Incidents
                     </button>
                 </div>
             </div>
