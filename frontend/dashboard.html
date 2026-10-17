@@ -1514,17 +1514,17 @@
                 <div class="text-[10px] font-bold text-sysu-red uppercase tracking-widest mb-3">Outbound Line Items (All
                     OBDs)
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full min-w-[1200px] text-left border-collapse text-sm table-fixed">
+                <div class="w-full min-w-0 overflow-x-hidden">
+                    <table id="sapDtlOBDTable" class="sap-obd-table w-full min-w-0 text-left border-collapse text-sm table-fixed">
                         <colgroup>
                             <col class="w-[8%]">
-                            <col class="w-[9%]">
+                            <col class="w-[10%]">
                             <col class="w-[6%]">
                             <col class="w-[6%]">
                             <col class="w-[6%]">
-                            <col class="w-[7%]">
-                            <col class="w-[12%]">
-                            <col class="w-[14%]">
+                            <col class="w-[8%]">
+                            <col class="w-[11%]">
+                            <col class="w-[13%]">
                             <col class="w-[7%]">
                             <col class="w-[7%]">
                             <col class="w-[7%]">
@@ -1966,15 +1966,18 @@
     <div id="podPreviewModal" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-[9000]">
       <div class="bg-white dark:bg-gray-800 rounded-lg p-4 sm:p-3 max-w-4xl sm:max-w-3xl md:max-w-2xl w-full shadow-lg">
         <div class="flex justify-between items-center mb-2">
-          <h2 class="text-lg font-bold text-gray-800 dark:text-gray-200">POD Preview</h2>
+          <h2 id="podPreviewTitle" class="text-lg font-bold text-gray-800 dark:text-gray-200">POD Preview</h2>
           <button onclick="window.dashboard.closePodPreview()" class="text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white">&times;</button>
         </div>
-        <div class="flex-1 flex items-center justify-center">
-          <img id="podPreviewImg" src="" alt="POD image" class="max-h-[80vh] sm:max-h-[70vh] md:max-h-[60vh] w-auto rounded cursor-zoom-in"/>
+        <div id="podPreviewSingleContent">
+          <div class="flex-1 flex items-center justify-center">
+            <img id="podPreviewImg" src="" alt="POD image" class="max-h-[80vh] sm:max-h-[70vh] md:max-h-[60vh] w-auto rounded cursor-zoom-in"/>
+          </div>
+          <div class="text-sm text-gray-600 dark:text-gray-300">Captured at: <span id="podTimestamp">&mdash;</span></div>
+          <div class="text-sm text-gray-600 dark:text-gray-300">Verified at: <span id="podVerifiedTimestamp">&mdash;</span></div>
+          <div id="podPreviewSignature" class="mt-4"></div>
         </div>
-        <div class="text-sm text-gray-600 dark:text-gray-300">Captured at: <span id="podTimestamp">&mdash;</span></div>
-        <div class="text-sm text-gray-600 dark:text-gray-300">Verified at: <span id="podVerifiedTimestamp">&mdash;</span></div>
-        <div id="podPreviewSignature" class="mt-4"></div>
+        <div id="podPreviewGallery" hidden class="w-full"></div>
       </div>
     </div>
 </body>

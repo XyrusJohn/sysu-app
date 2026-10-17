@@ -335,7 +335,14 @@ test('same Ship-To customer and location collapse to additive summary with expan
   expect(detailsRow.textContent).toContain('6051578246');
   expect(detailsRow.querySelectorAll('[data-pod-status]')).toHaveLength(2);
   expect([...detailsRow.querySelectorAll('[data-pod-status]')].map(cell => cell.textContent)).toEqual(['Delivered', 'Rejected']);
-  expect(detailsRow.querySelectorAll('button[title="Preview POD"]')).toHaveLength(2);
+  expect(summaryRow.querySelectorAll('[data-obd-group-preview]')).toHaveLength(1);
+  expect(summaryRow.querySelector('[data-obd-group-preview]').textContent).toBe('Preview');
+  const expectedColumns = ['OBD Number', 'Amount', 'Volume (m³)', 'Weight (kg)', 'Quantity', 'Ship-To', 'Customer Name', 'Delivery Address', 'Latitude', 'Longitude', 'POD Preview', 'Delivery Status'];
+  expect([...summaryRow.querySelectorAll(':scope > td')].map(cell => cell.dataset.label)).toEqual(expectedColumns);
+  expect(detailsRow.querySelectorAll('button[title="Preview POD"]')).toHaveLength(0);
+  const previewGroup = vi.spyOn(dashboard, 'openObdPodGroupPreview').mockResolvedValue();
+  summaryRow.querySelector('[data-obd-group-preview]').click();
+  expect(previewGroup).toHaveBeenCalledWith(0);
 
   const toggle = summaryRow.querySelector('[data-obd-group-toggle]');
   toggle.click();
@@ -743,6 +750,40 @@ test.each([1791476416000, {seconds: 1791476416}, undefined])('POD preview handle
   await expect(dashboard.openObdPodPreview('6801001522')).resolves.toBeUndefined();
   expect(document.getElementById('podPreviewModal').classList.contains('hidden')).toBe(false);
   expect(document.getElementById('podTimestamp').textContent).not.toContain('Invalid Date');
+  dashboard.closePodPreview();
+});
+test('group POD preview shows one delivery-point photo and every OBD status from one summary action', async () => {
+  const location = {
+    ShipToParty: '0010002870', ShipToPartyName: 'Same Customer', Address: 'Same Address', Latitude: 14.6, Longitude: 121,
+  };
+  const rows = [
+    {...location, OBDNumber: 'OBD-1'},
+    {...location, OBDNumber: 'OBD-2'},
+  ];
+  dashboard.state.sapGroupedByDispatch[dispatch] = rows;
+  dashboard.state.sapAssignments[dispatch] = {
+    tripStatus: 'in_transit',
+    lineItems: [
+      {obdNumber: 'OBD-1', podImageUrl: 'data:image/png;base64,AAAA', podCapturedAt: 1791476416000, isPodCompleted: true, deliveryStatus: 'All Delivered'},
+      {obdNumber: 'OBD-2', podImageUrl: 'data:image/png;base64,BBBB', podCapturedAt: 1791476417000, isPodCompleted: true, deliveryStatus: 'Rejected'},
+    ],
+  };
+  document.body.insertAdjacentHTML('beforeend', '<div id="podPreviewModal" class="hidden"><h2 id="podPreviewTitle"></h2><div id="podPreviewSingleContent"><img id="podPreviewImg"></div><div id="podPreviewGallery" hidden></div></div>');
+
+  dashboard.openSapDispatchDetail(dispatch);
+  document.querySelector('[data-obd-group-preview]').click();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const modal = document.getElementById('podPreviewModal');
+  const gallery = document.getElementById('podPreviewGallery');
+  expect(modal.classList.contains('flex')).toBe(true);
+  expect(document.getElementById('podPreviewTitle').textContent).toBe('POD Preview · 2 OBDs');
+  expect(gallery.hidden).toBe(false);
+  expect(gallery.querySelectorAll('img')).toHaveLength(1);
+  expect(gallery.querySelector('img').src).toBe('data:image/png;base64,BBBB');
+  expect(gallery.textContent).toContain('OBD-1 · Delivered');
+  expect(gallery.textContent).toContain('OBD-2 · Rejected');
   dashboard.closePodPreview();
 });
 test('driver assignment fields preserve SAP destination identity and physical metrics without amount', () => {

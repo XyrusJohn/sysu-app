@@ -128,6 +128,7 @@ export class Dashboard {
         this._sapDispatchDetailsRetryAfter = new Map();
         this._podPreviewEscapeListener = null;
         this._globalEscapeListener = null;
+        this._sapObdPreviewGroups = [];
         this._bindMethods();
     }
 
@@ -1099,6 +1100,7 @@ export class Dashboard {
         window.dashboard.fitTrackingBounds = this.fitTrackingBounds.bind(this);
         window.dashboard.clearOfflineMarkers = this.clearOfflineMarkers.bind(this);
         window.dashboard.openObdPodPreview = this.openObdPodPreview.bind(this);
+        window.dashboard.openObdPodGroupPreview = this.openObdPodGroupPreview.bind(this);
         window.dashboard.closePodPreview = this.closePodPreview.bind(this);
         window.dashboard.openGuardSigPreview = this.openGuardSigPreview.bind(this);
         window.dashboard.closeGuardSigPreview = this.closeGuardSigPreview.bind(this);
@@ -4819,6 +4821,19 @@ export class Dashboard {
         if (linesTbody) {
             if (!linesTbody.dataset.obdGroupToggleBound) {
                 linesTbody.addEventListener('click', event => {
+                    const obdPreview = event.target.closest('[data-obd-number]');
+                    if (obdPreview && linesTbody.contains(obdPreview)) {
+                        let obdNumber;
+                        try { obdNumber = decodeURIComponent(obdPreview.dataset.obdNumber); } catch (_) { return; }
+                        this.openObdPodPreview(obdNumber);
+                        return;
+                    }
+                    const preview = event.target.closest('[data-obd-group-preview]');
+                    if (preview && linesTbody.contains(preview)) {
+                        const groupIndex = Number(preview.dataset.obdGroupPreview);
+                        if (Number.isInteger(groupIndex)) this.openObdPodGroupPreview(groupIndex);
+                        return;
+                    }
                     const button = event.target.closest('[data-obd-group-toggle]');
                     if (!button || !linesTbody.contains(button)) return;
                     const details = document.getElementById(button.getAttribute('aria-controls'));
@@ -4839,7 +4854,12 @@ export class Dashboard {
             });
             const formatAmount = amount => amount > 0 ? `PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : "\u2014";
             const formatMeasure = value => value > 0 ? value.toFixed(3) : "\u2014";
-            const renderObdRow = r => {
+            const canPreviewObd = r => {
+                const podMatch = asgn?.lineItems?.find(li => li.obdNumber === r.OBDNumber);
+                return asgn && ['in_transit', 'completed', 'returning_to_base'].includes(asgn.tripStatus?.toLowerCase()) &&
+                    (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64);
+            };
+            const renderObdRow = (r, showPreview = true) => {
                 const amt = Number(r.Amount) || 0;
                 // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
                 const podMatch = asgn?.lineItems?.find(li => li.obdNumber === r.OBDNumber);
@@ -4854,24 +4874,25 @@ export class Dashboard {
 
                 return `
                     <tr class="border-b border-db-border/50 hover:bg-db-item-hover/30 transition-colors">
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "\u2014")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatAmount(amt)}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(Number(r.Volume) || 0)}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(Number(r.Weight) || 0)}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(Number(r.Quantity) || 0)}</td>
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "\u2014")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "\u2014")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "\u2014")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(r.Latitude)}</td>
-                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(r.Longitude)}</td>
-                        <td class="py-2 text-center">
-                          ${asgn && ['in_transit', 'completed', 'returning_to_base'].includes(asgn.tripStatus?.toLowerCase()) && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber).replaceAll("'", "%27")}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
+                        <td data-label="OBD Number" class="py-2 px-1 font-mono text-db-text text-[10px] text-center break-words">${escapeHtml(r.OBDNumber || "\u2014")}</td>
+                        <td data-label="Amount" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatAmount(amt)}</td>
+                        <td data-label="Volume (m³)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(Number(r.Volume) || 0)}</td>
+                        <td data-label="Weight (kg)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(Number(r.Weight) || 0)}</td>
+                        <td data-label="Quantity" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(Number(r.Quantity) || 0)}</td>
+                        <td data-label="Ship-To" class="py-2 px-1 font-mono text-db-text text-[10px] text-center break-words">${escapeHtml(r.ShipToParty || "\u2014")}</td>
+                        <td data-label="Customer Name" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "\u2014")}</td>
+                        <td data-label="Delivery Address" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(r.Address || "\u2014")}</td>
+                        <td data-label="Latitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(r.Latitude)}</td>
+                        <td data-label="Longitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(r.Longitude)}</td>
+                        <td data-label="POD Preview" class="py-2 px-1 text-center">
+                          ${showPreview && canPreviewObd(r) ? `<button type="button" data-obd-number="${escapeHtml(encodeURIComponent(r.OBDNumber || '').replaceAll("'", "%27"))}" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
                         </td>
-                        <td class="py-2 px-3 text-center text-db-text text-[11px]" data-pod-status>${obdDeliveryStatus(podMatch)}</td>
+                        <td data-label="Delivery Status" class="py-2 px-1 text-center text-db-text text-[10px]" data-pod-status>${obdDeliveryStatus(podMatch)}</td>
                     </tr>`;
             };
 
             const rowGroups = groupObdRowsByShipTo(group);
+            this._sapObdPreviewGroups = rowGroups;
             linesTbody.innerHTML = rowGroups.map((rows, groupIndex) => {
                 for (const row of rows) {
                     const values = metrics(row);
@@ -4897,20 +4918,20 @@ export class Dashboard {
                 const detailsId = `sapObdGroupDetails-${groupIndex}`;
                 return `
                     <tr class="border-b border-db-border/50 bg-db-panel/40">
-                        <td class="py-2 pr-3 text-center whitespace-nowrap"><button type="button" data-obd-group-toggle aria-expanded="false" aria-controls="${detailsId}" class="text-sysu-gold hover:text-white text-[11px] font-bold" aria-label="Show ${rows.length} OBD records">${rows.length} OBDs <span aria-hidden="true">v</span></button></td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatAmount(total.amount)}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(total.volume)}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(total.weight)}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${formatMeasure(total.quantity)}</td>
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(representative.ShipToParty || "\u2014")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(representative.ShipToPartyName || "\u2014")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(representative.Address || "\u2014")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(representative.Latitude)}</td>
-                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${formatCoordinate(representative.Longitude)}</td>
-                        <td class="py-2 text-center text-db-text3 text-[11px]">See OBD details</td>
-                        <td class="py-2 px-3 text-center text-db-text text-[11px]" data-pod-status>${status}</td>
+                        <td data-label="OBD Number" class="py-2 px-1 text-center"><button type="button" data-obd-group-toggle aria-expanded="false" aria-controls="${detailsId}" class="text-sysu-gold hover:text-white text-[10px] font-bold" aria-label="Show ${rows.length} OBD records">${rows.length} OBDs <span aria-hidden="true">v</span></button></td>
+                        <td data-label="Amount" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatAmount(total.amount)}</td>
+                        <td data-label="Volume (m³)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.volume)}</td>
+                        <td data-label="Weight (kg)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.weight)}</td>
+                        <td data-label="Quantity" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.quantity)}</td>
+                        <td data-label="Ship-To" class="py-2 px-1 font-mono text-db-text text-[10px] text-center break-words">${escapeHtml(representative.ShipToParty || "\u2014")}</td>
+                        <td data-label="Customer Name" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(representative.ShipToPartyName || "\u2014")}</td>
+                        <td data-label="Delivery Address" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(representative.Address || "\u2014")}</td>
+                        <td data-label="Latitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(representative.Latitude)}</td>
+                        <td data-label="Longitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(representative.Longitude)}</td>
+                        <td data-label="POD Preview" class="py-2 px-1 text-center">${rows.some(canPreviewObd) ? `<button type="button" data-obd-group-preview="${groupIndex}" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD for all ${rows.length} OBDs">Preview</button>` : '<span class="text-db-text3 text-[11px]">—</span>'}</td>
+                        <td data-label="Delivery Status" class="py-2 px-1 text-center text-db-text text-[10px] break-words" data-pod-status>${status}</td>
                     </tr>
-                    <tr id="${detailsId}" hidden data-obd-group-details><td colspan="12" class="p-0"><table class="w-full"><tbody>${rows.map(renderObdRow).join('')}</tbody></table></td></tr>`;
+                    <tr id="${detailsId}" hidden data-obd-group-details><td colspan="12" class="p-0"><table class="sap-obd-table w-full min-w-0"><tbody>${rows.map(row => renderObdRow(row, false)).join('')}</tbody></table></td></tr>`;
             }).join("");
         }
 
@@ -4943,25 +4964,25 @@ export class Dashboard {
         }
     }
 
-    // POD preview for a specific OBD item
-    async openObdPodPreview(obdNumber) {
-        const key = this._currentDispatchKey;
-        if (!key) return;
-        // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
-        const asgn = this.state.sapAssignments[key];
+    async _loadObdPodPreviewData(key, asgn, obdNumber) {
         const match = asgn?.lineItems?.find(li => li.obdNumber === obdNumber);
-
         let imageUrl = match?.podImageUrl;
-        // If image is stored in pod_images subcollection or empty, fetch it directly
+        let podRecord = null;
+        let groupPodId = match?.podGroupId || null;
         if (!imageUrl || imageUrl === 'saved_in_subcollection') {
             try {
                 const podDocSnap = await getDoc(doc(db, "sap_assignments", key, "pod_images", obdNumber));
                 if (podDocSnap.exists()) {
-                    const podRecord = podDocSnap.data();
+                    podRecord = podDocSnap.data();
                     imageUrl = podRecord?.base64Image || podRecord?.imageUrl || podRecord?.podImageUrl;
-                    if (!imageUrl && podRecord?.groupPodId) {
-                        const groupSnap = await getDoc(doc(db, "sap_assignments", key, "pod_groups", podRecord.groupPodId));
-                        imageUrl = groupSnap.data()?.base64Image || '';
+                    groupPodId = podRecord?.groupPodId || groupPodId;
+                }
+                if (!imageUrl && groupPodId) {
+                    const groupSnap = await getDoc(doc(db, "sap_assignments", key, "pod_groups", groupPodId));
+                    if (groupSnap.exists()) {
+                        const groupRecord = groupSnap.data();
+                        imageUrl = groupRecord?.base64Image || '';
+                        podRecord = {...podRecord, ...groupRecord};
                     }
                 }
             } catch (err) {
@@ -4969,8 +4990,33 @@ export class Dashboard {
             }
         }
 
+        return {
+            obdNumber,
+            match,
+            imageUrl,
+            groupPodId,
+            capturedAt: match?.podCapturedAt || podRecord?.podCapturedAt || podRecord?.capturedAtMillis || null,
+            guardSignatureBase64: match?.guardSignatureBase64 || asgn?.guardSignatureBase64 || '',
+            deliveryStatus: obdDeliveryStatus(match),
+        };
+    }
+
+    // POD preview for a specific OBD item
+    async openObdPodPreview(obdNumber) {
+        const key = this._currentDispatchKey;
+        if (!key) return;
+        const asgn = this.state.sapAssignments[key];
+        const preview = await this._loadObdPodPreviewData(key, asgn, obdNumber);
+        const {match, imageUrl} = preview;
+
         const modal = document.getElementById('podPreviewModal');
         if (!modal) return;
+        const gallery = modal.querySelector('#podPreviewGallery');
+        const singleContent = modal.querySelector('#podPreviewSingleContent');
+        if (gallery) { gallery.hidden = true; gallery.replaceChildren(); }
+        if (singleContent) singleContent.hidden = false;
+        const title = modal.querySelector('#podPreviewTitle');
+        if (title) title.textContent = 'POD Preview';
         const imgEl = modal.querySelector('#podPreviewImg');
         const tsEl = modal.querySelector('#podTimestamp');
         const signatureContainer = modal.querySelector('#podPreviewSignature');
@@ -5071,6 +5117,113 @@ export class Dashboard {
         this._addPodPreviewEventListeners(imgEl, modal);
     }
 
+    async openObdPodGroupPreview(groupIndex) {
+        const key = this._currentDispatchKey;
+        const group = this._sapObdPreviewGroups[groupIndex];
+        const asgn = key && this.state.sapAssignments[key];
+        if (!key || !asgn || !Array.isArray(group) || !group.length) return;
+
+        const previews = await Promise.all(group.map(row => this._loadObdPodPreviewData(key, asgn, row.OBDNumber)));
+        const modal = document.getElementById('podPreviewModal');
+        const gallery = modal?.querySelector('#podPreviewGallery');
+        const singleContent = modal?.querySelector('#podPreviewSingleContent');
+        if (!modal || !gallery || !singleContent) {
+            return this.openObdPodPreview(group[0].OBDNumber);
+        }
+
+        const groupedCaptures = [];
+        const captureIndexes = new Map();
+        for (const preview of previews) {
+            const captureKey = preview.groupPodId ? `group:${preview.groupPodId}` : preview.imageUrl ? `image:${preview.imageUrl}` : `obd:${preview.obdNumber}`;
+            let capture = captureIndexes.has(captureKey) ? groupedCaptures[captureIndexes.get(captureKey)] : null;
+            if (!capture) {
+                capture = {...preview, obdNumbers: []};
+                captureIndexes.set(captureKey, groupedCaptures.length);
+                groupedCaptures.push(capture);
+            }
+            capture.obdNumbers.push(preview.obdNumber);
+            if (!capture.imageUrl && preview.imageUrl) capture.imageUrl = preview.imageUrl;
+            if (!capture.capturedAt && preview.capturedAt) capture.capturedAt = preview.capturedAt;
+            if (preview.guardSignatureBase64 && !capture.guardSignatureBase64) capture.guardSignatureBase64 = preview.guardSignatureBase64;
+        }
+
+        const captureTime = capture => {
+            const value = capture.capturedAt;
+            if (typeof value?.toMillis === 'function') return value.toMillis();
+            if (typeof value?.seconds === 'number') return value.seconds * 1000;
+            const timestamp = typeof value === 'number' ? value : Date.parse(value);
+            return Number.isFinite(timestamp) ? timestamp : 0;
+        };
+        // Prefer a shared group capture; otherwise use the latest available legacy OBD capture.
+        const selectedCapture = groupedCaptures.filter(capture => capture.imageUrl)
+            .sort((left, right) => right.obdNumbers.length - left.obdNumbers.length || captureTime(right) - captureTime(left))[0] || null;
+
+        this._removePodPreviewEventListeners();
+        singleContent.hidden = true;
+        gallery.hidden = false;
+        gallery.replaceChildren();
+        const summary = document.createElement('p');
+        summary.className = 'mb-3 text-sm text-gray-600 dark:text-gray-300';
+        summary.textContent = `One delivery point · ${group.length} OBDs · ${selectedCapture ? '1 POD photo' : 'POD photo unavailable'}`;
+        gallery.append(summary);
+
+        const card = document.createElement('section');
+        card.className = 'rounded-lg border border-gray-200 dark:border-gray-700 p-3';
+        const heading = document.createElement('h3');
+        heading.className = 'mb-2 text-sm font-bold text-gray-800 dark:text-gray-100';
+        heading.textContent = `POD for delivery point · ${group.length} OBDs`;
+        card.append(heading);
+
+        const obdList = document.createElement('p');
+        obdList.className = 'mb-3 text-xs text-gray-600 dark:text-gray-300 break-words';
+        obdList.textContent = previews.map(item => `${item.obdNumber} · ${item.deliveryStatus}`).join(' | ');
+        card.append(obdList);
+
+        if (selectedCapture) {
+            const image = document.createElement('img');
+            image.src = selectedCapture.imageUrl;
+            image.alt = `POD for delivery point covering ${group.length} OBDs`;
+            image.className = 'mx-auto max-h-[60vh] w-auto rounded object-contain';
+            card.append(image);
+
+            if (selectedCapture.capturedAt) {
+                const timestamp = selectedCapture.capturedAt?.toDate ? selectedCapture.capturedAt.toDate()
+                    : typeof selectedCapture.capturedAt?.seconds === 'number' ? new Date(selectedCapture.capturedAt.seconds * 1000)
+                        : new Date(selectedCapture.capturedAt);
+                const timestampText = document.createElement('p');
+                timestampText.className = 'mt-2 text-xs text-gray-500 dark:text-gray-400';
+                timestampText.textContent = `Captured at: ${Number.isFinite(timestamp.getTime()) ? timestamp.toLocaleString() : '—'}`;
+                card.append(timestampText);
+            }
+        }
+
+        const signatureRows = previews.filter(item => item.guardSignatureBase64?.length > 50);
+        for (const item of signatureRows) {
+            const signatureButton = document.createElement('button');
+            signatureButton.type = 'button';
+            signatureButton.className = 'mt-2 mr-2 rounded border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm font-bold text-red-600';
+            signatureButton.textContent = `View ${item.obdNumber} Guard Signature`;
+            signatureButton.addEventListener('click', () => this.openGuardSigPreview(item.obdNumber));
+            card.append(signatureButton);
+        }
+        gallery.append(card);
+
+        const title = modal.querySelector('#podPreviewTitle');
+        if (title) title.textContent = `POD Preview · ${group.length} OBDs`;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+
+        if (this._globalEscapeListener) document.removeEventListener('keydown', this._globalEscapeListener);
+        this._globalEscapeListener = event => {
+            if (event.key === 'Escape') {
+                const guardModal = document.getElementById('guardPreviewModal');
+                if (guardModal?.classList.contains('flex')) this.closeGuardSigPreview();
+                else this.closePodPreview();
+            }
+        };
+        document.addEventListener('keydown', this._globalEscapeListener);
+    }
+
     closePodPreview() {
         const modal = document.getElementById('podPreviewModal');
         if (modal) {
@@ -5081,6 +5234,12 @@ export class Dashboard {
             }
             modal.classList.add('hidden');
             modal.classList.remove('flex');
+            const gallery = modal.querySelector('#podPreviewGallery');
+            const singleContent = modal.querySelector('#podPreviewSingleContent');
+            if (gallery) { gallery.hidden = true; gallery.replaceChildren(); }
+            if (singleContent) singleContent.hidden = false;
+            const title = modal.querySelector('#podPreviewTitle');
+            if (title) title.textContent = 'POD Preview';
             // Remove event listeners when closing modal
             this._removePodPreviewEventListeners();
             // Cancel any ongoing animations
