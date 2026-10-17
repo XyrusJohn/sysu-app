@@ -6,8 +6,8 @@ import {
     setPersistence,
     browserLocalPersistence,
 } from "firebase/auth";
-import {doc, onSnapshot} from "firebase/firestore";
-import {auth, db, googleProvider} from "./firebase";
+import {auth, googleProvider} from "./firebase";
+import {subscribeRealtime, asDocumentSnapshot} from "./realtimeService.js";
 
 let currentUserProfile = null;
 
@@ -40,21 +40,22 @@ export const AuthService = {
         let closed = false;
         const stopAuth = onAuthStateChanged(auth, async (user) => {
             if (closed) return;
+            console.log("[startup] Firebase auth state resolved", {userPresent: Boolean(user)});
             const activeGeneration = ++generation;
             stopProfile?.();
             stopProfile = null;
             currentUserProfile = null;
             if (!user) {
+                console.warn("[startup] no signed-in Firebase user; returning unauthorized state");
                 callback(null, new Error("Unauthorized"));
                 return;
             }
 
-            const userDocRef = doc(db, "users", user.uid);
-
-            stopProfile = onSnapshot(
-                userDocRef,
-                async (snapshot) => {
+            console.log("[startup] waiting for authenticated profile subscription");
+            stopProfile = subscribeRealtime("profile", {}, async (data) => {
                     if (closed || generation !== activeGeneration) return;
+                    const snapshot = asDocumentSnapshot(data, user.uid);
+                    console.log("[startup] profile snapshot received", {exists: snapshot.exists()});
                     if (snapshot.exists()) {
                         const profile = {
                             id: snapshot.id,
@@ -91,13 +92,11 @@ export const AuthService = {
                         }
                         callback(null, new Error("NOT_REGISTERED"));
                     }
-                },
-                (err) => {
+                }, (err) => {
                     if (closed || generation !== activeGeneration) return;
-                    console.error("Auth listener error:", err);
+                    console.error("[startup] profile subscription failed", {message: err.message});
                     callback(null, new Error("NOT_REGISTERED"));
-                },
-            );
+                });
         });
         return () => {
             if (closed) return;

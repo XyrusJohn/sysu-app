@@ -6,6 +6,8 @@ import {
     clearMarkers,
     markers,
     removeMarker,
+    constrainMapToPhilippines,
+    PHILIPPINES_BOUNDS,
 } from "../components/MapManager.js";
 import {
     initTrackingPanel,
@@ -24,21 +26,19 @@ import { API_CONFIG } from "../api/config.js";
 import { SecurityGuardService } from "../api/securityGuardService.js";
 import { TruckCompanyService } from "../api/truckCompanyService.js";
 import { StaffDriverService } from "../api/staffDriverService.js";
+import { subscribeRealtime, asCollectionSnapshot } from "../api/realtimeService.js";
 import { db, auth } from "../api/firebase.js";
 import { updateProfile } from "firebase/auth";
+import L from "leaflet";
 import {
     collection,
-    onSnapshot,
     query,
     where,
-    orderBy,
     doc,
     updateDoc,
-    addDoc,
     serverTimestamp,
     getDocs,
     getDoc,
-    limit,
 } from "firebase/firestore";
 
 // â"€â"€ XSS Prevention â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -71,12 +71,15 @@ export class Dashboard {
         this.state = {
             activeView: "overview",
             sapShipments: [],
+            sapLoading: true,
             sapAssignments: {},
             sapDispatchDetails: {},
             sapSortKey: "SAPDispatchNumber",
             sapSortDir: 1,
             user: null,
             drivers: [],
+            driversLoading: true,
+            driversLoadError: false,
             incidents: [],
             liveTracking: {},
             liveScans: {},      // driverId → {lat, lng, status, name, sapDocId, lastSeen, shipmentNumber, truckPlate}
@@ -85,6 +88,16 @@ export class Dashboard {
             sapFilter: "all",
             sapGroupedByDispatch: {},
             queue: [],
+            queueLoading: true,
+            queueLoadError: false,
+            assignmentsLoading: true,
+            assignmentsLoadError: false,
+            guardsLoading: true,
+            guardsLoadError: false,
+            truckCompaniesLoading: true,
+            truckCompaniesLoadError: false,
+            roleRequestsLoading: true,
+            roleRequestsLoadError: false,
             assignTarget: null,
             requiredTruckType: null,
             overrideRequestId: null,     // pending override request, if any
@@ -125,12 +138,14 @@ export class Dashboard {
     }
 
     async init() {
-        if (typeof L === "undefined") {
-            setTimeout(() => this.init(), 500);
-            return;
-        }
-
+        console.log("[startup] dashboard initialization started");
+        this._startupStage = "authentication and profile verification";
+        this._startupRecoveryTimer = setTimeout(() => this._showStartupRecovery(), 15000);
         AuthService.subscribe((user, error) => {
+            console.log("[startup] auth/profile callback", {
+                userPresent: Boolean(user),
+                errorCode: error?.message || null,
+            });
             if (error) {
                 if (["NOT_REGISTERED", "Unauthorized", "ACCOUNT_DISABLED"].includes(error.message)) {
                     window.location.href = "index.html";
@@ -142,6 +157,8 @@ export class Dashboard {
                 if (user.roleChanged) {
                     this.triggerSecurityEnforcement();
                 } else {
+                    console.log("[startup] profile accepted; starting dashboard data engines");
+                    this._startupStage = "initial dashboard data loading";
                     this.state.user = user;
                     this._updateUserUI(user);
                     this.applyRBAC(user);
@@ -151,8 +168,10 @@ export class Dashboard {
         });
 
         this._initMap();
+        console.log("[startup] dashboard map initialization returned");
         this._setupEventListeners();
         this._listenToRoleRequests();
+        console.log("[startup] dashboard event listeners initialized");
     }
 
     applyRBAC(user) {
@@ -195,20 +214,37 @@ export class Dashboard {
     }
 
     async _startDataEngines() {
+        console.log("[startup] dashboard data engines started");
         let assignmentReady;
+        let assignmentSnapshotReceived = false;
+        let sapSyncSettled = false;
         const assignmentsLoaded = new Promise((r) => { assignmentReady = r; });
 
         try {
             SAPService.subscribeToAssignments((data) => {
+                if (!assignmentSnapshotReceived) {
+                    assignmentSnapshotReceived = true;
+                    console.log("[startup] initial assignment snapshot received", {count: Object.keys(data || {}).length});
+                }
                 this.state.sapAssignments = data;
+                this.state.assignmentsLoading = false;
+                this.state.assignmentsLoadError = false;
                 this._reconcileLiveScansWithAssignments(data);
                 this._rebuildShipmentGroups();
                 assignmentReady();
                 this._renderAll();
                 this._scheduleLiveScansRender();
                 this._refreshOpenDispatchDetail();
+            }, (err) => {
+                console.warn("Assignments subscription failed:", err);
+                this.state.assignmentsLoading = false;
+                this.state.assignmentsLoadError = true;
+                assignmentReady();
+                this._renderAll();
             });
         } catch (err) {
+            this.state.assignmentsLoading = false;
+            this.state.assignmentsLoadError = true;
             assignmentReady(); // unblock even on failure
             console.warn(err.message);
         }
@@ -220,12 +256,24 @@ export class Dashboard {
             await Promise.race([
                 (async () => {
                     await this._syncSAP(true); // defer render until assignments arrive
+                    sapSyncSettled = true;
+                    console.log("[startup] initial SAP sync settled", {
+                        shipmentCount: this.state.sapShipments.length,
+                        failed: Boolean(SAPService.state.lastError),
+                    });
                     await assignmentsLoaded;
                     this._renderAll();
                 })(),
-                new Promise((resolve) => setTimeout(resolve, 5000)),
+                new Promise((resolve) => setTimeout(() => {
+                    console.warn("[startup] initial data wait reached 5 seconds", {
+                        sapSyncSettled,
+                        assignmentSnapshotReceived,
+                    });
+                    resolve();
+                }, 5000)),
             ]);
 
+            console.log("[startup] requesting dashboard overlay removal");
             this._unlockDashboard();
         } catch (err) {
             console.error("Initial sync error:", err);
@@ -234,34 +282,37 @@ export class Dashboard {
 
         setInterval(() => this._syncSAP(), 300000);
 
-        onSnapshot(collection(db, "drivers"), (snap) => {
-            this.state.drivers = snap.docs.map((doc) => ({
+        subscribeRealtime("drivers", {}, (rows) => {
+            this.state.drivers = asCollectionSnapshot(rows).docs.map((doc) => ({
                 id: doc.id,
                 ...doc.data(),
             }));
+            this.state.driversLoading = false;
+            this.state.driversLoadError = false;
+            this._renderAll();
+        }, (err) => {
+            console.warn("Drivers subscription failed:", err);
+            this.state.driversLoading = false;
+            this.state.driversLoadError = true;
             this._renderAll();
         });
 
         // Subscribe only to the current user's own incidents (security rule enforced server-side too)
         if (auth.currentUser) {
             const myUid = auth.currentUser.uid;
-            onSnapshot(
-                query(collection(db, "incidents"), where("reporterId", "==", myUid)),
-                (snap) => {
-                    this.state.incidents = snap.docs.map((doc) => ({
+            subscribeRealtime("incidents", {reporterId: myUid}, (rows) => {
+                    this.state.incidents = asCollectionSnapshot(rows).docs.map((doc) => ({
                         id: doc.id,
                         ...doc.data(),
                     }));
                     this._renderAll();
-                },
-                (err) => {
+                }, (err) => {
                     console.warn(err.message);
-                }
-            );
+                });
         }
 
-        onSnapshot(collection(db, "queue"), (snap) => {
-            const docs = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        subscribeRealtime("queue", {order: "asc", limit: 100}, (rows) => {
+            const docs = asCollectionSnapshot(rows).docs.map((doc) => ({ id: doc.id, ...doc.data() }));
             console.log("[FIRESTORE queue] docs received:", docs.length, docs.map(d => ({ id: d.id, driverName: d.driverName, registrationComplete: d.registrationComplete, status: d.status })));
             this.state.queue = docs
                 .filter((q) => q.status !== "completed")
@@ -273,7 +324,14 @@ export class Dashboard {
                                 (d.updatedAt ? new Date(d.updatedAt) : new Date(0));
                     return getTs(a) - getTs(b);
                 });
+            this.state.queueLoading = false;
+            this.state.queueLoadError = false;
             this._scheduleLiveScansRender();
+            this._renderAll();
+        }, (err) => {
+            console.warn("Queue subscription failed:", err);
+            this.state.queueLoading = false;
+            this.state.queueLoadError = true;
             this._renderAll();
         });
 
@@ -325,8 +383,10 @@ export class Dashboard {
         try {
             this.state.sapShipments = await SAPService.fetchShipments();
             this._rebuildShipmentGroups();
+            this.state.sapLoading = false;
             if (!skipRender) this._renderAll();
         } catch (err) {
+            this.state.sapLoading = false;
             console.error("SAP sync error:", err);
             if (!skipRender) {
                 const body = document.getElementById("sapBody");
@@ -401,11 +461,36 @@ export class Dashboard {
     }
 
     _unlockDashboard() {
+        clearTimeout(this._startupRecoveryTimer);
+        this._startupRecoveryTimer = null;
         const gatekeeper = document.getElementById(this.config.gatekeeperId);
+        console.log("[startup] dashboard overlay unlock", {gatekeeperFound: Boolean(gatekeeper)});
         if (gatekeeper) {
             gatekeeper.style.opacity = "0";
             setTimeout(() => gatekeeper.remove(), 500);
         }
+    }
+
+    _showStartupRecovery() {
+        const gatekeeper = document.getElementById(this.config.gatekeeperId);
+        if (!gatekeeper) return;
+
+        console.error("[startup] dashboard startup timed out", {stage: this._startupStage});
+        gatekeeper.innerHTML = `
+            <div class="max-w-md px-6 text-center">
+                <h2 class="text-white text-lg font-black tracking-[0.12em] uppercase">Dashboard could not start</h2>
+                <p class="mt-3 text-sm text-db-text3">Secure sign-in or the live profile connection did not respond. The dashboard stays locked until your account is verified.</p>
+                <div class="mt-6 flex justify-center gap-3">
+                    <button id="retryDashboardStartup" class="rounded-lg bg-sysu-red px-4 py-2 text-sm font-bold text-white">Retry</button>
+                    <button id="returnToDashboardSignIn" class="rounded-lg border border-white/15 px-4 py-2 text-sm font-bold text-white">Return to sign in</button>
+                </div>
+            </div>`;
+        gatekeeper.setAttribute("role", "alert");
+        gatekeeper.setAttribute("aria-live", "assertive");
+        gatekeeper.querySelector("#retryDashboardStartup")?.addEventListener("click", () => window.location.reload());
+        gatekeeper.querySelector("#returnToDashboardSignIn")?.addEventListener("click", () => {
+            window.location.href = "index.html";
+        });
     }
 
     _updateUserUI(user) {
@@ -699,16 +784,24 @@ export class Dashboard {
         socket.emit(EVENTS.GET_ROLE_REQUESTS, { status: "all" }, (res) => {
             if (res && res.success && Array.isArray(res.data)) {
                 this.state._roleRequestsList = res.data;
+                this.state.roleRequestsLoading = false;
+                this.state.roleRequestsLoadError = false;
                 const pendingCount = res.data.filter((r) => r.status === "pending").length;
                 this._refreshRoleRequestBadge(pendingCount);
                 if (this.state._activeDocsTab === "role-requests") {
                     this._renderRoleRequestsInDocs();
                 }
+            } else {
+                this.state.roleRequestsLoading = false;
+                this.state.roleRequestsLoadError = true;
+                if (this.state._activeDocsTab === "role-requests") this._renderRoleRequestsInDocs();
             }
         });
     }
 
     _handleRoleRequestUpdate(req) {
+        this.state.roleRequestsLoading = false;
+        this.state.roleRequestsLoadError = false;
         if (!this.state._roleRequestsList) this.state._roleRequestsList = [];
         const index = this.state._roleRequestsList.findIndex((r) => r.id === req.id);
         if (index >= 0) {
@@ -737,6 +830,14 @@ export class Dashboard {
     _renderRoleRequestsInDocs() {
         const container = document.getElementById("docsListContainer");
         if (!container) return;
+        if (this.state.roleRequestsLoading) {
+            container.innerHTML = this._loadingCards("Loading role requests");
+            return;
+        }
+        if (this.state.roleRequestsLoadError) {
+            container.innerHTML = '<p class="text-sm text-sysu-red">Role requests unavailable.</p>';
+            return;
+        }
 
         const requests = this.state._roleRequestsList || [];
         const pending = requests.filter((r) => r.status === "pending");
@@ -1022,6 +1123,8 @@ export class Dashboard {
             if (rBtn) rBtn.addEventListener("click", clickHandler);
             if (lBtn) lBtn.addEventListener("click", clickHandler);
         });
+
+        document.getElementById("underDevReturnBtn")?.addEventListener("click", () => this.handleNavClick("Overview"));
 
         document.getElementById("tbarExportArea")?.addEventListener("click", () => {
             this._syncSAP();
@@ -1590,8 +1693,17 @@ export class Dashboard {
     _refreshGuardList() {
         const listBody = document.getElementById("guardListBody");
         if (!listBody) return;
+        if (this.state.guardsLoading) {
+            listBody.innerHTML = this._loadingCards("Loading security guards");
+            return;
+        }
+        if (this.state.guardsLoadError) {
+            listBody.innerHTML = '<p class="text-sm text-sysu-red">Security guards unavailable.</p>';
+            return;
+        }
 
         const docs = Object.values(this.state._guards || {});
+        const canDeleteMasterRecords = ["admin", "super_admin"].includes(this.state.user?.role);
         docs.sort((a, b) => {
             const an = parseInt(String(a.guardId || "").replace(/\D/g, ""), 10) || 0;
             const bn = parseInt(String(b.guardId || "").replace(/\D/g, ""), 10) || 0;
@@ -1607,7 +1719,7 @@ export class Dashboard {
             return;
         }
 
-        listBody.innerHTML = filtered.map((g) => this._renderGuardCard(g)).join("");
+        listBody.innerHTML = filtered.map((g) => this._renderGuardCard(g, canDeleteMasterRecords)).join("");
 
         listBody.querySelectorAll("[data-action='guard-edit']").forEach((btn) => {
             btn.addEventListener("click", () => this._openGuardModal(btn.dataset.id));
@@ -1619,9 +1731,12 @@ export class Dashboard {
                 this._softDeleteGuard(id, currentlyActive);
             });
         });
+        listBody.querySelectorAll("[data-action='guard-delete']").forEach((btn) => {
+            btn.addEventListener("click", () => this._deleteGuard(btn.dataset.id));
+        });
     }
 
-    _renderGuardCard(g) {
+    _renderGuardCard(g, canDelete = false) {
         // Guard fullName is stored with Title Case from _saveGuard. Display as-is (already sanitized).
         const displayName = this._toTitleCase(g.fullName || "");
         const statusPill = g.active
@@ -1649,6 +1764,7 @@ export class Dashboard {
                     <div class="flex items-center gap-1.5 shrink-0">
                         <button data-action="guard-edit" data-id="${escapeHtml(g.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider text-db-text2 border border-db-border hover:border-sysu-gold/40 hover:bg-db-item-hover transition-all">Edit</button>
                         <button data-action="guard-toggle" data-id="${escapeHtml(g.id || "")}" data-active="${g.active ? "true" : "false"}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${toggleClass} transition-all">${toggleLabel}</button>
+                        ${canDelete ? `<button data-action="guard-delete" data-id="${escapeHtml(g.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-sysu-red/30 text-sysu-red hover:bg-sysu-red/10 transition-all">Delete</button>` : ""}
                     </div>
                 </div>
             </div>
@@ -1697,8 +1813,17 @@ export class Dashboard {
     _refreshTcList() {
         const listBody = document.getElementById("tcListBody");
         if (!listBody) return;
+        if (this.state.truckCompaniesLoading) {
+            listBody.innerHTML = this._loadingCards("Loading truck companies");
+            return;
+        }
+        if (this.state.truckCompaniesLoadError) {
+            listBody.innerHTML = '<p class="text-sm text-sysu-red">Truck companies unavailable.</p>';
+            return;
+        }
 
         const docs = Object.values(this.state._truckCompanies || {});
+        const canDeleteMasterRecords = ["admin", "super_admin"].includes(this.state.user?.role);
         docs.sort((a, b) => {
             const an = parseInt(a.companyCode || "0", 10) || 0;
             const bn = parseInt(b.companyCode || "0", 10) || 0;
@@ -1714,7 +1839,7 @@ export class Dashboard {
             return;
         }
 
-        listBody.innerHTML = filtered.map((c) => this._renderTruckCompanyCard(c)).join("");
+        listBody.innerHTML = filtered.map((c) => this._renderTruckCompanyCard(c, canDeleteMasterRecords)).join("");
 
         listBody.querySelectorAll("[data-action='tc-edit']").forEach((btn) => {
             btn.addEventListener("click", () => this._openTruckCompanyModal(btn.dataset.id));
@@ -1726,9 +1851,12 @@ export class Dashboard {
                 this._softDeleteTruckCompany(id, currentlyActive);
             });
         });
+        listBody.querySelectorAll("[data-action='tc-delete']").forEach((btn) => {
+            btn.addEventListener("click", () => this._deleteTruckCompany(btn.dataset.id));
+        });
     }
 
-    _renderTruckCompanyCard(c) {
+    _renderTruckCompanyCard(c, canDelete = false) {
         // Truck company name is stored UPPERCASE from _saveTruckCompany
         const displayName = (c.name || "").toUpperCase();
         const statusPill = c.active
@@ -1757,6 +1885,7 @@ export class Dashboard {
                     <div class="flex items-center gap-1.5 shrink-0">
                         <button data-action="tc-edit" data-id="${escapeHtml(c.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider text-db-text2 border border-db-border hover:border-sysu-gold/40 hover:bg-db-item-hover transition-all">Edit</button>
                         <button data-action="tc-toggle" data-id="${escapeHtml(c.id || "")}" data-active="${c.active ? "true" : "false"}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${toggleClass} transition-all">${toggleLabel}</button>
+                        ${canDelete ? `<button data-action="tc-delete" data-id="${escapeHtml(c.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-sysu-red/30 text-sysu-red hover:bg-sysu-red/10 transition-all">Delete</button>` : ""}
                     </div>
                 </div>
             </div>
@@ -1887,6 +2016,19 @@ export class Dashboard {
         }
     }
 
+    async _deleteGuard(guardId) {
+        const guard = this.state._guards?.[guardId];
+        const label = guard?.fullName || guard?.guardId || guardId;
+        if (!window.confirm(`Permanently delete guard ${guardId} (${label})? Historical POD/assignment snapshots will be kept.`)) return;
+        try {
+            await SecurityGuardService.delete(guardId);
+            this._showToast("Guard permanently deleted");
+        } catch (err) {
+            console.error("Delete guard error:", err);
+            this._showToast("Failed to delete guard: " + err.message);
+        }
+    }
+
     _openTruckCompanyModal(code) {
         this._editTruckCompanyCode = code || null;
         const modal = document.getElementById("truckCompanyModal");
@@ -1985,6 +2127,19 @@ export class Dashboard {
         } catch (err) {
             console.error("Toggle truck company error:", err);
             this._showToast("Failed: " + err.message);
+        }
+    }
+
+    async _deleteTruckCompany(code) {
+        const company = this.state._truckCompanies?.[code];
+        const label = company?.name || company?.companyCode || code;
+        if (!window.confirm(`Permanently delete truck company ${code} (${label})? Historical assignment snapshots will be kept.`)) return;
+        try {
+            await TruckCompanyService.delete(code);
+            this._showToast("Truck company permanently deleted");
+        } catch (err) {
+            console.error("Delete truck company error:", err);
+            this._showToast("Failed to delete truck company: " + err.message);
         }
     }
 
@@ -2186,15 +2341,23 @@ export class Dashboard {
         const map = L.map("warehouseBaseMap", {
             center: [initLat, initLng],
             zoom: 15,
+            zoomSnap: 0,
+            minZoom: 5,
+            maxBounds: PHILIPPINES_BOUNDS,
+            maxBoundsViscosity: 1,
             zoomControl: true,
-            attributionControl: false,
+            attributionControl: true,
         });
         this._wbMap = map;
+        map.attributionControl?.setPosition("bottomleft");
+        map.attributionControl?.setPrefix(false);
+        constrainMapToPhilippines(map);
 
-        // Dark carto tile layer
-        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
+        // Match the keyless tile provider used by the Overview map.
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
-            subdomains: "abcd",
+            subdomains: ["a", "b", "c"],
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         }).addTo(map);
 
         // Custom Warehouse Icon
@@ -2677,6 +2840,8 @@ export class Dashboard {
         if (this._guardsUnsub) return; // guard against double-subscribe
         SecurityGuardService.subscribe((data) => {
             this.state._guards = data;
+            this.state.guardsLoading = false;
+            this.state.guardsLoadError = false;
             const currentTab = this.state._activeDocsTab;
             if (currentTab === "guards") {
                 // If the toolbar is already rendered (user is actively on this tab),
@@ -2687,15 +2852,27 @@ export class Dashboard {
                     this._renderGuardsView();
                 }
             }
+        }, (err) => {
+            console.warn("Security guards unavailable:", err);
+            this.state.guardsLoading = false;
+            this.state.guardsLoadError = true;
+            if (this.state._activeDocsTab === "guards") this._refreshGuardList();
         })
             .then((unsub) => { this._guardsUnsub = unsub; })
-            .catch((err) => console.warn("Guards listener failed:", err.message));
+            .catch((err) => {
+                console.warn("Guards listener failed:", err.message);
+                this.state.guardsLoading = false;
+                this.state.guardsLoadError = true;
+                if (this.state._activeDocsTab === "guards") this._refreshGuardList();
+            });
     }
 
     _subscribeTruckCompanies() {
         if (this._truckCompaniesUnsub) return;
         TruckCompanyService.subscribe((data) => {
             this.state._truckCompanies = data;
+            this.state.truckCompaniesLoading = false;
+            this.state.truckCompaniesLoadError = false;
             const currentTab = this.state._activeDocsTab;
             if (currentTab === "truck-companies") {
                 if (document.getElementById("tcListBody")) {
@@ -2704,9 +2881,19 @@ export class Dashboard {
                     this._renderTruckCompaniesView();
                 }
             }
+        }, (err) => {
+            console.warn("Truck companies unavailable:", err);
+            this.state.truckCompaniesLoading = false;
+            this.state.truckCompaniesLoadError = true;
+            if (this.state._activeDocsTab === "truck-companies") this._refreshTcList();
         })
             .then((unsub) => { this._truckCompaniesUnsub = unsub; })
-            .catch((err) => console.warn("Truck companies listener failed:", err.message));
+            .catch((err) => {
+                console.warn("Truck companies listener failed:", err.message);
+                this.state.truckCompaniesLoading = false;
+                this.state.truckCompaniesLoadError = true;
+                if (this.state._activeDocsTab === "truck-companies") this._refreshTcList();
+            });
     }
 
     _renderAll() {
@@ -2725,6 +2912,19 @@ export class Dashboard {
     _renderFleetTree() {
         const tree = document.getElementById(this.config.fleetTreeId);
         if (!tree) return;
+
+        if (this.state.driversLoading) {
+            const count = document.getElementById("fleetDirectoryCount");
+            if (count) count.textContent = "Loading drivers";
+            tree.innerHTML = this._loadingCards("Loading driver directory", 4);
+            return;
+        }
+        if (this.state.driversLoadError) {
+            const count = document.getElementById("fleetDirectoryCount");
+            if (count) count.textContent = "Unavailable";
+            tree.innerHTML = '<p class="px-2 py-3 text-[11px] text-sysu-red">Driver directory unavailable.</p>';
+            return;
+        }
 
         const search = document.getElementById("driverDirectorySearch");
         if (search && !search.dataset.searchWired) {
@@ -2829,9 +3029,36 @@ export class Dashboard {
         if (Number.isFinite(d?.lat) && Number.isFinite(d?.lng)) focusOnLocation(d.lat, d.lng);
     }
 
+    _loadingCards(label, count = 3) {
+        return `<div role="status" aria-label="${label}" aria-busy="true" class="space-y-3">
+            ${Array.from({length: count}, () => `<div class="p-4 rounded-lg border border-db-border animate-pulse" aria-hidden="true">
+                <div class="h-4 w-1/3 rounded bg-db-item-hover mb-3"></div>
+                <div class="h-3 w-3/4 rounded bg-db-item-hover mb-2"></div>
+                <div class="h-3 w-1/2 rounded bg-db-item-hover"></div>
+            </div>`).join("")}
+        </div>`;
+    }
+
+    _loadingTableRows(columns, count, label) {
+        return `<tr><td colspan="${columns}" class="p-4">
+            <div role="status" aria-label="${label}" aria-busy="true" class="space-y-3">
+                ${Array.from({length: count}, () => `<div class="flex gap-4 py-3 border-b border-db-border/50 animate-pulse" aria-hidden="true">
+                    <div class="h-4 w-1/5 rounded bg-db-item-hover"></div>
+                    <div class="h-4 w-2/5 rounded bg-db-item-hover"></div>
+                    <div class="h-4 w-1/4 rounded bg-db-item-hover"></div>
+                </div>`).join("")}
+            </div>
+        </td></tr>`;
+    }
+
     _renderSapTable() {
         const body = document.getElementById("sapBody");
         if (!body) return;
+
+        if (this.state.sapLoading) {
+            body.innerHTML = this._loadingTableRows(9, 4, "Loading shipments");
+            return;
+        }
 
         const groups = this.state.sapGroupedByDispatch;
         const allKeys = Object.keys(groups);
@@ -3265,6 +3492,14 @@ export class Dashboard {
         const container = document.getElementById("fleetContent");
         console.log("[renderFleet] CALLED | body=", !!body, "container=", !!container, "containerHidden=", container?.classList.contains("hidden"));
         if (!body || !container || container.classList.contains("hidden")) return;
+        if (this.state.queueLoading) {
+            body.innerHTML = this._loadingCards("Loading fleet queue");
+            return;
+        }
+        if (this.state.queueLoadError) {
+            body.innerHTML = '<p class="text-sm text-sysu-red">Fleet queue unavailable.</p>';
+            return;
+        }
 
         const queue = this.state.queue;
         const drivers = this.state.drivers;
@@ -3870,9 +4105,11 @@ export class Dashboard {
             if (sidePanel) sidePanel.classList.remove("open");
             this.renderFleet();
         } else if (viewId === "orders") {
-            showView(document.getElementById("ordersContent"));
             if (sidePanel) sidePanel.classList.remove("open");
-            this.renderOrders();
+            if (!import.meta.env.PROD) {
+                showView(document.getElementById("ordersContent"));
+                this.renderOrders();
+            }
         } else if (viewId === "tracking") {
             showView(trackingContent);
             if (sidePanel) sidePanel.classList.remove("open");
@@ -3917,16 +4154,32 @@ export class Dashboard {
             }
         }
 
-        // Keep the development overlay on the unfinished Fleet Manager view.
+        // Keep unfinished workspaces unavailable in production while preserving local development access.
         const underDevOverlay = document.getElementById('underDevOverlay');
         if (underDevOverlay) {
-            if (viewId === 'drivers') {
+            const ordersUnderDevelopment = viewId === 'orders' && import.meta.env.PROD;
+            const showUnderDevelopment = viewId === 'drivers' || ordersUnderDevelopment;
+            if (showUnderDevelopment) {
+                const title = document.getElementById('underDevTitle');
+                const description = document.getElementById('underDevDescription');
+                if (title) {
+                    title.textContent = ordersUnderDevelopment
+                        ? "Orders is under development"
+                        : "Fleet Manager is under development";
+                }
+                if (description) {
+                    description.textContent = ordersUnderDevelopment
+                        ? "We are preparing a clearer, responsive dispatch workspace. Orders is temporarily unavailable while this work continues."
+                        : "We are refining the Fleet Manager workspace before it becomes available.";
+                }
                 underDevOverlay.style.opacity = "1";
                 underDevOverlay.style.pointerEvents = "auto";
+                underDevOverlay.setAttribute("aria-hidden", "false");
             } else {
                 // Hide overlay for all other views
                 underDevOverlay.style.opacity = "0";
                 underDevOverlay.style.pointerEvents = "none";
+                underDevOverlay.setAttribute("aria-hidden", "true");
             }
         }
 
@@ -4098,8 +4351,7 @@ export class Dashboard {
         const tbody = document.getElementById("userTableBody");
         if (!tbody) return;
 
-        tbody.innerHTML =
-            '<tr><td colspan="5" class="text-center py-8 text-db-text3">Loading users...</td></tr>';
+        tbody.innerHTML = this._loadingTableRows(5, 4, "Loading users");
 
         const myUser = this.state.user;
         if (!myUser) return;
@@ -4162,10 +4414,11 @@ export class Dashboard {
             this._usersSubs = null;
         }
 
-        this._usersSubs = onSnapshot(collection(db, "users"), (snap) => {
+        this._usersSubs = subscribeRealtime("users", {}, (rows) => {
             const users = [];
-            snap.forEach((docSnap) => {
-                users.push({ id: docSnap.id, ...docSnap.data() });
+            asCollectionSnapshot(rows).forEach((docSnap) => {
+                const user = { id: docSnap.id, ...docSnap.data() };
+                if (user.deletionState !== "complete") users.push(user);
             });
             // Sort: Super Admins, Admins, Fleet Managers, QR Generator, Drivers, Pending
             const roleOrder = { super_admin: 1, admin: 2, fleet_manager: 3, qr_generator: 4, driver: 5, pending: 6 };
@@ -4192,6 +4445,8 @@ export class Dashboard {
         const tbody = document.getElementById("userTableBody");
         if (!tbody) return;
 
+        const visibleUsers = users.filter((user) => user.deletionState !== "complete");
+
         const myUser = this.state.user;
         const isSuperAdmin = myUser?.role === "super_admin";
         const isAdmin = myUser?.role === "admin" || isSuperAdmin;
@@ -4200,7 +4455,7 @@ export class Dashboard {
         const activeTab = this.state._activeUserTab || "employees";
 
         // Tab filter: Drivers only vs Employees/Executives (non-driver)
-        const tabFilteredUsers = users.filter((u) => {
+        const tabFilteredUsers = visibleUsers.filter((u) => {
             if (activeTab === "drivers") {
                 return u.role === "driver";
             } else {
@@ -4229,10 +4484,17 @@ export class Dashboard {
 
         filtered.forEach((u) => {
             const docId = u.id;
+            const accountSuffix = docId.slice(-6);
+            const name = [u.name, u.displayName, u.fullName]
+                .map((value) => typeof value === "string" ? value.trim() : "")
+                .find((value) => value && value.toLowerCase() !== "user");
+            const email = typeof u.email === "string" ? u.email.trim() : "";
+            const userLabel = name || email || `Unnamed account · …${accountSuffix}`;
             const isPending = u.role === "pending" || u.status === "inactive";
+            const deletionPending = u.deletionState === "pending";
 
             let roleSelectHtml;
-            if (isSuperAdmin && u.role !== "super_admin") {
+            if (isSuperAdmin && u.role !== "super_admin" && !u.deletionState) {
                 roleSelectHtml = `
                 <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-[#1f2937] border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-[#60a5fa] transition-colors focus:ring-1 focus:ring-[#60a5fa]">
                   <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
@@ -4245,7 +4507,8 @@ export class Dashboard {
                 isAdmin &&
                 !isSuperAdmin &&
                 u.role !== "super_admin" &&
-                u.role !== "admin"
+                u.role !== "admin" &&
+                !u.deletionState
             ) {
                 roleSelectHtml = `
                 <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-[#1f2937] border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-[#60a5fa] transition-colors focus:ring-1 focus:ring-[#60a5fa]">
@@ -4282,7 +4545,7 @@ export class Dashboard {
             const statusBg = isPending
                 ? "rgba(251,191,36,0.1)"
                 : "rgba(74,222,128,0.1)";
-            const statusText = isPending ? "Pending" : "Active";
+            const statusText = deletionPending ? "Deletion in progress" : isPending ? "Pending" : "Active";
 
             const canDelete = isSuperAdmin && u.role !== "super_admin" && docId !== currentUserId;
 
@@ -4290,8 +4553,8 @@ export class Dashboard {
             tr.className = "hover:bg-db-item-hover transition-colors";
             tr.innerHTML = `
               <td class="px-6 py-4 border-b border-db-border">
-                <div class="font-semibold text-db-text">${escapeHtml(u.name || "User")}</div>
-                <div class="text-[11px] text-db-text3">${escapeHtml(u.email || "")}</div>
+                <div class="font-semibold text-db-text">${escapeHtml(userLabel)}</div>
+                <div class="text-[11px] text-db-text3">${escapeHtml(email || `Account ID ending ${accountSuffix}`)}</div>
               </td>
               <td class="px-6 py-4 border-b border-db-border text-db-text2 text-sm">${escapeHtml(u.position || "—")}</td>
               <td class="px-6 py-4 border-b border-db-border">${roleSelectHtml}</td>
@@ -4302,7 +4565,7 @@ export class Dashboard {
                 </span>
               </td>
               <td class="px-6 py-4 border-b border-db-border text-right">
-                ${canDelete ? `<button data-action="delete-user" data-uid="${escapeHtml(docId)}" data-name="${escapeHtml(u.name || u.email || 'User')}" class="bg-[#f04444]/10 hover:bg-[#f04444]/20 border border-[#f04444]/20 text-[#f04444] px-3 py-1.5 rounded-lg text-xs cursor-pointer font-bold transition-colors">Delete Account</button>` : ""}
+                ${canDelete ? `<button data-action="delete-user" data-uid="${escapeHtml(docId)}" data-name="${escapeHtml(userLabel)}" class="bg-[#f04444]/10 hover:bg-[#f04444]/20 border border-[#f04444]/20 text-[#f04444] px-3 py-1.5 rounded-lg text-xs cursor-pointer font-bold transition-colors">${deletionPending ? "Retry Delete" : "Delete Account"}</button>` : ""}
               </td>`;
             tbody.appendChild(tr);
         });
@@ -4367,8 +4630,13 @@ export class Dashboard {
     loadOverrideRequestsIntoContainer(container, filter) {
         if (!container) return;
 
-        container.innerHTML =
-            '<div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">Loading...</div>';
+        container.innerHTML = `<div role="status" aria-label="Loading requests" class="space-y-3" aria-busy="true">
+            ${Array.from({length: 3}, () => `<div class="rounded-lg border border-db-border p-4 animate-pulse" aria-hidden="true">
+                <div class="h-4 w-1/3 rounded bg-db-item-hover mb-4"></div>
+                <div class="h-3 w-3/4 rounded bg-db-item-hover mb-2"></div>
+                <div class="h-3 w-1/2 rounded bg-db-item-hover"></div>
+            </div>`).join("")}
+        </div>`;
 
         // Set up Firestore listener for override requests
         // Dispose of any existing subscription to avoid conflicts
@@ -4378,15 +4646,12 @@ export class Dashboard {
         }
 
         // Build query based on filter
-        let overrideReqQuery = collection(db, "override_requests");
         // Only apply status filter for actual status values
         const statusFilters = ["pending", "approved", "rejected", "expired", "completed"];
-        if (filter && statusFilters.includes(filter)) {
-            overrideReqQuery = query(collection(db, "override_requests"), where("status", "==", filter));
-        }
         // For guards and truck-companies filters, we show all requests (can be refined later)
 
-        this._overrideRequestsSubs = onSnapshot(overrideReqQuery, (snap) => {
+        this._overrideRequestsSubs = subscribeRealtime("legacyOverrideRequests", {status: statusFilters.includes(filter) ? filter : null}, (rows) => {
+            const snap = asCollectionSnapshot(rows);
             container.innerHTML = "";
             if (snap.empty) {
                 container.innerHTML =
@@ -6320,15 +6585,15 @@ export class Dashboard {
         // bundler re-binds module instances per import. A dynamic require()
         // here would resolve to a different onSnapshot reference and the
         // snapshot would never deliver updates to this dashboard instance.
-        const ovrQ = query(collection(db, "overrideRequests"), orderBy("requestedAt", "desc"), limit(50));
-        const canQ = query(collection(db, "cancelRequests"), orderBy("requestedAt", "desc"), limit(50));
         this._adminQueueSubs = {};
-        this._adminQueueSubs.override = onSnapshot(ovrQ, (snap) => {
+        this._adminQueueSubs.override = subscribeRealtime("overrideRequests", {}, (rows) => {
+            const snap = asCollectionSnapshot(rows);
             console.log("[adminQueue] overrideRequests snapshot, size:", snap.size);
             this._mergeAdminRequests("override", snap);
             this._syncOverrideApprovalFromSnapshot(snap);
         }, (err) => console.error("[adminQueue] overrideRequests:", err));
-        this._adminQueueSubs.cancel = onSnapshot(canQ, (snap) => {
+        this._adminQueueSubs.cancel = subscribeRealtime("cancelRequests", {}, (rows) => {
+            const snap = asCollectionSnapshot(rows);
             console.log("[adminQueue] cancelRequests snapshot, size:", snap.size);
             this._mergeAdminRequests("cancel", snap);
         }, (err) => console.error("[adminQueue] cancelRequests:", err));
@@ -6917,6 +7182,14 @@ export class Dashboard {
     renderOrders() {
         const body = document.getElementById("ordersBody");
         if (!body) return;
+        if (this.state.assignmentsLoading) {
+            body.innerHTML = this._loadingCards("Loading assignments");
+            return;
+        }
+        if (this.state.assignmentsLoadError) {
+            body.innerHTML = '<p class="text-sm text-sysu-red">Assignments unavailable.</p>';
+            return;
+        }
 
         const assignments = this.state.sapAssignments;
         const grouped = this.state.sapGroupedByDispatch;

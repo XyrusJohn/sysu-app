@@ -20,8 +20,7 @@ import { initLeafletMap, updateMarker, removeMarker, trackingMarkers } from "./M
 import { getDriverSocket, connectDriverSocket } from "../api/socket.js";
 import { acceptLocationUpdate, GPS_STALE_MS } from "./locationState.js";
 import { API_CONFIG } from "../api/config.js";
-import { auth, db } from "../api/firebase.js";
-import { collection, onSnapshot } from "firebase/firestore";
+import { subscribeRealtime } from "../api/realtimeService.js";
 
 const MARKER_STORE_KEY = "__trackingMarkers";
 
@@ -77,20 +76,18 @@ function _subscribeFirestoreDriverLocations() {
     _firestoreUnsub = null;
   }
   try {
-    const colRef = collection(db, "driver_locations");
-    _firestoreUnsub = onSnapshot(colRef, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        const data = {...change.doc.data(), driverId: change.doc.data().driverId || change.doc.id};
-        if (change.type === 'removed') {
-          // A deleted saved snapshot must not remove a newer live socket position.
-          if (_driverMeta.get(data.driverId)?.source === 'socket') return;
-          _removeDriver(data.driverId);
-          return;
-        }
+    _firestoreUnsub = subscribeRealtime("locations", {}, (rows) => {
+      const current = new Set();
+      rows.forEach((row) => {
+        const data = {...row, driverId: row.driverId || row.id};
+        current.add(data.driverId);
         _applyDriverUpdate(data, 'firestore');
       });
+      for (const driverId of _driverMeta.keys()) {
+        if (!current.has(driverId) && _driverMeta.get(driverId)?.source !== 'socket') _removeDriver(driverId);
+      }
     }, (err) => {
-      console.warn("[MapTrackingPanel] Firestore driver_locations listener error:", err.message);
+      console.warn("[MapTrackingPanel] Realtime driver_locations listener error:", err.message);
     });
   } catch (e) {
     console.warn("[MapTrackingPanel] Failed to subscribe to driver_locations:", e);

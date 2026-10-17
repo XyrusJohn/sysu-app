@@ -1,7 +1,6 @@
-import {db} from "./firebase.js";
-import {collection, onSnapshot} from "firebase/firestore";
 import {API_CONFIG} from "./config.js";
 import {AuthService} from "./authService.js";
+import {subscribeRealtime, asCollectionSnapshot} from "./realtimeService.js";
 
 const SAP_API_URL = `${API_CONFIG.BASE_URL}/api/sap/shipments`;
 
@@ -55,17 +54,15 @@ export const SAPService = {
         return json.data || {};
     },
 
-    subscribeToAssignments(callback) {
-        const assignmentsRef = collection(db, "sap_assignments");
-
-        return onSnapshot(assignmentsRef, (snapshot) => {
+    subscribeToAssignments(callback, onError) {
+        return subscribeRealtime("assignments", {}, (rows) => {
             const data = {};
-            snapshot.forEach((doc) => {
+            asCollectionSnapshot(rows).forEach((doc) => {
                 data[doc.id] = doc.data();
             });
             this.state.assignments = data;
             if (callback) callback(data);
-        });
+        }, onError);
     },
 
     parseDate(sapDate) {

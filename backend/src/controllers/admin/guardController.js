@@ -5,7 +5,7 @@ const {
     formatGuardId,
     parseGuardId,
 } = require("../../utils/idGenerator.js");
-const {createSequentialRecord} = require('../../services/sequentialRecordService');
+const {createSequentialRecord, deleteSequentialRecord} = require('../../services/sequentialRecordService');
 
 const FIRST_NAME_MAX = 60;
 const LAST_NAME_MAX = 60;
@@ -103,4 +103,15 @@ exports.setGuardActive = asyncWrapper(async (req, res) => {
 
     const refreshed = await docRef.get();
     return res.status(200).json({id: refreshed.id, ...refreshed.data()});
+});
+
+exports.deleteGuard = asyncWrapper(async (req, res) => {
+    const {id} = req.params;
+    if (!parseGuardId(id)) {
+        return res.status(400).json({errors: [{field: "id", message: "Invalid guardId"}]});
+    }
+
+    const deleted = await deleteSequentialRecord(admin.firestore(), "security_guard", id, parseGuardId);
+    if (!deleted) return res.status(404).json({message: "Guard not found"});
+    return res.status(200).json({success: true, id});
 });

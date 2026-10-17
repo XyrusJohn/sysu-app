@@ -5,6 +5,7 @@ const configPath = require.resolve('../../src/config/firebase');
 const profiles = {
   driver: { role: 'driver', status: 'active' }, pending: { role: 'pending', status: 'inactive' },
   inactive: { role: 'fleet_manager', status: 'inactive' }, staff: { role: 'fleet_manager', status: 'active' },
+  admin: { role: 'admin', status: 'active' }, superadmin: { role: 'super_admin', status: 'active' },
 };
 let capacityWrites = 0;
 const fakeDb = {runTransaction: async callback => callback({get: async ref => ref.collectionName === 'qr_tokens'
@@ -36,6 +37,17 @@ app.use('/api/sap', require('../../src/routes/sapAssignmentRoute'));
 app.use('/api/sap', require('../../src/routes/sapRoute'));
 app.use('/api/drivers', require('../../src/routes/driverRoute'));
 app.use('/api/qr', require('../../src/routes/qrRoute'));
+const deletionReached = [];
+const guardControllerPath = require.resolve('../../src/controllers/admin/guardController');
+const truckCompanyControllerPath = require.resolve('../../src/controllers/admin/truckCompanyController');
+const deleteHandler = kind => (req, res) => { deletionReached.push(kind); res.json({reachedBusinessHandler:true}); };
+require.cache[guardControllerPath] = {id:guardControllerPath,filename:guardControllerPath,loaded:true,exports:{
+  createGuard: deleteHandler('createGuard'), updateGuard: deleteHandler('updateGuard'), setGuardActive: deleteHandler('setGuardActive'), deleteGuard: deleteHandler('guard'),
+}};
+require.cache[truckCompanyControllerPath] = {id:truckCompanyControllerPath,filename:truckCompanyControllerPath,loaded:true,exports:{
+  createTruckCompany: deleteHandler('createTruckCompany'), updateTruckCompany: deleteHandler('updateTruckCompany'), setTruckCompanyActive: deleteHandler('setTruckCompanyActive'), deleteTruckCompany: deleteHandler('truckCompany'),
+}};
+app.use('/api/admin', require('../../src/routes/adminRoute'));
 let server, url;
 test.before(async () => {
   server = app.listen(0, '127.0.0.1');
@@ -79,6 +91,24 @@ test('R10: driver cannot change another driver capacity', async () => {
   });
   assert.equal(response.status, 403);
   assert.equal(capacityWrites, 0);
+});
+
+test('R12: only admin and super_admin can reach master-record deletion routes',async()=>{
+  deletionReached.length=0;
+  for (const role of ['driver','pending','inactive','staff']) {
+    for (const path of ['/api/admin/guards/SG-001','/api/admin/truck-companies/01']) {
+      const response=await fetch(`${url}${path}`,{method:'DELETE',headers:{Authorization:`Bearer ${role}`}});
+      assert.equal(response.status,403,`${role} ${path}`);
+    }
+  }
+  assert.equal(deletionReached.length,0);
+  for (const role of ['admin','superadmin']) {
+    for (const path of ['/api/admin/guards/SG-001','/api/admin/truck-companies/01']) {
+      const response=await fetch(`${url}${path}`,{method:'DELETE',headers:{Authorization:`Bearer ${role}`}});
+      assert.equal(response.status,200,`${role} ${path}`);
+    }
+  }
+  assert.deepEqual(deletionReached,['guard','truckCompany','guard','truckCompany']);
 });
 test('R11 regression: active driver HTTP scan receives its authorized profile',async()=>{
   const response=await fetch(`${url}/api/qr/scan`,{method:'POST',headers:{Authorization:'Bearer driver','Content-Type':'application/json'},

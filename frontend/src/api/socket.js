@@ -4,6 +4,7 @@ import {auth} from "./firebase.js";
 
 let sessionGeneration = 0;
 let _driverSocket = null;
+let _profileSocket = null;
 let driverConnectionRequested = false;
 
 // Resolve the current account on every handshake/reconnect. An old async token
@@ -43,6 +44,7 @@ const connectAuthenticated = async (target) => {
 };
 
 export const connectSocket = () => connectAuthenticated(socket);
+export const connectProfileSocket = () => connectAuthenticated(getProfileSocket());
 export const connectDriverSocket = () => {
     driverConnectionRequested = true;
     return connectAuthenticated(getDriverSocket());
@@ -53,14 +55,16 @@ auth.onIdTokenChanged(async (user) => {
     const reconnectDriver = driverConnectionRequested || _driverSocket?.active || _driverSocket?.connected;
     socket.disconnect();
     _driverSocket?.disconnect();
+    _profileSocket?.disconnect();
     if (!user) { driverConnectionRequested = false; return; }
     try {
         await user.getIdToken();
         if (auth.currentUser !== user || generation !== sessionGeneration) return;
         socket.connect();
+        getProfileSocket().connect();
         if (reconnectDriver) _driverSocket?.connect();
     } catch (_) {
-        // Both sockets stay disconnected until a valid current session returns.
+        console.error("[socket] Firebase token unavailable; realtime sockets remain disconnected");
     }
 });
 
@@ -112,4 +116,15 @@ export const getDriverSocket = () => {
     });
 
     return _driverSocket;
+};
+
+export const getProfileSocket = () => {
+    if (_profileSocket) return _profileSocket;
+    _profileSocket = io(`${API_CONFIG.SOCKET_URL}/profile`, {
+        autoConnect: false,
+        reconnection: true,
+        transports: ["websocket"],
+        auth: currentTokenAuth,
+    });
+    return _profileSocket;
 };

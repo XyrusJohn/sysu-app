@@ -5,7 +5,7 @@ const {
     formatCompanyCode,
     parseCompanyCode,
 } = require("../../utils/idGenerator.js");
-const {createSequentialRecord} = require('../../services/sequentialRecordService');
+const {createSequentialRecord, deleteSequentialRecord} = require('../../services/sequentialRecordService');
 
 const FORWARDER_CODE_MAX = 50;
 const NAME_MAX = 200;
@@ -86,4 +86,15 @@ exports.setTruckCompanyActive = asyncWrapper(async (req, res) => {
 
     const refreshed = await docRef.get();
     return res.status(200).json({id: refreshed.id, ...refreshed.data()});
+});
+
+exports.deleteTruckCompany = asyncWrapper(async (req, res) => {
+    const {code} = req.params;
+    if (!parseCompanyCode(code)) {
+        return res.status(400).json({errors: [{field: "code", message: "Invalid companyCode"}]});
+    }
+
+    const deleted = await deleteSequentialRecord(admin.firestore(), "truck_company", code, parseCompanyCode);
+    if (!deleted) return res.status(404).json({message: "Truck company not found"});
+    return res.status(200).json({success: true, id: code});
 });

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { db } from '../api/firebase';
-import { collection, query, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { subscribeRealtime, asCollectionSnapshot } from '../api/realtimeService';
 
 /**
  * useFleetQueue Hook
@@ -14,10 +13,8 @@ export const useFleetQueue = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const q = query(collection(db, 'queue'), orderBy('entryTime', 'asc'), limit(100));
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const drivers = snapshot.docs
+        const unsubscribe = subscribeRealtime('queue', {order: 'asc', limit: 100}, (rows) => {
+            const drivers = asCollectionSnapshot(rows).docs
                 .map(doc => ({ id: doc.id, ...doc.data() }))
                 .filter(d => d.registrationComplete !== false && d.status !== 'completed');
 

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { db } from '../api/firebase';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { subscribeRealtime, asCollectionSnapshot } from '../api/realtimeService';
 
 /**
  * useUsers Hook
@@ -12,22 +11,18 @@ export const useUsers = () => {
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        const unsubscribe = onSnapshot(
-            collection(db, 'users'),
-            (snapshot) => {
-                const userList = snapshot.docs.map(doc => ({
+        const unsubscribe = subscribeRealtime('users', {}, (rows) => {
+                const userList = asCollectionSnapshot(rows).docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
                 }));
                 setUsers(userList);
                 setLoading(false);
-            },
-            (err) => {
+            }, (err) => {
                 console.error("Users sync error:", err);
                 setError(err.message);
                 setLoading(false);
-            }
-        );
+            });
 
         return () => unsubscribe();
     }, []);

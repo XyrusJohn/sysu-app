@@ -1,17 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { API_CONFIG } from '../api/config';
-import { auth, db } from '../api/firebase';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { subscribeRealtime, asCollectionSnapshot } from '../api/realtimeService';
 import './QRGenerator.css';
 
 const QRGenerator = () => {
     const [token, setToken] = useState('————');
     const [isLive, setIsLive] = useState(false);
+    const [qrLoading, setQrLoading] = useState(true);
     const [queueData, setQueueData] = useState({
         AUV: [], '4W': [], '6W': [], '10W': [], '20F': [], '40F': []
     });
     const [counts, setCounts] = useState({ AUV: 0, '4W': 0, '6W': 0, '10W': 0, '20F': 0, '40F': 0 });
+    const [queueLoading, setQueueLoading] = useState(true);
     const [currentTime, setCurrentTime] = useState('');
     const canvasRef = useRef(null);
 
@@ -58,6 +59,8 @@ const QRGenerator = () => {
             setIsLive(false);
             setToken('OFFLINE');
             renderQRCode('https://sysu-web-5a25d.web.app/qr-generator');
+        } finally {
+            setQrLoading(false);
         }
     };
 
@@ -69,12 +72,11 @@ const QRGenerator = () => {
 
     // ── Queue Listener ────────────────────────────────────────────────────
     useEffect(() => {
-        const q = query(collection(db, 'queue'), orderBy('entryTime', 'desc'), limit(50));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubscribe = subscribeRealtime('queue', {order: 'desc', limit: 50}, (rows) => {
             const newQueue = { AUV: [], '4W': [], '6W': [], '10W': [], '20F': [], '40F': [] };
             const newCounts = { AUV: 0, '4W': 0, '6W': 0, '10W': 0, '20F': 0, '40F': 0 };
 
-            snapshot.docs.forEach((doc, index) => {
+            asCollectionSnapshot(rows).docs.forEach((doc, index) => {
                 const data = doc.data();
                 const type = (data.truckType || '').toUpperCase();
                 let key = null;
@@ -93,7 +95,8 @@ const QRGenerator = () => {
 
             setQueueData(newQueue);
             setCounts(newCounts);
-        });
+            setQueueLoading(false);
+        }, () => setQueueLoading(false));
         return () => unsubscribe();
     }, []);
 
@@ -122,16 +125,18 @@ const QRGenerator = () => {
 
             <div className="qr-main-layout">
                 <aside className="qr-panel">
-                    <div className="qr-label">{isLive ? 'Scan me' : 'Offline mode'}</div>
+                    <div className="qr-label">{qrLoading ? 'Preparing QR code' : isLive ? 'Scan me' : 'Offline mode'}</div>
                     <div className="qr-frame">
                         <div className="qr-corner-tr"></div>
                         <div className="qr-corner-bl"></div>
                         <div id="qr-box">
                             <canvas ref={canvasRef}></canvas>
+                            {qrLoading && <div role="status" aria-label="Loading QR code" className="q-qr-skeleton" />}
                         </div>
                     </div>
                     <div id="qr-token-display">
-                        <div className={`qr-token ${isLive ? 'is-live' : 'is-offline'}`}>{token}</div>
+                        {qrLoading ? <div role="status" aria-label="Loading QR token" className="q-skeleton-line q-skeleton-medium" /> :
+                            <div className={`qr-token ${isLive ? 'is-live' : 'is-offline'}`}>{token}</div>}
                         <div className="qr-token-label">AUTH TOKEN</div>
                     </div>
                 </aside>
@@ -143,10 +148,18 @@ const QRGenerator = () => {
                         <div key={col} className={`q-col ${queueData[col].some(d => d.status === 'loading') ? 'has-active' : ''}`}>
                             <div className="q-col-head">
                                 <span className="q-col-name">{col}</span>
-                                <span className="q-col-count">{counts[col]}</span>
+                                <span className="q-col-count">{queueLoading ? '…' : counts[col]}</span>
                             </div>
                             <div className="q-col-body">
-                                {queueData[col].length === 0 ? (
+                                {queueLoading ? (
+                                    <div role="status" aria-label={`Loading ${col} queue`} aria-busy="true" className="q-skeleton-stack">
+                                        {[0, 1].map(index => <div key={index} className="q-card q-skeleton-card" aria-hidden="true">
+                                            <div className="q-skeleton-line q-skeleton-short" />
+                                            <div className="q-skeleton-line" />
+                                            <div className="q-skeleton-line q-skeleton-medium" />
+                                        </div>)}
+                                    </div>
+                                ) : queueData[col].length === 0 ? (
                                     <div className="no-drivers">No drivers</div>
                                 ) : (
                                     queueData[col].map((driver, idx) => (

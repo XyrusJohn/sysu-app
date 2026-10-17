@@ -13,10 +13,10 @@ before(() => {
 });
 after(async () => {await db?.terminate(); await admin.app().delete();});
 beforeEach(async () => {for(const name of ['security_guard','truck_company','id_sequences']) await db.recursiveDelete(db.collection(name));});
-function invoke(handler,body) {
+function invoke(handler,body,params={}) {
   return new Promise((resolve,reject) => {
     const res={status(code){this.statusCode=code;return this;},json(body){resolve({status:this.statusCode,body});}};
-    handler({body},res,reject);
+        handler({body,params},res,reject);
   });
 }
 for(const [collection, controller, method, makeBody, seedId] of [
@@ -48,4 +48,24 @@ test('R51: an imported ID collision is skipped without overwriting it',async () 
   assert.equal(result.body.id,'03');
   assert.deepEqual((await db.collection('truck_company').doc('02').get()).data(),{legacy:true});
   assert.equal((await db.collection('id_sequences').doc('truck_company').get()).data().maximum,3);
+});
+
+test('admin delete removes a guard without reusing its sequential ID',async()=>{
+  const controller=require('../../src/controllers/admin/guardController');
+  const created=await invoke(controller.createGuard,{firstName:'Synthetic',lastName:'Guard'});
+  const removed=await invoke(controller.deleteGuard,{}, {id:created.body.id});
+  assert.equal(removed.status,200);
+  assert.equal((await db.collection('security_guard').doc(created.body.id).get()).exists,false);
+  const next=await invoke(controller.createGuard,{firstName:'Next',lastName:'Guard'});
+  assert.notEqual(next.body.id,created.body.id);
+});
+
+test('admin delete removes a truck company without reusing its sequential ID',async()=>{
+  const controller=require('../../src/controllers/admin/truckCompanyController');
+  const created=await invoke(controller.createTruckCompany,{forwarderCode:'TEST-DELETE',name:'Synthetic Company'});
+  const removed=await invoke(controller.deleteTruckCompany,{}, {code:created.body.id});
+  assert.equal(removed.status,200);
+  assert.equal((await db.collection('truck_company').doc(created.body.id).get()).exists,false);
+  const next=await invoke(controller.createTruckCompany,{forwarderCode:'TEST-NEXT',name:'Next Company'});
+  assert.notEqual(next.body.id,created.body.id);
 });

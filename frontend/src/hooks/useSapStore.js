@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { db } from '../api/firebase';
-import { collection, onSnapshot, query } from 'firebase/firestore';
 import { SAPService, SAPAssignmentService } from '../api/sapService';
 import { API_CONFIG } from '../api/config';
 

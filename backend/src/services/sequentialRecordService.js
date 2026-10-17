@@ -33,4 +33,30 @@ async function createSequentialRecord(db, collectionName, format, parse, build) 
         throw new Error('ID sequence collision limit exceeded');
     }, {maxAttempts: 10});
 }
-module.exports = {createSequentialRecord};
+
+async function deleteSequentialRecord(db, collectionName, id, parse) {
+    const collection = db.collection(collectionName);
+    const sequence = db.collection('id_sequences').doc(collectionName);
+    const recordRef = collection.doc(id);
+
+    return db.runTransaction(async tx => {
+        const records = await tx.get(collection);
+        const sequenceSnapshot = await tx.get(sequence);
+        const record = await tx.get(recordRef);
+        if (!record.exists) return false;
+
+        let maximum = sequenceSnapshot.exists ? sequenceSnapshot.data().maximum : 0;
+        for (const existing of records.docs) {
+            const value = parse(existing.id);
+            if (value !== null) maximum = Math.max(maximum, value);
+        }
+        const deletedValue = parse(id);
+        if (deletedValue !== null) maximum = Math.max(maximum, deletedValue);
+
+        tx.delete(recordRef);
+        tx.set(sequence, {maximum});
+        return true;
+    }, {maxAttempts: 10});
+}
+
+module.exports = {createSequentialRecord, deleteSequentialRecord};

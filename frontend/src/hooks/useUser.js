@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 import { AuthService } from '../api/authService';
-import { db } from '../api/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
 
 /**
  * useUser Hook

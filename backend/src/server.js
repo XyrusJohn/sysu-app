@@ -105,6 +105,27 @@ qrNs.on("connection", () => {
     // Public — no auth needed. qr-generator.html listens here for qr_token_used events.
 });
 
+// Profiles use a separate namespace so pending users can read only their own
+// profile without weakening the active-role checks on the application socket.
+const profileNs = io.of("/profile");
+if (typeof profileNs.use === "function") profileNs.use(async (socket, next) => {
+    try {
+        const token = socket.handshake.auth?.token;
+        if (typeof token !== "string") return next(new Error("Unauthorized"));
+        const decoded = await admin.auth().verifyIdToken(token, true);
+        socket.data.uid = decoded.uid;
+        next();
+    } catch {
+        next(new Error("Unauthorized"));
+    }
+});
+if (typeof profileNs.on === "function") profileNs.on("connection", (socket) => {
+    require("./services/realtimeSubscriptions")
+        .createProfileRealtimeSubscriptions({db: admin.firestore()})(socket);
+    require("./services/socketSession").watchSocketSession(socket, socket.handshake.auth.token,
+        token => admin.auth().verifyIdToken(token, true), {setTimeout, clearTimeout});
+});
+
 /* ── io exported so controllers can emit events ── */
 global._io = io;
 global._qrNs = qrNs;
@@ -147,7 +168,7 @@ io.use(async (socket, next) => {
         const profile = await admin.firestore().collection('users').doc(decoded.uid).get();
         const userData = profile.data();
         if (!profile.exists || !userData || userData.status !== 'active'
-            || !['driver', 'fleet_manager', 'admin', 'super_admin', 'viewer'].includes(userData.role)) {
+            || !['driver', 'fleet_manager', 'admin', 'super_admin', 'viewer', 'qr_generator'].includes(userData.role)) {
             return next(new Error('Unauthorized'));
         }
         socket.data.role = userData.role;
@@ -159,6 +180,8 @@ io.use(async (socket, next) => {
 });
 
 io.on("connection", async (socket) => {
+    require('./services/realtimeSubscriptions')
+        .createRealtimeSubscriptions({db: admin.firestore()})(socket);
     require('./services/socketSession').watchSocketSession(socket, socket.handshake.auth.token,
         token => admin.auth().verifyIdToken(token, true), {setTimeout, clearTimeout});
     socket.join(`user:${socket.data.uid}`);

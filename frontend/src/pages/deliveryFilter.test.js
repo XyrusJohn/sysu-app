@@ -2,8 +2,8 @@ import {beforeEach, expect, test, vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 
-vi.mock('../api/firebase.js', () => ({db: {}, auth: {}}));
-vi.mock('../api/socket.js', () => ({EVENTS: {}, socket: {}, getDriverSocket: vi.fn(), connectDriverSocket: vi.fn()}));
+vi.mock('../api/firebase.js', () => ({db: {}, auth: {onAuthStateChanged: () => () => {}}}));
+vi.mock('../api/socket.js', () => ({EVENTS: {}, socket: {}, getDriverSocket: vi.fn(), getProfileSocket: vi.fn(() => null), connectDriverSocket: vi.fn()}));
 vi.mock('../api/authService.js', () => ({AuthService: {}}));
 vi.mock('../api/sapService.js', () => ({SAPService: {fetchShipments: vi.fn(), fetchDispatchDetails: vi.fn(), parseDate: value => value || '—'}}));
 import {Dashboard} from './dashboard.js';
@@ -516,9 +516,75 @@ test('two open assigned sessions for one UID cannot produce an ambiguous Assigne
 beforeEach(() => {
   document.body.innerHTML = '<table><tbody id="sapBody"></tbody><tbody id="sapDtlOBDLines"></tbody></table><input id="sapSearch"><span id="sapStatAll"></span><span id="sapStatDel"></span><span id="sapStatTransit"></span><span id="sapResultCount"></span><div id="sapDispatchDetail" class="hidden"><span id="sapDtlPlanDate"></span><span id="sapDtlActualDate"></span><span id="sapDtlTotalAmount"></span><span id="sapDtlTotalVolume"></span><span id="sapDtlTotalWeight"></span><span id="sapDtlTotalQty"></span></div>';
   dashboard = new Dashboard();
+  dashboard.state.sapLoading = false;
+  dashboard.state.driversLoading = false;
+  dashboard.state.queueLoading = false;
+  dashboard.state.assignmentsLoading = false;
+  dashboard.state.guardsLoading = false;
+  dashboard.state.truckCompaniesLoading = false;
   dashboard.state.sapAssignments = {[dispatch]: stored()};
   SAPService.fetchShipments.mockResolvedValue([]);
   SAPService.fetchDispatchDetails.mockResolvedValue({});
+});
+test('fleet, orders, and directory show loading, then empty or error states after subscription settles', () => {
+  dashboard.state.sapAssignments = {};
+  document.body.insertAdjacentHTML('beforeend', '<div id="fleetContent"><div id="fleetBody"></div></div><div id="ordersBody"></div><div id="fleetTree"></div><span id="fleetDirectoryCount"></span>');
+  dashboard.state.driversLoading = true;
+  dashboard.state.queueLoading = true;
+  dashboard.state.assignmentsLoading = true;
+  dashboard._renderFleetTree();
+  dashboard.renderFleet();
+  dashboard.renderOrders();
+  expect(document.querySelector('[aria-label="Loading driver directory"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Loading fleet queue"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Loading assignments"]')).not.toBeNull();
+  dashboard.state.driversLoading = false;
+  dashboard.state.queueLoading = false;
+  dashboard.state.assignmentsLoading = false;
+  dashboard.state.driversLoadError = true;
+  dashboard._renderFleetTree();
+  dashboard.renderFleet();
+  dashboard.renderOrders();
+  expect(document.getElementById('fleetTree').textContent).toContain('unavailable');
+  expect(document.getElementById('fleetBody').textContent).toContain('No drivers in queue');
+  expect(document.getElementById('ordersBody').textContent).toContain('No confirmed assignments yet');
+});
+test('guard and truck-company lists keep loading separate from empty and error states', () => {
+  document.body.insertAdjacentHTML('beforeend', '<div id="guardListBody"></div><div id="tcListBody"></div>');
+  dashboard.state.guardsLoading = true;
+  dashboard.state.truckCompaniesLoading = true;
+  dashboard._refreshGuardList();
+  dashboard._refreshTcList();
+  expect(document.querySelector('[aria-label="Loading security guards"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Loading truck companies"]')).not.toBeNull();
+  dashboard.state.guardsLoading = false;
+  dashboard.state.truckCompaniesLoading = false;
+  dashboard.state.guardsLoadError = true;
+  dashboard._refreshGuardList();
+  dashboard._refreshTcList();
+  expect(document.getElementById('guardListBody').textContent).toContain('unavailable');
+  expect(document.getElementById('tcListBody').textContent).toContain('No truck companies yet');
+});
+test('role requests show a skeleton before initial socket data and an error after failure', () => {
+  document.body.insertAdjacentHTML('beforeend', '<div id="docsListContainer"></div>');
+  dashboard.state.roleRequestsLoading = true;
+  dashboard._renderRoleRequestsInDocs();
+  expect(document.querySelector('[aria-label="Loading role requests"]')).not.toBeNull();
+  dashboard.state.roleRequestsLoading = false;
+  dashboard.state.roleRequestsLoadError = true;
+  dashboard._renderRoleRequestsInDocs();
+  expect(document.getElementById('docsListContainer').textContent).toContain('unavailable');
+});
+test('SAP table distinguishes initial loading from a confirmed empty response', async () => {
+  dashboard.state.sapAssignments = {};
+  dashboard.state.sapLoading = true;
+  dashboard._renderSapTable();
+  expect(document.querySelector('[aria-label="Loading shipments"]')).not.toBeNull();
+  expect(document.getElementById('sapBody').textContent).not.toContain('No shipments available');
+  await dashboard._syncSAP(true);
+  dashboard._renderSapTable();
+  expect(document.querySelector('[aria-label="Loading shipments"]')).toBeNull();
+  expect(document.getElementById('sapBody').textContent).toContain('No shipments available');
 });
 async function render(filter = 'all') {
   await dashboard._syncSAP(true);

@@ -15,7 +15,31 @@ const safeText = value => String(value ?? '').replaceAll('&', '&amp;').replaceAl
 const _defaultId = "map";
 const _reg = {};
 const _e = (id = _defaultId) => (_reg[id] ??= { map: null, tileLayer: null, markers: {} });
-const PHILIPPINES_BOUNDS = L.latLngBounds([[4.3, 115.5], [21.5, 127.5]]);
+export const PHILIPPINES_BOUNDS = L.latLngBounds([[4.3, 115.5], [21.5, 127.5]]);
+
+export const constrainMapToPhilippines = map => {
+    const constrainMinimumZoom = () => {
+        const size = map.getSize().subtract(L.point(48, 48));
+        if (!size.x || !size.y) return;
+        const northWest = PHILIPPINES_BOUNDS.getNorthWest();
+        const southEast = PHILIPPINES_BOUNDS.getSouthEast();
+        const boundsSize = L.bounds(map.project(southEast, 0), map.project(northWest, 0)).getSize();
+        const scale = Math.min(size.x / boundsSize.x, size.y / boundsSize.y);
+        const fitZoom = map.getScaleZoom(scale, 0);
+        if (Number.isFinite(fitZoom)) {
+            const minZoom = L.Browser.any3d ? fitZoom : Math.max(5, Math.floor(fitZoom));
+            map.setMinZoom(minZoom);
+        }
+    };
+
+    map.on("resize", constrainMinimumZoom);
+    map.on("zoomend", () => {
+        if (map.getZoom() <= map.getMinZoom() + 0.001) {
+            map.panTo(PHILIPPINES_BOUNDS.getCenter(), {animate: false});
+        }
+    });
+    constrainMinimumZoom();
+};
 
 export const markers         = _e(_defaultId).markers;
 export const trackingMarkers = _e("trackingMap").markers;
@@ -40,26 +64,7 @@ export const initLeafletMap = (containerId = _defaultId) => {
         zoomControl: false,
         attributionControl: false,
     });
-    const constrainPhilippinesView = () => {
-        const size = e.map.getSize().subtract(L.point(48, 48));
-        if (!size.x || !size.y) return;
-        const northWest = PHILIPPINES_BOUNDS.getNorthWest();
-        const southEast = PHILIPPINES_BOUNDS.getSouthEast();
-        const boundsSize = L.bounds(e.map.project(southEast, 0), e.map.project(northWest, 0)).getSize();
-        const scale = Math.min(size.x / boundsSize.x, size.y / boundsSize.y);
-        const fitZoom = e.map.getScaleZoom(scale, 0);
-        if (Number.isFinite(fitZoom)) {
-            const minZoom = L.Browser.any3d ? fitZoom : Math.max(5, Math.floor(fitZoom));
-            e.map.setMinZoom(minZoom);
-        }
-    };
-    e.map.on("resize", constrainPhilippinesView);
-    e.map.on("zoomend", () => {
-        if (e.map.getZoom() <= e.map.getMinZoom() + 0.001) {
-            e.map.panTo(PHILIPPINES_BOUNDS.getCenter(), {animate: false});
-        }
-    });
-    constrainPhilippinesView();
+    constrainMapToPhilippines(e.map);
 
     const initialTileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
     console.log(`[MapManager:${containerId}] Creating L.tileLayer with URL:`, initialTileUrl);
@@ -111,7 +116,7 @@ export const initLeafletMap = (containerId = _defaultId) => {
 
     setTimeout(() => {
         e.map.invalidateSize();
-        constrainPhilippinesView();
+        constrainMapToPhilippines(e.map);
     }, 400);
     if (containerId === _defaultId) window.map = e.map;
 
