@@ -29,6 +29,7 @@
         "firebase": "^12.12.1",
         "leaflet": "^1.9.4",
         "prop-types": "15.8.1",
+        "qrcode": "1.5.4",
         "react": "19.2.0",
         "react-dom": "19.2.0",
         "tailwindcss": "^4.2.2",
