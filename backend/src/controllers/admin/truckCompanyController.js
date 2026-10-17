@@ -2,10 +2,10 @@ const {admin} = require("../../config/firebase.js");
 const {asyncWrapper} = require("../../middleware/asyncWrapper.js");
 const { z } = require("zod");
 const {
-    pickNextIdFromList,
     formatCompanyCode,
     parseCompanyCode,
 } = require("../../utils/idGenerator.js");
+const {createSequentialRecord, deleteSequentialRecord} = require('../../services/sequentialRecordService');
 
 const FORWARDER_CODE_MAX = 50;
 const NAME_MAX = 200;
@@ -19,21 +19,14 @@ const companySchema = z.object({
 exports.createTruckCompany = asyncWrapper(async (req, res) => {
     const {forwarderCode, name} = companySchema.parse(req.body);
 
-    const snapshot = await admin.firestore().collection("truck_company").get();
-    const existingIds = snapshot.docs.map((doc) => doc.id);
-    const companyCode = pickNextIdFromList(existingIds, formatCompanyCode, parseCompanyCode);
-
-    const doc = {
+    const record = await createSequentialRecord(admin.firestore(), 'truck_company', formatCompanyCode, parseCompanyCode, companyCode => ({
         companyCode,
         forwarderCode,
         name,
         active: true,
         createdAt: new Date().toISOString(),
-    };
-
-    await admin.firestore().collection("truck_company").doc(companyCode).set(doc);
-
-    return res.status(201).json({id: companyCode, ...doc});
+    }));
+    return res.status(201).json(record);
 });
 
 exports.updateTruckCompany = asyncWrapper(async (req, res) => {
@@ -93,4 +86,15 @@ exports.setTruckCompanyActive = asyncWrapper(async (req, res) => {
 
     const refreshed = await docRef.get();
     return res.status(200).json({id: refreshed.id, ...refreshed.data()});
+});
+
+exports.deleteTruckCompany = asyncWrapper(async (req, res) => {
+    const {code} = req.params;
+    if (!parseCompanyCode(code)) {
+        return res.status(400).json({errors: [{field: "code", message: "Invalid companyCode"}]});
+    }
+
+    const deleted = await deleteSequentialRecord(admin.firestore(), "truck_company", code, parseCompanyCode);
+    if (!deleted) return res.status(404).json({message: "Truck company not found"});
+    return res.status(200).json({success: true, id: code});
 });

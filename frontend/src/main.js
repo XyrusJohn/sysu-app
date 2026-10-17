@@ -1,5 +1,4 @@
 import "./style/main.css";
-import {AuthService} from "./api/authService.js";
 
 // ── DevTools deterrent banner ───────────────────────────────────────
 console.log(
@@ -23,21 +22,3 @@ console.log(
     "%cand may result in civil and\\/or criminal penalties.",
     "color:#f85149;font-size:11px;font-family:monospace;"
 );
-
-const initApp = async () => {
-    const path = window.location.pathname;
-    const isLoginPage = path === "/" || path.includes("index.html");
-
-    if (isLoginPage) return;
-
-    try {
-        const result = await AuthService.check();
-        if (result?.data?.role) {
-            localStorage.setItem("userData", JSON.stringify(result.data));
-        }
-    } catch (error) {
-        console.error("Auth check failed:", error);
-    }
-};
-
-initApp();

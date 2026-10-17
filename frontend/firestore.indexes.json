@@ -1,6 +1,15 @@
 {
   "indexes": [
     {
+      "collectionGroup": "queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "registrationComplete", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "entryTime", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "role_requests",
       "queryScope": "COLLECTION",
       "fields": [
@@ -20,6 +29,35 @@
       "collectionGroup": "queue",
       "queryScope": "COLLECTION",
       "fields": [
+        {"fieldPath": "registrationComplete", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "joinedAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "registrationComplete", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "truckType", "order": "ASCENDING"},
+        {"fieldPath": "joinedAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "queue",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "truckType", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "registrationComplete", "order": "ASCENDING"},
+        {"fieldPath": "joinedAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "queue",
+      "queryScope": "COLLECTION",
+      "fields": [
         {"fieldPath": "driverId", "order": "ASCENDING"},
         {"fieldPath": "status", "order": "ASCENDING"}
       ]
@@ -30,6 +68,14 @@
       "fields": [
         {"fieldPath": "driverId", "order": "ASCENDING"},
         {"fieldPath": "assignedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "sap_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "driverId", "order": "ASCENDING"},
+        {"fieldPath": "tripStatus", "order": "ASCENDING"}
       ]
     },
     {

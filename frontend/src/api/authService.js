@@ -6,29 +6,21 @@ import {
     setPersistence,
     browserLocalPersistence,
 } from "firebase/auth";
-import {doc, onSnapshot} from "firebase/firestore";
-import {auth, db, googleProvider} from "./firebase";
+import {auth, googleProvider} from "./firebase";
+import {subscribeRealtime, asDocumentSnapshot} from "./realtimeService.js";
 
 let currentUserProfile = null;
 
 export const AuthService = {
     async login(email, password) {
-        try {
-            await setPersistence(auth, browserLocalPersistence);
-            const userCredential = await signInWithEmailAndPassword(auth, email, password);
-            return userCredential.user;
-        } catch (error) {
-            throw error;
-        }
+        await setPersistence(auth, browserLocalPersistence);
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        return userCredential.user;
     },
 
     async loginWithGoogle() {
-        try {
-            const result = await signInWithPopup(auth, googleProvider);
-            return result.user;
-        } catch (error) {
-            throw error;
-        }
+        const result = await signInWithPopup(auth, googleProvider);
+        return result.user;
     },
 
     async check() {
@@ -43,17 +35,27 @@ export const AuthService = {
     },
 
     subscribe(callback) {
-        return onAuthStateChanged(auth, async (user) => {
+        let stopProfile = null;
+        let generation = 0;
+        let closed = false;
+        const stopAuth = onAuthStateChanged(auth, async (user) => {
+            if (closed) return;
+            console.log("[startup] Firebase auth state resolved", {userPresent: Boolean(user)});
+            const activeGeneration = ++generation;
+            stopProfile?.();
+            stopProfile = null;
+            currentUserProfile = null;
             if (!user) {
+                console.warn("[startup] no signed-in Firebase user; returning unauthorized state");
                 callback(null, new Error("Unauthorized"));
                 return;
             }
 
-            const userDocRef = doc(db, "users", user.uid);
-
-            onSnapshot(
-                userDocRef,
-                async (snapshot) => {
+            console.log("[startup] waiting for authenticated profile subscription");
+            stopProfile = subscribeRealtime("profile", {}, async (data) => {
+                    if (closed || generation !== activeGeneration) return;
+                    const snapshot = asDocumentSnapshot(data, user.uid);
+                    console.log("[startup] profile snapshot received", {exists: snapshot.exists()});
                     if (snapshot.exists()) {
                         const profile = {
                             id: snapshot.id,
@@ -64,6 +66,15 @@ export const AuthService = {
 
                         if (currentUserProfile && currentUserProfile.role !== profile.role) {
                             profile.roleChanged = true;
+                        }
+                        if (profile.status === 'disabled' || (profile.status === 'inactive' && profile.role !== 'pending')) {
+                            currentUserProfile = null;
+                            try { await signOut(auth); } catch {
+                                // A persistence failure must never publish a disabled profile.
+                            }
+                            localStorage.removeItem('userData');
+                            if (!closed && generation === activeGeneration) callback(null, new Error('ACCOUNT_DISABLED'));
+                            return;
                         }
                         currentUserProfile = profile;
                         callback(profile);
@@ -81,13 +92,20 @@ export const AuthService = {
                         }
                         callback(null, new Error("NOT_REGISTERED"));
                     }
-                },
-                (err) => {
-                    console.error("Auth listener error:", err);
+                }, (err) => {
+                    if (closed || generation !== activeGeneration) return;
+                    console.error("[startup] profile subscription failed", {message: err.message});
                     callback(null, new Error("NOT_REGISTERED"));
-                },
-            );
+                });
         });
+        return () => {
+            if (closed) return;
+            closed = true;
+            generation++;
+            stopProfile?.();
+            stopProfile = null;
+            stopAuth();
+        };
     },
 
     async logout() {

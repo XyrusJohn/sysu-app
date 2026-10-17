@@ -9,14 +9,9 @@
             href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
             rel="stylesheet"
     />
-    <link
-            rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-    />
     <script>
         const SOCKET_URL = "http://localhost:8080";
     </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <link rel="stylesheet" href="src/style/main.css"/>
 </head>
 <body
@@ -140,20 +135,6 @@
                 class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Orders</span
         >
-    </button>
-
-    <!-- Driver Location Tracking -->
-    <button
-            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group"
-            id="rTracking"
-    >
-        <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] stroke-[1.7]">
-                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                <circle cx="12" cy="10" r="3"/>
-            </svg>
-        </span>
-        <span class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]">Live Tracking</span>
     </button>
 
     <button
@@ -400,16 +381,6 @@
             </button>
             <button
                     class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text"
-                    id="lTracking"
-            >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4 shrink-0 opacity-70">
-                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                    <circle cx="12" cy="10" r="3"/>
-                </svg>
-                <span>Driver Tracking</span>
-            </button>
-            <button
-                    class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text"
                     id="lFleet"
             >
                 <svg
@@ -429,23 +400,37 @@
 
         <div class="h-[1px] bg-db-border mx-3 my-2"></div>
 
-        <!-- Tree View Module (Dynamically populated) -->
-        <div class="px-2 pb-0.5">
-            <div class="flex items-center justify-between px-1 pt-3 pb-1">
-            <span
-                    class="text-[10.5px] font-semibold text-db-text3 uppercase tracking-[0.05em]"
-            >Fleet Regions</span
-            >
-                <button
-                        class="w-5 h-5 rounded-md border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all hover:bg-db-item-hover hover:text-db-text2"
-                >
-                    <svg viewBox="0 0 24 24" class="w-3.5 h-3.5">
-                        <line x1="12" y1="5" x2="12" y2="19"/>
-                        <line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                </button>
+        <section class="px-3 pb-3" aria-labelledby="fleetOpsHeading">
+            <h3 id="fleetOpsHeading" class="px-1 pt-1 pb-2 text-[10.5px] font-semibold text-db-text3 uppercase tracking-[0.05em]">Operations at a glance</h3>
+            <div class="grid grid-cols-3 gap-1.5">
+                <div class="rounded-md border border-db-border bg-db-bg/40 px-2 py-2 text-center">
+                    <div id="fleetStatTransit" class="text-[16px] font-bold text-emerald-400 tabular-nums">0</div>
+                    <div class="mt-0.5 text-[9px] font-semibold text-db-text3 leading-tight">In transit</div>
+                </div>
+                <div class="rounded-md border border-db-border bg-db-bg/40 px-2 py-2 text-center">
+                    <div id="fleetStatQueue" class="text-[16px] font-bold text-sky-400 tabular-nums">0</div>
+                    <div class="mt-0.5 text-[9px] font-semibold text-db-text3 leading-tight">In queue</div>
+                </div>
+                <div class="rounded-md border border-db-border bg-db-bg/40 px-2 py-2 text-center">
+                    <div id="fleetStatReturning" class="text-[16px] font-bold text-amber-400 tabular-nums">0</div>
+                    <div class="mt-0.5 text-[9px] font-semibold text-db-text3 leading-tight">Returning</div>
+                </div>
             </div>
-            <div id="fleetTree"></div>
+        </section>
+
+        <div class="h-[1px] bg-db-border mx-3 my-1"></div>
+
+        <section class="px-2 pb-3" aria-labelledby="fleetDirectoryHeading">
+            <div class="flex items-center justify-between px-1 pt-3 pb-2">
+                <div class="min-w-0">
+                    <h3 id="fleetDirectoryHeading" class="text-[10.5px] font-semibold text-db-text3 uppercase tracking-[0.05em]">Driver Directory</h3>
+                    <p id="fleetDirectoryCount" class="mt-0.5 text-[10px] text-db-text3">0 drivers</p>
+                </div>
+            </div>
+            <label class="sr-only" for="driverDirectorySearch">Search drivers or companies</label>
+            <input id="driverDirectorySearch" type="search" autocomplete="off" placeholder="Search drivers or company"
+                   class="mb-2 w-full rounded-md border border-db-border bg-db-bg/70 px-2.5 py-2 text-[11px] text-db-text placeholder:text-db-text3 outline-none focus:border-sysu-red/60">
+            <div id="fleetTree" class="space-y-1"></div>
         </div>
     </div>
 </aside>
@@ -500,16 +485,24 @@
         <section
                 id="resizePanel"
                 class="h-[240px] bg-db-panel border-t border-db-border flex flex-col overflow-hidden relative transition-[height] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] shrink-0"
+                style="height: 240px"
         >
+            <div class="h-4 shrink-0 flex items-center justify-center bg-db-panel/80">
+                <button id="liveScansResizeHandle" type="button" aria-label="Resize or collapse Live Scans panel" aria-expanded="true" aria-controls="tableWrap" title="Drag to resize; click to collapse or expand" class="w-16 h-3 flex items-center justify-center rounded-full border-0 bg-transparent cursor-ns-resize touch-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sysu-gold">
+                    <span class="w-9 h-1 rounded-full bg-db-text3/60"></span>
+                </button>
+            </div>
             <div
                     class="flex items-center justify-between px-5 py-3 border-b border-db-border shrink-0 bg-db-bg/40"
+                    id="liveScansHeader"
             >
                 <div class="flex items-center gap-3">
               <span class="text-[15px] font-black text-white tracking-tight"
-              >Live Scans</span
+              id="liveScansTitle">Live Scans</span
               >
                     <div
                             class="flex items-center gap-1.5 px-2 py-0.5 bg-green-500/10 border border-green-500/20 rounded-full text-[10px] font-black text-green-400"
+                            data-live-scans-detail
                     >
                         <div
                                 class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"
@@ -518,6 +511,7 @@
                     </div>
                     <div
                             class="flex items-center gap-1 text-[10px] text-db-text3 font-bold uppercase tracking-wider"
+                            data-live-scans-detail
                     >
                         <span class="text-green-500">●</span> Connected
                     </div>
@@ -529,22 +523,10 @@
                     >
                         All
                     </button>
-                    <button
-                            class="px-3 py-1 text-[10px] font-bold rounded text-db-text3 hover:text-db-text cursor-pointer transition-all"
-                            data-tab="transit"
-                    >
-                        Scans
-                    </button>
-                    <button
-                            class="px-3 py-1 text-[10px] font-bold rounded text-db-text3 hover:text-db-text cursor-pointer transition-all"
-                            data-tab="delivered"
-                    >
-                        Incidents
-                    </button>
                 </div>
             </div>
 
-            <div id="tableWrap"></div>
+            <div id="tableWrap" class="flex-1 min-h-0 overflow-hidden"></div>
         </section>
     </div>
 
@@ -645,9 +627,7 @@
                             class="divide-y divide-db-border text-sm"
                     >
                     <tr>
-                        <td colspan="5" class="text-center py-8 text-db-text3">
-                            Loading users...
-                        </td>
+                        <td colspan="5" class="p-4"><div role="status" aria-label="Loading users" aria-busy="true" class="space-y-3 animate-pulse"><div class="h-4 w-2/3 rounded bg-db-item-hover"></div><div class="h-4 w-1/2 rounded bg-db-item-hover"></div><div class="h-4 w-3/4 rounded bg-db-item-hover"></div></div></td>
                     </tr>
                     </tbody>
                 </table>
@@ -932,14 +912,7 @@
                     </thead>
                     <tbody id="sapBody" class="divide-y divide-db-border text-sm">
                     <tr>
-                        <td colspan="9" class="text-center py-12 text-db-text3">
-                            <div class="flex flex-col items-center gap-3">
-                                <div
-                                        class="w-8 h-8 border-2 border-db-border border-t-sysu-red rounded-full animate-spin"
-                                ></div>
-                                <span>Connecting to SAP OData Service...</span>
-                            </div>
-                        </td>
+                        <td colspan="9" class="p-4"><div role="status" aria-label="Loading shipments" aria-busy="true" class="space-y-3 animate-pulse"><div class="h-4 w-3/4 rounded bg-db-item-hover"></div><div class="h-4 w-1/2 rounded bg-db-item-hover"></div><div class="h-4 w-2/3 rounded bg-db-item-hover"></div></div></td>
                     </tr>
                     </tbody>
                 </table>
@@ -1095,7 +1068,7 @@
                     </svg>
                     <span class="text-[12px] font-bold text-db-text uppercase tracking-widest">Drivers</span>
                 </div>
-                <span id="trackingDriverCount" class="text-[10px] font-bold text-db-text3 bg-db-item-hover px-2 py-0.5 rounded-full">0</span>
+                <span id="trackingSidebarCount" class="text-[10px] font-bold text-db-text3 bg-db-item-hover px-2 py-0.5 rounded-full">0</span>
             </div>
             <!-- Driver list (scrollable) -->
             <div id="trackingDriverList" class="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[rgba(255,255,255,0.06)] scrollbar-track-transparent">
@@ -1130,9 +1103,7 @@
         </div>
 
         <div id="docsListContainer" class="flex-1 overflow-y-auto p-6">
-            <div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">
-                Loading override requests...
-            </div>
+            <div role="status" aria-label="Loading requests" aria-busy="true" class="space-y-3 animate-pulse"><div class="h-20 rounded-lg bg-db-item-hover"></div><div class="h-20 rounded-lg bg-db-item-hover"></div><div class="h-20 rounded-lg bg-db-item-hover"></div></div>
         </div>
     </section>
 
@@ -1236,25 +1207,48 @@
 <!-- Under Development Overlay -->
 <div
         id="underDevOverlay"
-        class="fixed inset-0 bg-db-bg/90 backdrop-blur-sm z-[500] flex flex-col items-center justify-center opacity-0 pointer-events-none transition-all duration-500"
+        aria-hidden="true"
+        class="fixed left-[var(--spacing-rail-w)] inset-y-0 right-0 z-[500] flex items-center justify-center overflow-y-auto bg-[#080a0d]/75 p-4 backdrop-blur-md opacity-0 pointer-events-none transition-opacity duration-300 sm:p-8"
 >
-    <div class="flex flex-col items-center text-center">
-        <div
-                class="w-20 h-20 bg-db-text/10 rounded-full flex items-center justify-center mb-6"
-        >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
-            </svg>
+    <section class="relative w-full max-w-lg overflow-hidden rounded-2xl border border-db-border bg-db-panel shadow-2xl" aria-labelledby="underDevTitle" aria-describedby="underDevDescription">
+        <div class="h-1 w-full bg-gradient-to-r from-sysu-red via-sysu-gold to-sysu-red"></div>
+        <div class="p-6 sm:p-9">
+            <div class="mb-6 flex items-center justify-between gap-3">
+                <span class="inline-flex items-center gap-2 rounded-full border border-sysu-gold/25 bg-sysu-gold/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-sysu-gold">
+                    <span class="h-1.5 w-1.5 rounded-full bg-sysu-gold"></span>
+                    Under development
+                </span>
+                <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-db-text3">SYSU Operations</span>
+            </div>
+
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-xl border border-db-border bg-db-bg text-sysu-gold">
+                <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"></path>
+                    <path d="M4 5.5v16M8 7h8M8 11h7"></path>
+                </svg>
+            </div>
+
+            <p class="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-db-text3">Workspace update</p>
+            <h2 id="underDevTitle" class="text-2xl font-bold tracking-tight text-db-text font-display sm:text-3xl">
+                This workspace is under development
+            </h2>
+            <p id="underDevDescription" class="mt-3 max-w-prose text-sm leading-6 text-db-text2 sm:text-[15px]">
+                We are preparing this workspace before it becomes available.
+            </p>
+
+            <div class="mt-6 rounded-xl border border-db-border bg-db-bg/70 p-4">
+                <p class="text-[11px] font-semibold text-db-text">Work is in progress</p>
+                <p class="mt-1 text-xs leading-5 text-db-text3">You can continue monitoring current operations from the Overview workspace.</p>
+            </div>
+
+            <button id="underDevReturnBtn" type="button" class="mt-6 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-sysu-red px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-sysu-red-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sysu-gold focus-visible:ring-offset-2 focus-visible:ring-offset-db-panel sm:w-auto">
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m15 18-6-6 6-6"></path><path d="M20 12H9"></path>
+                </svg>
+                Return to Overview
+            </button>
         </div>
-        <h2
-                class="text-2xl font-bold text-db-text uppercase tracking-widest mb-4"
-        >
-            This page is under development
-        </h2>
-        <p class="text-white/70 text-lg max-w-xl text-center">
-            Please thank you.
-        </p>
-    </div>
+    </section>
 </div>
 
 <div
@@ -1520,20 +1514,21 @@
                 <div class="text-[10px] font-bold text-sysu-red uppercase tracking-widest mb-3">Outbound Line Items (All
                     OBDs)
                 </div>
-                <div class="overflow-hidden">
-                    <table class="w-full text-left border-collapse text-sm table-fixed">
+                <div class="w-full min-w-0 overflow-x-hidden">
+                    <table id="sapDtlOBDTable" class="sap-obd-table w-full min-w-0 text-left border-collapse text-sm table-fixed">
                         <colgroup>
-                            <col class="w-[9%]">
-                            <col class="w-[12%]">
-                            <col class="w-[9%]">
-                            <col class="w-[10%]">
                             <col class="w-[8%]">
                             <col class="w-[10%]">
-                            <col class="w-[14%]">
-                            <col class="w-[20%]">
+                            <col class="w-[6%]">
+                            <col class="w-[6%]">
+                            <col class="w-[6%]">
                             <col class="w-[8%]">
-                            <col class="w-[8%]">
-                            <col class="w-[8%]">
+                            <col class="w-[11%]">
+                            <col class="w-[13%]">
+                            <col class="w-[7%]">
+                            <col class="w-[7%]">
+                            <col class="w-[7%]">
+                            <col class="w-[11%]">
                         </colgroup>
                         <thead>
                         <tr class="border-b border-db-border">
@@ -1548,6 +1543,7 @@
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Latitude</th>
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Longitude</th>
                             <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-4 text-center whitespace-nowrap w-[80px]">POD Preview</th>
+                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 px-3 text-center whitespace-nowrap">Delivery Status</th>
                         </tr>
                         </thead>
                         <tbody id="sapDtlOBDLines">
@@ -1563,6 +1559,7 @@
                             <td class="pt-3 pr-3"></td>
                             <td class="pt-3 pr-3"></td>
                             <td class="pt-3 pr-3"></td>
+                            <td class="pt-3"></td>
                             <td class="pt-3"></td>
                             <td class="pt-3"></td>
                         </tr>
@@ -1673,7 +1670,7 @@
         <!-- Filter hint -->
         <div class="px-5 py-2 bg-db-bg/30 border-b border-db-border shrink-0">
             <p class="text-[10px] text-db-text3 italic">
-                Queue shows drivers with no prior assignment (FIFO). Drivers who already have a shipment — active or completed — are hidden from Queue; use the Assigned tab to give them another.
+                Queue shows eligible drivers for their current QR session in FIFO order. Assigned shows pre-transit drivers who can still take shipments, including while loading/loaded. Drivers in transit or returning to base cannot receive more shipments; completed sessions require a new QR scan.
             </p>
         </div>
 
@@ -1969,15 +1966,18 @@
     <div id="podPreviewModal" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-[9000]">
       <div class="bg-white dark:bg-gray-800 rounded-lg p-4 sm:p-3 max-w-4xl sm:max-w-3xl md:max-w-2xl w-full shadow-lg">
         <div class="flex justify-between items-center mb-2">
-          <h2 class="text-lg font-bold text-gray-800 dark:text-gray-200">POD Preview</h2>
+          <h2 id="podPreviewTitle" class="text-lg font-bold text-gray-800 dark:text-gray-200">POD Preview</h2>
           <button onclick="window.dashboard.closePodPreview()" class="text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white">&times;</button>
         </div>
-        <div class="flex-1 flex items-center justify-center">
-          <img id="podPreviewImg" src="" alt="POD image" class="max-h-[80vh] sm:max-h-[70vh] md:max-h-[60vh] w-auto rounded cursor-zoom-in"/>
+        <div id="podPreviewSingleContent">
+          <div class="flex-1 flex items-center justify-center">
+            <img id="podPreviewImg" src="" alt="POD image" class="max-h-[80vh] sm:max-h-[70vh] md:max-h-[60vh] w-auto rounded cursor-zoom-in"/>
+          </div>
+          <div class="text-sm text-gray-600 dark:text-gray-300">Captured at: <span id="podTimestamp">&mdash;</span></div>
+          <div class="text-sm text-gray-600 dark:text-gray-300">Verified at: <span id="podVerifiedTimestamp">&mdash;</span></div>
+          <div id="podPreviewSignature" class="mt-4"></div>
         </div>
-        <div class="text-sm text-gray-600 dark:text-gray-300">Captured at: <span id="podTimestamp">&mdash;</span></div>
-        <div class="text-sm text-gray-600 dark:text-gray-300">Verified at: <span id="podVerifiedTimestamp">&mdash;</span></div>
-        <div id="podPreviewSignature" class="mt-4"></div>
+        <div id="podPreviewGallery" hidden class="w-full"></div>
       </div>
     </div>
 </body>

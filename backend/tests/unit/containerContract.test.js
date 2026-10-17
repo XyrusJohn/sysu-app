@@ -1,0 +1,6 @@
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
+const root=path.resolve(__dirname,'../../..');const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+test('R16 release container pins supported Node 24 by digest',()=>{assert.match(read('Dockerfile'),/^FROM node:24[^\s]*@sha256:[a-f0-9]{64}$/m);});
+test('R17 container installs locked production dependencies and runs non-root',()=>{const source=read('Dockerfile');assert.match(source,/RUN npm ci --omit=dev/);assert.match(source,/^USER node$/m);assert.doesNotMatch(source,/COPY backend\/ \.\//);assert.match(source,/COPY.*backend\/src/);assert.match(source,/HEALTHCHECK/);});
+test('R17 Docker context denies by default and excludes nested secrets',()=>{const source=read('.dockerignore');assert.ok(source.split(/\r?\n/).includes('**'));for(const pattern of ['**/.env','**/*.env','**/service-account.json','**/firebase-qr.json','**/*.pem','**/*.key'])assert.ok(source.includes(pattern),pattern);});
+test('R06 manifests declare supported release runtime',()=>{for(const directory of ['', 'backend/', 'frontend/'])assert.equal(JSON.parse(read(directory+'package.json')).engines?.node,'24.x');});

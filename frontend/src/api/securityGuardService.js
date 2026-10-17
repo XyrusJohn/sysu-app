@@ -1,5 +1,3 @@
-const COLLECTION = "security_guard";
-
 async function authedFetch(url, options = {}) {
     const {AuthService} = await import("./authService.js");
     const token = await AuthService.getToken();
@@ -12,7 +10,7 @@ async function authedFetch(url, options = {}) {
         },
     });
 
-    let body = null;
+    let body;
     try {
         body = await response.json();
     } catch (e) {
@@ -41,28 +39,22 @@ export const SecurityGuardService = {
      * Subscribe to all security_guard docs. Callback receives a
      * map keyed by docSnap.id. Returns the unsubscribe function.
      */
-    async subscribe(callback) {
-        const [{collection, onSnapshot}, {db}] = await Promise.all([
-            import("firebase/firestore"),
-            import("./firebase.js"),
-        ]);
-        return onSnapshot(
-            collection(db, COLLECTION),
-            (snapshot) => {
+    async subscribe(callback, onError) {
+        const {subscribeRealtime, asCollectionSnapshot} = await import("./realtimeService.js");
+        return subscribeRealtime("securityGuards", {}, (rows) => {
                 const map = {};
-                snapshot.forEach((docSnap) => {
+                asCollectionSnapshot(rows).forEach((docSnap) => {
                     map[docSnap.id] = {
                         id: docSnap.id,
                         ...docSnap.data(),
                     };
                 });
                 callback(map);
-            },
-            (error) => {
+            }, (error) => {
                 console.error("SecurityGuardService subscribe error:", error);
-                callback({});
-            },
-        );
+                if (onError) onError(error);
+                else callback({});
+            });
     },
 
     /**
@@ -98,6 +90,11 @@ export const SecurityGuardService = {
             method: "PATCH",
             body: JSON.stringify({active}),
         });
+    },
+
+    async delete(guardId) {
+        const url = await adminUrl(`/${encodeURIComponent(guardId)}`);
+        return authedFetch(url, {method: "DELETE"});
     },
 
     /**

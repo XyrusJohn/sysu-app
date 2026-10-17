@@ -2,22 +2,100 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function active() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', '') == 'active'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['driver', 'fleet_manager', 'qr_generator', 'admin', 'super_admin'];
+    }
+    function staff() {
+      return active() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['fleet_manager', 'admin', 'super_admin'];
+    }
+    function adminUser() {
+      return active() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'super_admin'];
+    }
+    function driverUser() {
+      return active() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver';
+    }
+    function ownsDriver() {
+      return driverUser() && resource.data.driverId == request.auth.uid;
+    }
+    function basicProfile(data) {
+      return data.get('name', '') is string && data.get('name', '').size() <= 100
+        && data.get('fn', '') is string && data.get('fn', '').size() <= 50
+        && data.get('mi', '') is string && data.get('mi', '').size() <= 8
+        && data.get('ln', '') is string && data.get('ln', '').size() <= 50
+        && data.get('phone', '') is string && data.get('phone', '').size() <= 30;
+    }
+
+    function requirements(data) {
+      let req = data.get('requirements', {});
+      return req is map && req.keys().hasOnly(['aircon', 'reflectorizedVest', 'safetyShoes', 'headcap', 'pants', 'closedShoes'])
+        && req.get('aircon', false) is bool && req.get('reflectorizedVest', false) is bool
+        && req.get('safetyShoes', false) is bool && req.get('headcap', false) is bool
+        && req.get('pants', false) is bool && req.get('closedShoes', false) is bool;
+    }
+    function driverProfile(data) {
+      return basicProfile(data) && requirements(data)
+        && data.get('driverName', '') is string && data.get('driverName', '').size() <= 100
+        && data.get('helperName', '') is string && data.get('helperName', '').size() <= 300
+        && data.get('helper', '') is string && data.get('helper', '').size() <= 300
+        && data.get('plateNumber', '') is string && data.get('plateNumber', '').size() <= 20
+        && data.get('truckType', '') is string && data.get('truckType', '').size() <= 20
+        && data.get('truckingCompany', '') is string && data.get('truckingCompany', '').size() <= 100
+        && data.get('truckCompany', '') is string && data.get('truckCompany', '').size() <= 100
+        && data.get('isFull', false) is bool;
+    }
+    function coordinates(data) {
+      return data.lat is number && data.lat >= -90 && data.lat <= 90
+        && data.lng is number && data.lng >= -180 && data.lng <= 180;
+    }
+    function freshCapture(value) {
+      return value is timestamp
+        && value >= request.time - duration.value(15, 's')
+        && value <= request.time + duration.value(5, 's');
+    }
+    function ownedLocation(data) {
+      let shipment = data.get('sapDocId', null);
+      return data.keys().hasOnly(['driverId', 'name', 'lat', 'lng', 'status', 'sapDocId', 'updatedAt'])
+        && data.driverId == request.auth.uid && coordinates(data)
+        && data.name is string && data.name.size() <= 100
+        && data.status in ['online', 'stopped'] && freshCapture(data.updatedAt)
+        && (shipment == null || (shipment is string && shipment.size() > 0 && shipment.size() <= 128
+          && get(/databases/$(database)/documents/sap_assignments/$(shipment)).data.driverId == request.auth.uid
+          && get(/databases/$(database)/documents/sap_assignments/$(shipment)).data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base']));
+    }
+
     // ─── User Profiles ───────────────────────────────────────────────────────
     // Read: authenticated users (for admin user management UI).
     // Write: own document only. Role changes MUST go through backend API
     //        (PATCH /api/users/update-role) — not direct Firestore write.
     match /users/{userId} {
-      allow get:    if request.auth != null;
-      allow list:   if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && request.auth.uid == userId;
+      allow get: if request.auth != null && (request.auth.uid == userId || staff());
+      allow list: if staff();
+      allow create: if request.auth != null && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'fn', 'mi', 'ln', 'email', 'phone', 'position', 'role', 'status', 'createdAt'])
+        && request.resource.data.role == 'pending'
+        && request.resource.data.status == 'inactive'
+        && request.resource.data.get('uid', userId) == userId
+        && request.resource.data.get('email', '') is string && request.resource.data.get('email', '').size() <= 254
+        && basicProfile(request.resource.data);
+      allow update: if request.auth != null && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'fn', 'mi', 'ln', 'displayName', 'photoURL', 'phone'])
+        && basicProfile(request.resource.data)
+        && request.resource.data.get('displayName', '') is string
+        && request.resource.data.get('displayName', '').size() <= 100
+        && (request.resource.data.get('photoURL', null) == null
+          || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 2048))
+        && request.resource.data.get('phone', '') is string
+        && request.resource.data.get('phone', '').size() <= 30;
       allow delete: if false;
     }
 
     // ─── Role Requests ───────────────────────────────────────────────────────
     match /role_requests/{requestId} {
-      allow read:   if request.auth != null;
-      allow write:  if request.auth != null;
+      allow read: if adminUser() || (active() && resource.data.requesterId == request.auth.uid);
+      allow write: if false;
     }
 
     // ─── Queue ───────────────────────────────────────────────────────────────
@@ -28,14 +106,16 @@ service cloud.firestore {
     // the backend (POST /api/sap/assign). Drivers may update their own active
     // progress (tripStatus, isFull, registrationComplete) on their own queue doc.
     match /queue/{queueId} {
-      allow read:  if true;
+      allow read: if staff() || ownsDriver();
 
       // Create: allowed for any authenticated user (QR scan via backend Admin SDK or authenticated client).
-      allow create: if request.auth != null;
+      allow create: if false;
 
       // Update: document owner (by driverId or queueId) or admin
-      allow update: if request.auth != null
-        && (resource.data.driverId == request.auth.uid || request.auth.uid == queueId);
+      allow update: if ownsDriver()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registrationComplete', 'isFull', 'updatedAt'])
+        && request.resource.data.get('registrationComplete', false) is bool
+        && request.resource.data.get('isFull', false) is bool;
 
       allow delete: if false;
     }
@@ -44,21 +124,79 @@ service cloud.firestore {
     // Public read: dashboard map needs live fleet positions.
     // Write: the driver themselves (document ID === auth UID).
     match /drivers/{driverId} {
-      allow read:  if true;
-      allow write: if request.auth != null && request.auth.uid == driverId;
+      allow read: if staff() || (active() && request.auth.uid == driverId);
+      allow create: if driverUser() && request.auth.uid == driverId
+        && request.resource.data.keys().hasOnly(['driverId', 'driverName', 'plateNumber', 'truckType', 'truckCompany', 'helperName', 'isFull', 'updatedAt'])
+        && request.resource.data.driverId == request.auth.uid && driverProfile(request.resource.data);
+      allow update: if driverUser() && request.auth.uid == driverId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['driverName', 'helperName', 'name', 'fn', 'mi', 'ln', 'phone', 'truckType', 'plateNumber', 'truckingCompany', 'helper', 'requirements', 'isFull', 'updatedAt'])
+        && driverProfile(request.resource.data)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['updatedAt']) || request.resource.data.updatedAt == request.time);
+      allow delete: if false;
     }
 
     // ─── SAP Assignments ──────────────────────────────────────────────────────
     // Public read: anyone can see confirmed assignments (dispatch table).
     // Creation & Deletion: backend API only (POST /api/sap/assign, POST /api/sap/cancel) via Admin SDK.
     // Update: Allowed for the assigned driver to update tripStatus, lineItems (POD), and timestamps.
+    match /driver_locations/{driverId} {
+      allow read: if staff() || (driverUser() && request.auth.uid == driverId);
+      allow create, update: if driverUser() && request.auth.uid == driverId && ownedLocation(request.resource.data);
+      allow delete: if driverUser() && request.auth.uid == driverId;
+    }
+
     match /sap_assignments/{shipmentId} {
-      allow read:   if true;
+      allow read: if staff() || ownsDriver();
       allow create: if false; // Backend Admin SDK only
       allow delete: if false; // Backend Admin SDK only
-      allow update: if request.auth != null
-        && (resource.data.driverId == request.auth.uid
-            || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'super_admin']);
+      allow update: if ownsDriver()
+        && resource.data.tripStatus == 'assigned' && request.resource.data.tripStatus == 'loading'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tripStatus', 'loadingStartedAt', 'updatedAt'])
+        && freshCapture(request.resource.data.loadingStartedAt);
+      allow update: if ownsDriver()
+        && resource.data.tripStatus == 'loading' && request.resource.data.tripStatus == 'fully_loaded'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tripStatus', 'fullyLoadedAt', 'updatedAt'])
+        && freshCapture(request.resource.data.fullyLoadedAt);
+      allow update: if ownsDriver()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tripStatus', 'updatedAt'])
+        && ((resource.data.tripStatus == 'assigned' && request.resource.data.tripStatus == 'loading')
+          || (resource.data.tripStatus == 'loading' && request.resource.data.tripStatus in ['loaded', 'fully_loaded'])
+          || (resource.data.tripStatus in ['loaded', 'fully_loaded'] && request.resource.data.tripStatus == 'in_transit')
+          || (resource.data.tripStatus == 'in_transit' && request.resource.data.tripStatus == 'completed'));
+      allow update: if ownsDriver()
+        && resource.data.tripStatus in ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLocation'])
+        && request.resource.data.lastLocation.keys().hasOnly(['lat', 'lng', 'at'])
+        && coordinates(request.resource.data.lastLocation)
+        && freshCapture(request.resource.data.lastLocation.at);
+
+      match /pod_images/{obdNumber} {
+        allow read: if staff() || (active()
+          && get(/databases/$(database)/documents/sap_assignments/$(shipmentId)).data.driverId == request.auth.uid);
+        // Mobile upload schema and Storage contract need separate positive tests.
+        allow write: if false;
+      }
+      match /pod_groups/{groupPodId} {
+        allow read: if staff() || (active()
+          && get(/databases/$(database)/documents/sap_assignments/$(shipmentId)).data.driverId == request.auth.uid);
+        allow write: if false;
+      }
+    }
+
+    // Cancellation archives retain the previous driver's identity and POD.
+    match /sap_assignment_history/{historyId} {
+      allow read: if staff() || ownsDriver();
+      allow write: if false;
+      match /pod_images/{obdNumber} {
+        allow read: if staff() || (active()
+          && get(/databases/$(database)/documents/sap_assignment_history/$(historyId)).data.driverId == request.auth.uid);
+        allow write: if false;
+      }
+      match /pod_groups/{groupPodId} {
+        allow read: if staff() || (active()
+          && get(/databases/$(database)/documents/sap_assignment_history/$(historyId)).data.driverId == request.auth.uid);
+        allow write: if false;
+      }
     }
 
     // ─── Incidents ───────────────────────────────────────────────────────────
@@ -75,8 +213,7 @@ service cloud.firestore {
     // Write: backend API only (generateToken/verifyToken/scanToken).
     //        Firebase Admin SDK bypasses rules; direct client writes are blocked.
     match /qr_tokens/{tokenId} {
-      allow read:  if true;
-      allow write: if false; // Only backend API writes (via Admin SDK)
+      allow read, write: if false;
     }
 
     // ─── Override Requests (FIFO bypass flow) ───────────────────────────────
@@ -84,29 +221,13 @@ service cloud.firestore {
     // backend can move the request to approved/denied/revoked/consumed — that
     // decision is what issues a single-use override token.
     match /overrideRequests/{requestId} {
-      allow read: if request.auth != null;
+      allow read: if staff() || (active() && resource.data.requestedBy == request.auth.uid);
+      allow write: if false; // Creation/revocation use the authenticated backend transaction paths.
+    }
 
-      // Create only as a pending request authored by the caller.
-      allow create: if request.auth != null
-        && request.resource.data.requestedBy == request.auth.uid
-        && request.resource.data.status == 'pending'
-        && request.resource.data.keys().hasAll([
-             'dispatchKey', 'requestedDriverId', 'reason', 'requestedBy',
-             'requestedAt', 'status'
-           ])
-        && request.resource.data.decidedBy == null
-        && request.resource.data.decision == null;
-
-      // Status transitions go through the backend; clients can only revoke
-      // their own pending requests.
-      allow update: if request.auth != null
-        && resource.data.requestedBy == request.auth.uid
-        && resource.data.status == 'pending'
-        && request.resource.data.status == 'revoked'
-        && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['status', 'decidedAt']);
-
-      allow delete: if false;
+    match /cancelRequests/{requestId} {
+      allow read: if staff();
+      allow write: if false;
     }
 
     // ─── Override Tokens ─────────────────────────────────────────────────────

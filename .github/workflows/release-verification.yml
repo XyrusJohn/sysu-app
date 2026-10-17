@@ -1,0 +1,56 @@
+name: Release verification
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  local-release-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VITE_RELEASE_TARGET: local
+      VITE_API_URL: http://127.0.0.1:8080
+      VITE_SOCKET_URL: http://127.0.0.1:8080
+      VITE_DRIVER_TRACKING_URL: http://127.0.0.1:8091
+      VITE_FIREBASE_PROJECT_ID: demo-sysu-security
+      VITE_FIREBASE_API_KEY: synthetic-local-key
+      VITE_FIREBASE_AUTH_DOMAIN: demo-sysu-security.firebaseapp.com
+      VITE_FIREBASE_STORAGE_BUCKET: demo-sysu-security.appspot.com
+      VITE_AUTH_EMULATOR_URL: http://127.0.0.1:9099
+      VITE_FIRESTORE_EMULATOR_HOST: 127.0.0.1:8085
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm ci --prefix backend
+      - run: npm ci --prefix frontend
+      - run: npm run lint
+      - run: npm test --prefix backend
+      - run: npm test --prefix frontend
+      - run: npm run build --prefix frontend
+      - name: Serialized isolated Firestore and Auth acceptance
+        run: node backend/node_modules/firebase-tools/lib/bin/firebase.js emulators:exec --project demo-sysu-security --config firebase.test.json --only auth,firestore "node --test --test-concurrency=1 backend/tests/rules/*.spec.mjs"
+      - name: Build minimal production container
+        run: docker build --tag sysu-app:verification .
+      - name: Install Chromium
+        run: node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Desktop, mobile browser and real socket acceptance
+        env:
+          SYSU_E2E_DIST: frontend/dist
+        run: node backend/node_modules/firebase-tools/lib/bin/firebase.js emulators:exec --project demo-sysu-security --config firebase.test.json --only auth,firestore "node frontend/node_modules/playwright/cli.js test --config frontend/playwright.config.js"
+      - name: Container user and secret inventory
+        run: |
+          test "$(docker inspect --format '{{.Config.User}}' sysu-app:verification)" = node
+          docker run --rm --entrypoint sh sysu-app:verification -c 'test ! -d /app/tests && test ! -d /app/node_modules/zod/../firebase-tools && test -z "$(find /app -type f \( -name .env -o -name service-account.json -o -name firebase-qr.json -o -name "*.pem" -o -name "*.key" \) -print)"'

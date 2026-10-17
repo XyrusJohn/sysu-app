@@ -2,36 +2,69 @@ import {io} from "socket.io-client";
 import {API_CONFIG} from "./config.js";
 import {auth} from "./firebase.js";
 
+let sessionGeneration = 0;
+let _driverSocket = null;
+let _profileSocket = null;
+let driverConnectionRequested = false;
+
+// Resolve the current account on every handshake/reconnect. An old async token
+// result must never be applied after logout or a newer account/token event.
+const currentTokenAuth = async (callback) => {
+    const user = auth.currentUser;
+    const generation = sessionGeneration;
+    if (!user) return callback({});
+    try {
+        const token = await user.getIdToken();
+        callback(auth.currentUser === user && generation === sessionGeneration ? {token} : {});
+    } catch (_) {
+        callback({});
+    }
+};
+
 export const socket = io(API_CONFIG.SOCKET_URL, {
     autoConnect: false, // Don't connect until we have a token
     reconnection: true,
     transports: ["websocket"],
+    auth: currentTokenAuth,
 });
 
-// Function to connect with authentication
-export const connectSocket = async () => {
+const connectAuthenticated = async (target) => {
+    const user = auth.currentUser;
+    const generation = sessionGeneration;
+    if (!user) {
+        target.disconnect();
+        return;
+    }
     try {
-        const user = auth.currentUser;
-        if (!user) return;
-
-        const token = await user.getIdToken(true);
-        socket.auth = {token};
-        socket.connect();
-    } catch (err) {
-        console.error("Socket token error:", err);
+        await user.getIdToken();
+        if (auth.currentUser === user && generation === sessionGeneration) target.connect();
+    } catch (_) {
+        if (auth.currentUser === user && generation === sessionGeneration) target.disconnect();
     }
 };
 
-// Auto-refresh token and reconnect if expired
+export const connectSocket = () => connectAuthenticated(socket);
+export const connectProfileSocket = () => connectAuthenticated(getProfileSocket());
+export const connectDriverSocket = () => {
+    driverConnectionRequested = true;
+    return connectAuthenticated(getDriverSocket());
+};
+
 auth.onIdTokenChanged(async (user) => {
-    if (user) {
-        const token = await user.getIdToken();
-        socket.auth = {token};
-        if (!socket.connected) {
-            socket.connect();
-        }
-    } else {
-        socket.disconnect();
+    const generation = ++sessionGeneration;
+    const reconnectDriver = driverConnectionRequested || _driverSocket?.active || _driverSocket?.connected;
+    socket.disconnect();
+    _driverSocket?.disconnect();
+    _profileSocket?.disconnect();
+    if (!user) { driverConnectionRequested = false; return; }
+    try {
+        await user.getIdToken();
+        if (auth.currentUser !== user || generation !== sessionGeneration) return;
+        socket.connect();
+        getProfileSocket().connect();
+        if (reconnectDriver) _driverSocket?.connect();
+    } catch (_) {
+        console.error("[socket] Firebase token unavailable; realtime sockets remain disconnected");
     }
 });
 
@@ -60,6 +93,7 @@ export const EVENTS = {
     APPROVE_ROLE_REQUEST: "approve_role_request",
     REJECT_ROLE_REQUEST: "reject_role_request",
     USER_ROLE_CHANGED: "user_role_changed",
+    POD_UPDATED: "pod_updated",
 };
 
 // ── Driver-Location Socket ─────────────────────────────────────────────────
@@ -70,8 +104,6 @@ export const EVENTS = {
 // These two sockets operate independently and can coexist.
 // ─────────────────────────────────────────────────────────────────────────────
 
-let _driverSocket = null;
-
 export const getDriverSocket = () => {
     if (_driverSocket) return _driverSocket;
 
@@ -80,7 +112,19 @@ export const getDriverSocket = () => {
         reconnection: true,
         reconnectionDelayMax: 10000,
         transports: ["websocket"],
+        auth: currentTokenAuth,
     });
 
     return _driverSocket;
+};
+
+export const getProfileSocket = () => {
+    if (_profileSocket) return _profileSocket;
+    _profileSocket = io(`${API_CONFIG.SOCKET_URL}/profile`, {
+        autoConnect: false,
+        reconnection: true,
+        transports: ["websocket"],
+        auth: currentTokenAuth,
+    });
+    return _profileSocket;
 };

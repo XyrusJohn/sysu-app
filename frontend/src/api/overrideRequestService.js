@@ -3,10 +3,10 @@ import {
     addDoc,
     doc,
     updateDoc,
-    onSnapshot,
     serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./firebase.js";
+import {subscribeRealtime, asCollectionSnapshot} from "./realtimeService.js";
 
 const COLLECTION = "override_requests";
 
@@ -55,9 +55,9 @@ export const OverrideRequestService = {
      * Subscribe to all override requests. Callback receives a Map<docId, data>.
      */
     subscribeToRequests(callback) {
-        return onSnapshot(collection(db, COLLECTION), (snapshot) => {
+        return subscribeRealtime("overrideRequests", {}, (rows) => {
             const map = {};
-            snapshot.forEach((docSnap) => {
+            asCollectionSnapshot(rows).forEach((docSnap) => {
                 map[docSnap.id] = { id: docSnap.id, ...docSnap.data() };
             });
             callback(map);

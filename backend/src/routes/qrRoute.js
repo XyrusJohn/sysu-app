@@ -9,7 +9,9 @@ const {authorize} = require("../middleware/authorize.js");
 // scan and queue-status require authentication
 router.get("/generate", qrController.generateToken);
 router.get("/verify", qrController.verifyToken);
-router.post("/scan", protectRoute, qrController.scanToken);
+router.get('/queue-display', qrController.getPublicQueue);
+router.get('/queue-cards', protectRoute, authorize(['admin', 'super_admin', 'qr_generator']), qrController.getQueueCards);
+router.post("/scan", protectRoute, authorize(["driver"]), qrController.scanToken);
 router.patch("/queue-status", protectRoute, authorize(["admin", "super_admin"]), qrController.updateQueueStatus);
 
 module.exports = router;

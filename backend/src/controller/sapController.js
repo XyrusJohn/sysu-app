@@ -1,44 +1,52 @@
-const axios = require("axios");
+const sapSource = require('../services/sapSource');
+const {admin} = require('../config/firebase');
+const {z} = require('zod');
 
-let sapCache = {data: null, timestamp: 0};
-const CACHE_TTL = 60000;
+const dispatchDetailsRequest = z.object({
+    dispatchKeys: z.array(z.string().min(1).max(64).refine(value => value === value.trim()
+        && !value.includes('/') && value !== '.' && value !== '..'
+        && [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 'Invalid dispatch identifier'))
+        .min(1).max(100),
+});
 
-exports.getSapData = async (req, res) => {
-    const now = Date.now();
-    const sapUrl = process.env.SAP_URL;
-
-    if (sapCache.data && now - sapCache.timestamp < CACHE_TTL) {
-        return res.json({
-            success: true,
-            data: sapCache.data,
-            cached: true,
-            cachedAt: new Date(sapCache.timestamp).toISOString(),
-        });
+exports.getSapData = async (_req,res) => {
+    try {
+        const snapshot = await sapSource.read();
+        return res.json({success:true,data:{d:{results:snapshot.rows}},cached:snapshot.cached,
+            fetchedAt:new Date(snapshot.fetchedAt).toISOString()});
+    } catch {
+        console.error(JSON.stringify({event:'sap_unavailable'}));
+        return res.status(503).json({success:false,error:'SAP temporarily unavailable'});
     }
+};
+
+exports.getAssignedDispatchDetails = async (req,res) => {
+    const parsed = dispatchDetailsRequest.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({success:false,error:'Invalid dispatch details request'});
+    res.set('Cache-Control','no-store');
 
     try {
-        if (!sapUrl) throw new Error("SAP_URL environment variable is not set");
-
-        const response = await axios.get(sapUrl, {
-            timeout: 60000,
-            headers: {Accept: "application/json"},
+        const keys = [...new Set(parsed.data.dispatchKeys)];
+        const db = admin.firestore();
+        const snapshots = await Promise.all(keys.map(key => db.collection('sap_assignments').doc(key).get()));
+        const allowedObds = new Map();
+        snapshots.forEach((snapshot,index) => {
+            if (!snapshot.exists) return;
+            const lineItems = snapshot.data()?.lineItems;
+            const obds = Array.isArray(lineItems) ? lineItems.map(line => line?.obdNumber)
+                .filter(value => typeof value === 'string' && value.length > 0) : [];
+            if (obds.length) allowedObds.set(keys[index], new Set(obds));
         });
+        if (!allowedObds.size) return res.json({success:true,data:{}});
 
-        const result = response.data;
-        sapCache = {data: result, timestamp: now};
-
-        res.json({
-            success: true,
-            data: result,
-            cached: false,
-            fetchedAt: new Date().toISOString(),
-        });
-    } catch (error) {
-        console.error("SAP fetch error:", error.message);
-        res.status(500).json({
-            success: false,
-            error: "Failed to fetch data from SAP",
-            // Do not expose error.message to client — it may contain internal paths / hostnames
-        });
+        const sapDetails = await sapSource.readDispatchDetails([...allowedObds.keys()]);
+        const data = Object.create(null);
+        for (const [key,obds] of allowedObds) {
+            data[key] = (sapDetails[key] || []).filter(row => obds.has(String(row.OBDNumber || '')));
+        }
+        return res.json({success:true,data});
+    } catch {
+        console.error(JSON.stringify({event:'sap_dispatch_details_unavailable'}));
+        return res.status(503).json({success:false,error:'SAP temporarily unavailable'});
     }
 };

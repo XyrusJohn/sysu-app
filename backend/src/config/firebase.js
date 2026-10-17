@@ -1,53 +1,48 @@
-const admin = require("firebase-admin");
-const dotenv = require("dotenv");
-
+const admin = require('firebase-admin');
+const dotenv = require('dotenv');
 dotenv.config();
 
 const initializeFirebase = () => {
-    if (admin.apps.length > 0) return admin.app();
-
-    try {
-        let credential;
-
-        if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-            console.log("🛡️ Firebase: Loading credentials from ENV JSON");
-
-            // SYSU ULTIMATE FIX: Auto-clean mangled JSON from .env
-            let jsonStr = process.env.FIREBASE_SERVICE_ACCOUNT_JSON.trim();
-
-            // 1. Repair escaped quotes from copy-paste
-            jsonStr = jsonStr.replace(/\\"/g, '"');
-
-            // 2. Repair potential merged strings from .env parsing
-            if (jsonStr.includes('}PORT=')) jsonStr = jsonStr.split('PORT=')[0];
-
-            // 3. Remove leading/trailing quotes if they exist
-            if (jsonStr.startsWith('"') || jsonStr.startsWith("'")) jsonStr = jsonStr.substring(1);
-            if (jsonStr.endsWith('"') || jsonStr.endsWith("'")) jsonStr = jsonStr.substring(0, jsonStr.length - 1);
-
-            try {
-                const serviceAccount = JSON.parse(jsonStr);
-                credential = admin.credential.cert(serviceAccount);
-                console.log("🛡️ Firebase: SYSU Credentials Repaired & Loaded");
-            } catch (e) {
-                console.error("JSON Error details:", jsonStr.substring(0, 50) + "...");
-                throw new Error("Mangled JSON in .env. Please check the format.");
-            }
-        } else {
-            console.log("🌐 Firebase: Using Default Credentials");
-            credential = admin.credential.applicationDefault();
-        }
-
-        admin.initializeApp({
-            credential: credential,
-            projectId: process.env.FIREBASE_PROJECT_ID || "sysu-web-5a25d",
-        });
-
-        console.log("🔥 Firebase Admin Initialized Successfully");
-        return admin.app();
-    } catch (error) {
-        console.error("❌ Firebase Admin Init Error:", error.message);
+    const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+    if (!projectId || !/^[a-z][a-z0-9-]{4,62}$/.test(projectId)) {
+        throw new Error('FIREBASE_PROJECT_ID must explicitly identify the target project');
     }
+    const emulator = process.env.FIRESTORE_EMULATOR_HOST;
+    const authEmulator = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+    if (process.env.NODE_ENV === 'production' && (emulator || authEmulator)) {
+        throw new Error('Production cannot use Firebase emulators');
+    }
+    for (const host of [emulator, authEmulator].filter(Boolean)) {
+        const match = /^(127\.0\.0\.1|localhost):([0-9]+)$/.exec(host);
+        if (!projectId.startsWith('demo-') || !match || Number(match[2]) < 1 || Number(match[2]) > 65535) {
+            throw new Error('Local emulator requires a demo project and loopback TCP port');
+        }
+    }
+    if (authEmulator && !emulator) {
+        throw new Error('Local Auth emulator requires the Firestore emulator too');
+    }
+    if (admin.apps.length > 0) {
+        const app = admin.app();
+        if (app.options.projectId !== projectId) throw new Error('Firebase initialized for a different project');
+        return app;
+    }
+    const options = {projectId};
+    if (!emulator) {
+        if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+            let serviceAccount;
+            try {
+                serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+            } catch {
+                throw new Error('Invalid Firebase credential JSON');
+            }
+            if (serviceAccount.project_id !== projectId) {
+                throw new Error('Firebase credential project does not match FIREBASE_PROJECT_ID');
+            }
+            options.credential = admin.credential.cert(serviceAccount);
+        } else {
+            options.credential = admin.credential.applicationDefault();
+        }
+    }
+    return admin.initializeApp(options);
 };
-
 module.exports = {initializeFirebase, admin};

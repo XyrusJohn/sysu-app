@@ -1,5 +1,8 @@
 # Dependencies
 node_modules/
+.tools/
+firebase-debug.log
+firestore-debug.log
 dist/
 .env
 .env.local

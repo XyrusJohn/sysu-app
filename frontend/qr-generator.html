@@ -6,9 +6,6 @@
     <title>SYSU | Queue</title>
     <link rel="icon" type="image/png" href="/SYSU.png" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet"/>
     <style>
         /* ── DARK (default) ── */
@@ -321,7 +318,8 @@
                     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                 </svg>
             </button>
-            <div class="live"><span class="dot"></span>LIVE</div>
+            <div class="live" id="queue-status" role="status" aria-live="polite">Queue loading...</div>
+            <a href="/" id="queue-access">Sign in for driver details</a>
             <div id="clock">--:--:-- --</div>
         </div>
     </header>
@@ -359,8 +357,7 @@
 </div>
 
 <script>
-    const isLocal=location.hostname==="localhost"||location.hostname==="127.0.0.1";
-    const API=isLocal?"http://localhost:8080":"%VITE_API_URL%";
+    const API="%VITE_API_URL%";
     const QR_SEC=60;
     const TYPES=["AUV","4W","6W","10W","20F","40F"];
 
@@ -403,52 +400,69 @@
     });
 
     /* ── Helpers ── */
-    function esc(s){if(!s)return"";const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+    function esc(s){if(typeof s!=="string")return"";const d=document.createElement("div");d.textContent=s;return d.innerHTML}
 
-    /* ── Toast ── */
-    function toast(name,type,plate){
-        const w=document.getElementById("toasts"),t=document.createElement("div");
-        t.className="toast";
-        t.innerHTML='<div class="tico"><svg viewBox="0 0 24 24" fill="none" stroke="#3ecf6a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>'
-            +'<div><div class="tlbl">Bagong Driver</div><div class="tnm">'+esc(name)+'</div><div class="tmeta">'+esc(type)+" · "+esc(plate)+'</div></div>';
-        w.appendChild(t);
-        setTimeout(()=>{t.classList.add("out");setTimeout(()=>t.remove(),350)},4500);
-    }
-
-    /* ── Card ── */
-    function card(doc,i){
-        const d=doc.data(),st=d.status||"waiting";
-        const slabel=st==="loading"?"Assigned":st==="complete"?"Tapos na":"Naghihintay";
-        return `<div class="qcard s-${st}">
-<div class="qcard-num">#${String(i+1).padStart(3,"0")}</div>
-<div class="qcard-st"><span class="sdot"></span>${slabel}</div>
-<div class="qcard-sep"></div>
-<div class="qcard-name">${esc(d.driverName)}</div>
-<div class="qcard-plate">${esc(d.plateNumber)}</div>
-${d.truckCompany?`<div class="qcard-co">${esc(d.truckCompany)}</div>`:""}
+    /* ── Public queue ── */
+    // Anonymous display contains positions only; identity remains in staff/driver views.
+    function card(row,detailed){
+        const called=detailed&&row.status==="called";
+        return `<div class="qcard ${called?"s-called":"s-waiting"}">
+<div class="qcard-num">#${String(row.position).padStart(3,"0")}</div>
+<div class="qcard-st"><span class="sdot"></span>${called?"Tinatawag":"Naghihintay"}</div>
+${detailed?'<div class="qcard-sep"></div><div class="qcard-name">'+esc(row.driverName||"Driver")+'</div><div class="qcard-plate">'+esc(row.plateNumber||"Plate unavailable")+'</div>':""}
 </div>`;
     }
 
-    /* ── Render ── */
-    function render(docs){
-        TYPES.forEach(t=>{
-            const body=document.getElementById("body-"+t),cnt=document.getElementById("cnt-"+t);
-            if(!body)return;
-            const rows=docs.filter(d=>{
-                const data = d.data();
-                if (data.truckType !== t) return false;
-                if (data.isAssigned === true) return false;
-                const st = (data.status || "").toLowerCase().trim();
-                if (st === "completed" || st === "complete" || st === "loading" || st === "in_transit" || st === "assigned") return false;
-                return true;
-            }).sort((a,b)=>(a.data().joinedAt?.seconds||0)-(b.data().joinedAt?.seconds||0));
+    function render(queues,detailed=false){
+        TYPES.forEach(type=>{
+            const body=document.getElementById("body-"+type),cnt=document.getElementById("cnt-"+type);
+            const rows=(Array.isArray(queues[type])?queues[type]:[]).slice(0,100)
+                .filter(row=>Number.isInteger(row?.position)&&row.position>=1&&row.position<=100);
             cnt.textContent=rows.length;
             cnt.className="qcol-cnt "+(rows.length>0?"has":"zero");
-            body.innerHTML=rows.length===0?'<div class="empty">Wala pa</div>':rows.map(card).join("");
+            body.innerHTML=rows.length===0?'<div class="empty">Wala pa</div>':rows.map(row=>card(row,detailed)).join("");
         });
     }
 
-    /* ── QR ── */
+    let queuePending=false;
+    let queueRevision=0;
+    window.addEventListener("kiosk-auth-changed",()=>{
+        queueRevision++;
+        render({});
+        document.getElementById("queue-access").textContent=window.kioskQueueUser?"Staff queue view":"Sign in for driver details";
+        fetchQueue();
+    });
+    async function fetchQueue(){
+        if(queuePending)return;
+        queuePending=true;
+        const revision=queueRevision;
+        const user=window.kioskQueueUser;
+        const status=document.getElementById("queue-status");
+        try{
+            const options={signal:AbortSignal.timeout(8000)};
+            if(user)options.headers={Authorization:"Bearer "+await user.getIdToken()};
+            const response=await fetch(API+(user?"/api/qr/queue-cards":"/api/qr/queue-display"),options);
+            if(!response.ok)throw new Error("Queue unavailable");
+            const result=await response.json();
+            if(!result.success||!result.data?.queues)throw new Error("Invalid queue response");
+            const asOf=new Date(result.data.asOf);
+            if(!Number.isFinite(asOf.getTime()))throw new Error("Invalid queue timestamp");
+            if(revision!==queueRevision)return;
+            render(result.data.queues,Boolean(user));
+            status.textContent="Updated "+asOf.toLocaleTimeString()
+                +(result.data.truncated?" - first 100 queue entries":"");
+        }catch{
+            if(revision!==queueRevision)return;
+            status.textContent="Queue unavailable - retrying";
+            TYPES.forEach(type=>{
+                document.getElementById("cnt-"+type).textContent="—";
+                document.getElementById("body-"+type).innerHTML='<div class="empty">Queue unavailable</div>';
+            });
+        }finally{
+            queuePending=false;
+            if(revision!==queueRevision)fetchQueue();
+        }
+    }
     let cd=QR_SEC;
     const cdEl=document.getElementById("countdown");
     const tokEl=document.getElementById("qr-token");
@@ -494,54 +508,15 @@ ${d.truckCompany?`<div class="qcard-co">${esc(d.truckCompany)}</div>`:""}
     setInterval(()=>{cd--;if(cdEl)cdEl.textContent=cd;if(cd<=0){cd=QR_SEC;fetchQR()}},1000);
     document.getElementById("refreshQR").addEventListener("click",fetchQR);
 
-    /* ── Firebase ── */
-    function initFB(){
-        if(typeof firebase==="undefined")return;
-        const cfg={
-            apiKey:"%VITE_FIREBASE_API_KEY%",authDomain:"%VITE_FIREBASE_AUTH_DOMAIN%",
-            projectId:"%VITE_FIREBASE_PROJECT_ID%",storageBucket:"%VITE_FIREBASE_STORAGE_BUCKET%",
-            messagingSenderId:"%VITE_FIREBASE_MESSAGING_SENDER_ID%",
-            appId:"%VITE_FIREBASE_APP_ID%",measurementId:"%VITE_FIREBASE_MEASUREMENT_ID%"
-        };
-        if(!firebase.apps.length)firebase.initializeApp(cfg);
-        const db=firebase.firestore();
-        firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-
-        const seen=new Set();
-        db.collection("queue").orderBy("joinedAt","asc").onSnapshot(snap=>{
-            snap.docChanges().forEach(ch=>{
-                if(ch.type==="added"&&!seen.has(ch.doc.id)){
-                    seen.add(ch.doc.id);
-                    if(!snap.metadata.fromCache&&!snap.metadata.hasPendingWrites){
-                        const d=ch.doc.data();
-                        // Only show toast for drivers actually eligible for queue (not yet assigned)
-                        if (d.isAssigned !== true) {
-                            toast(d.driverName,d.truckType,d.plateNumber);
-                        }
-                    }
-                }
-            });
-            render(snap.docs);
-        },err=>{errEl.textContent="Firestore: "+err.message;errEl.style.display="block"});
-    }
-
     /* ── Boot ── */
     const spinnerHTML=`<div style="width:440px;height:440px;display:flex;align-items:center;justify-content:center;"><div style="width:48px;height:48px;border:4px solid rgba(200,16,46,0.2);border-top-color:#c8102e;border-radius:50%;animation:spin 0.8s linear infinite;"></div></div>`;
     document.getElementById("qr-box").innerHTML=spinnerHTML;
     document.getElementById("qr-token").textContent="LOADING...";
     document.getElementById("qr-token").className="tok";
     fetchQR();
-    if(typeof firebase!=="undefined"){initFB()}
-    else{
-        const s=document.createElement("script");
-        s.src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js";
-        s.onload=()=>{
-            const s2=document.createElement("script");
-            s2.src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js";
-            s2.onload=initFB;document.head.appendChild(s2);
-        };
-        document.head.appendChild(s);
-    }
+    fetchQueue();
+    setInterval(fetchQueue,5000);
 </script>
+<script type="module" src="/src/pages/kioskAuth.js"></script>
 </body>
 </html>

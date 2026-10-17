@@ -17,10 +17,10 @@
  */
 
 import { initLeafletMap, updateMarker, removeMarker, trackingMarkers } from "./MapManager.js";
-import { getDriverSocket } from "../api/socket.js";
+import { getDriverSocket, connectDriverSocket } from "../api/socket.js";
+import { acceptLocationUpdate, GPS_STALE_MS } from "./locationState.js";
 import { API_CONFIG } from "../api/config.js";
-import { auth, db } from "../api/firebase.js";
-import { collection, onSnapshot } from "firebase/firestore";
+import { subscribeRealtime } from "../api/realtimeService.js";
 
 const MARKER_STORE_KEY = "__trackingMarkers";
 
@@ -43,6 +43,8 @@ let _markerStore    = {};   // driverId → L.Marker
 let _driverMeta      = new Map(); // driverId → { lat, lng, status, name, lastSeen }
 let _connStatus     = "disconnected";
 let _firestoreUnsub = null;
+const _closedTrips = new Map();
+let _freshnessTimer = null;
 
 // ── Public Init ─────────────────────────────────────────────────────────────
 
@@ -74,33 +76,18 @@ function _subscribeFirestoreDriverLocations() {
     _firestoreUnsub = null;
   }
   try {
-    const colRef = collection(db, "driver_locations");
-    _firestoreUnsub = onSnapshot(colRef, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        const data = change.doc.data();
-        const driverId = data.driverId || change.doc.id;
-        const { lat, lng, status, name } = data;
-        if (status === "completed" || change.type === "removed") {
-          removeMarker(driverId, "trackingMap");
-          delete _markerStore[driverId];
-          window[MARKER_STORE_KEY] = _markerStore;
-          _driverMeta.delete(driverId);
-          _refreshDriverList();
-          return;
-        }
-        if (lat != null && lng != null && lat !== 0 && lng !== 0) {
-          _driverMeta.set(driverId, {
-            lat, lng,
-            status: status || "online",
-            name: name || "Driver",
-            lastSeen: Date.now(),
-          });
-          _upsertMarker(driverId, lat, lng, status || "online", name || "Driver");
-          _refreshDriverList();
-        }
+    _firestoreUnsub = subscribeRealtime("locations", {}, (rows) => {
+      const current = new Set();
+      rows.forEach((row) => {
+        const data = {...row, driverId: row.driverId || row.id};
+        current.add(data.driverId);
+        _applyDriverUpdate(data, 'firestore');
       });
+      for (const driverId of _driverMeta.keys()) {
+        if (!current.has(driverId) && _driverMeta.get(driverId)?.source !== 'socket') _removeDriver(driverId);
+      }
     }, (err) => {
-      console.warn("[MapTrackingPanel] Firestore driver_locations listener error:", err.message);
+      console.warn("[MapTrackingPanel] Realtime driver_locations listener error:", err.message);
     });
   } catch (e) {
     console.warn("[MapTrackingPanel] Failed to subscribe to driver_locations:", e);
@@ -116,22 +103,9 @@ export async function connectDriverTrackingSocket() {
     _subscribeFirestoreDriverLocations();
     _driverSocket = getDriverSocket();
     _wireDriverSocket();
-
-    // Set Firebase auth token before connecting — sysu-go Railway requires it
-    if (auth.currentUser) {
-        try {
-            const token = await auth.currentUser.getIdToken(false);
-            _driverSocket.auth = { token };
-            console.log("[driverSocket] Auth token ready, connecting...");
-            _driverSocket.connect();
-        } catch (err) {
-            console.error("[driverSocket] Failed to get Firebase token:", err);
-        }
-    } else {
-        // No user logged in — try connecting anyway (dev mode)
-        console.warn("[driverSocket] No Firebase user, connecting without auth token");
-        _driverSocket.connect();
-    }
+    if (_driverSocket?.connected) _onConnect();
+    if (!_freshnessTimer) _freshnessTimer = setInterval(_refreshLocationAges, 5000);
+    await connectDriverSocket();
 }
 
 function _wireDriverSocket() {
@@ -142,12 +116,16 @@ function _wireDriverSocket() {
   _driverSocket.off("connect_error", _onConnectError);
   _driverSocket.off("update_admin_map", _onDriverMoving);
   _driverSocket.off("update_status",    _onDriverStatus);
+  _driverSocket.off("vendor_status_update", _onDriverStatus);
+  _driverSocket.off("driver_status_change", _onDriverStatus);
 
   _driverSocket.on("connect",         _onConnect);
   _driverSocket.on("disconnect",       _onDisconnect);
   _driverSocket.on("connect_error",    _onConnectError);
   _driverSocket.on("update_admin_map", _onDriverMoving);
   _driverSocket.on("update_status",    _onDriverStatus);
+  _driverSocket.on("vendor_status_update", _onDriverStatus);
+  _driverSocket.on("driver_status_change", _onDriverStatus);
 }
 
 // ── Socket Event Handlers ───────────────────────────────────────────────────
@@ -169,127 +147,46 @@ function _onConnectError(err) {
   }
 }
 
-function _onDriverMoving(data) {
-  console.log("[update_admin_map] ★ received from socket:", JSON.stringify(data));
-  const { driverId, lat, lng, status, name } = data ?? {};
-
-  // Handle completed shipments - ignore location updates
-  if (status === "completed") {
-    console.log("[update_admin_map] ↘ ignoring location update for completed shipment:", driverId);
-    return;
-  }
-  if (!driverId || lat == null || lng == null) {
-    console.warn("[update_admin_map] ✗ DROPPED — missing required fields:", { driverId, lat, lng });
-    return;
-  }
-  console.log("[update_admin_map] ✓ processing driver:", driverId, "@", lat, lng);
-
-  const meta = _driverMeta.get(driverId);
-  let finalStatus = status ?? "online";
-
-  // PREVENT GPS movement from overriding returning_to_base
-  if (finalStatus === "online" && meta?.status === "returning_to_base") {
-      finalStatus = "returning_to_base";
-  }
-
-  _driverMeta.set(driverId, {
-    lat, lng,
-    status: finalStatus,
-    name:   name   ?? "Unknown",
-    lastSeen: Date.now(),
-  });
-
-  _upsertMarker(driverId, lat, lng, finalStatus, name ?? "Unknown");
+function _removeDriver(driverId) {
+  removeMarker(driverId, 'trackingMap');
+  delete _markerStore[driverId];
+  _driverMeta.delete(driverId);
+  window[MARKER_STORE_KEY] = _markerStore;
   _refreshDriverList();
 }
 
-function _onDriverStatus(data) {
-  const { driverId, status, name, lat, lng } = data ?? {};
-  if (!driverId) return;
-
-  // Handle completed shipments - remove marker entirely (driver returned to warehouse)
-  if (status === "completed") {
-    removeMarker(driverId, "trackingMap");
-    delete _markerStore[driverId];
-    window[MARKER_STORE_KEY] = _markerStore;
-    _driverMeta.delete(driverId);
-    _refreshDriverList();
+function _applyDriverUpdate(data, source = 'socket', kind = 'location') {
+  const next = acceptLocationUpdate(_driverMeta.get(data?.driverId), data,
+    {source, kind, closedAt: _closedTrips.get(data?.driverId) || 0});
+  if (!next) return;
+  if (next.removed) {
+    _closedTrips.set(next.driverId, next.timestamp);
+    if (_closedTrips.size > 1000) _closedTrips.delete(_closedTrips.keys().next().value);
+    _removeDriver(next.driverId);
     return;
   }
-
-  if (status === "offline") {
-    const meta = _driverMeta.get(driverId);
-    const marker = _markerStore[driverId];
-
-    if (marker) {
-      // If we have a last known position → turn RED and freeze marker there.
-      // Do NOT remove from _driverMeta so position is preserved for reconnect.
-      // [!lat && !lng] catches null, undefined, AND 0 (intentional sentinel from driver app).
-      const lastLat = (!lat) ? (meta?.lat ?? null) : lat;
-      const lastLng = (!lng) ? (meta?.lng ?? null) : lng;
-      const hasValidPos = lastLat != null && lastLat !== 0 && lastLng != null && lastLng !== 0;
-
-      if (hasValidPos) {
-        // Freeze at last known GPS; marker stays visible, turns RED.
-        updateMarker({ driverId, lat: lastLat, lng: lastLng, status: "offline", name: name ?? meta?.name ?? "Unknown" }, "trackingMap");
-        // Keep in _driverMeta so reconnection can find the driver entry.
-        if (meta) {
-          meta.status = "offline";
-          meta.lastSeen = Date.now();
-        }
-      } else {
-        // No position known (driver disconnected before sending any driver_moving,
-        // or explicitly ended trip) → remove marker entirely.
-        removeMarker(driverId, "trackingMap");
-        delete _markerStore[driverId];
-        window[MARKER_STORE_KEY] = _markerStore;
-        _driverMeta.delete(driverId);
-      }
-    } else {
-      // No existing marker and offline with no position → nothing to do.
-      _driverMeta.delete(driverId);
-    }
-  } else {
-    // status === "online": turn GREEN immediately.
-    // Use server-sent lat/lng (from driver SharedPreferences) before falling back
-    // to meta — the server value is always at least as fresh as the local cache.
-    const meta = _driverMeta.get(driverId);
-    const safeLat = !lat ? (meta?.lat ?? 14.5995) : lat;
-    const safeLng = !lng ? (meta?.lng ?? 120.9219) : lng;
-
-    let finalStatus = "online";
-
-    // PREVENT reconnects from overriding returning_to_base
-    if (meta?.status === "returning_to_base") {
-        finalStatus = "returning_to_base";
-    }
-
-    if (meta) {
-      meta.status   = finalStatus;
-      meta.lat      = safeLat;
-      meta.lng      = safeLng;
-      meta.lastSeen = Date.now();
-    } else {
-      _driverMeta.set(driverId, {
-        lat: safeLat,
-        lng: safeLng,
-        status: finalStatus,
-        name: name ?? "Unknown",
-        lastSeen: Date.now(),
-      });
-    }
-    _upsertMarker(driverId, safeLat, safeLng, finalStatus, meta?.name ?? name ?? "Unknown");
-  }
-
+  _driverMeta.set(next.driverId, next);
+  _upsertMarker(next.driverId, next.lat, next.lng, next.status, next.name, next.tripStatus);
   _refreshDriverList();
 }
 
-// ── Marker Management ────────────────────────────────────────────────────────
+function _refreshLocationAges() {
+  for (const [id, data] of _driverMeta) {
+    if (['online', 'returning_to_base', 'stopped'].includes(data.status) && Date.now() - data.lastSeen > GPS_STALE_MS) {
+      data.status = 'stale';
+      _upsertMarker(id, data.lat, data.lng, data.status, data.name, data.tripStatus);
+    }
+  }
+  _refreshDriverList();
+}
 
-function _upsertMarker(driverId, lat, lng, status, name) {
+function _onDriverMoving(data) { _applyDriverUpdate(data); }
+function _onDriverStatus(data) { _applyDriverUpdate(data, 'socket', 'status'); }
+
+function _upsertMarker(driverId, lat, lng, status, name, tripStatus) {
   // updateMarker handles both create and update (checks trackingMarkers[driverId] internally).
   // No need for a separate setLatLng — updateMarker rebuilds the icon and sets position.
-  updateMarker({ driverId, lat, lng, status, name }, "trackingMap");
+  updateMarker({ driverId, lat, lng, status, name, tripStatus }, "trackingMap");
 
   if (!_markerStore[driverId]) {
     _markerStore[driverId] = trackingMarkers[driverId] ?? null;
@@ -326,8 +223,11 @@ function _setConnStatus(status) {
 
 function _refreshDriverList() {
   const list   = document.getElementById(SID.driverList);
-  const countEl = document.getElementById(SID.driverCount);
-  if (countEl) countEl.textContent = _driverMeta.size;
+  const activeCount = Array.from(_driverMeta.values()).filter(d => ['online', 'stopped', 'returning_to_base'].includes(d.status)).length;
+  for (const id of [SID.driverCount, 'trackingSidebarCount']) {
+    const countEl = document.getElementById(id);
+    if (countEl) countEl.textContent = activeCount;
+  }
 
   if (!list) return;
 
@@ -352,21 +252,26 @@ function _refreshDriverList() {
     if (d < 3600) return `${Math.floor(d / 60)}m ago`;
     return `${Math.floor(d / 3600)}h ago`;
   };
+  const labels = {online: 'Moving', stopped: 'Stopped', returning_to_base: 'Returning to base', offline: 'Offline', pending: 'Awaiting GPS', stale: 'GPS stale'};
 
   list.innerHTML = Array.from(_driverMeta.entries())
     .sort((a, b) => (b[1].lastSeen ?? 0) - (a[1].lastSeen ?? 0))
     .map(([id, d]) => `
       <div class="flex items-center gap-3 px-4 py-3 border-b border-db-border/40
                   hover:bg-db-item-hover/50 cursor-pointer transition-colors"
-           onclick="window.__trackingFlyTo('${id}')">
+           data-driver-id="${_esc(id)}">
         <div class="w-2.5 h-2.5 rounded-full shrink-0 ${d.status === "online" ? "bg-green-500 animate-pulse" : "bg-db-text3"}"></div>
         <div class="flex-1 min-w-0">
           <div class="text-[13px] font-semibold text-db-text truncate">${_esc(d.name)}</div>
           <div class="text-[10px] text-db-text3 font-mono">${d.lat?.toFixed(5)}, ${d.lng?.toFixed(5)}</div>
+          <div class="text-[10px] text-db-text3">${labels[d.status] || 'Awaiting GPS'}</div>
         </div>
         <div class="text-[10px] text-db-text3 shrink-0">${fmt(d.lastSeen)}</div>
       </div>`)
     .join("");
+  list.querySelectorAll('[data-driver-id]').forEach(row => {
+    row.onclick = () => window.__trackingFlyTo(row.dataset.driverId);
+  });
 }
 
 // ── Map Controls ─────────────────────────────────────────────────────────────
@@ -391,7 +296,7 @@ export function clearOfflineDrivers() {
     Object.entries(trackingMarkers).forEach(([id, marker]) => {
         const meta = _driverMeta.get(id);
         if (!meta || meta.status !== "online") {
-            try { map.removeLayer(marker); } catch (_) {}
+            try { map.removeLayer(marker); } catch (_) { /* Best-effort cleanup; the view is already dismissed. */ }
             delete trackingMarkers[id];
             delete _markerStore[id];
         }
@@ -412,28 +317,33 @@ window.__trackingFlyTo = (driverId) => {
 
 export function destroyTrackingPanel() {
   destroyDriverSocket();
+  _firestoreUnsub?.();
+  _firestoreUnsub = null;
+  if (_freshnessTimer) clearInterval(_freshnessTimer);
+  _freshnessTimer = null;
+  for (const id of _driverMeta.keys()) removeMarker(id, 'trackingMap');
   _driverMeta.clear();
+  _closedTrips.clear();
   _markerStore = {};
   window[MARKER_STORE_KEY] = {};
-  _connStatus = "disconnected";
+  _connStatus = 'disconnected';
 }
 
 function destroyDriverSocket() {
   if (!_driverSocket) return;
-  _driverSocket.off("connect");
-  _driverSocket.off("disconnect");
-  _driverSocket.off("connect_error");
-  _driverSocket.off("update_admin_map");
-  _driverSocket.off("update_status");
-  _driverSocket.disconnect();
+  _driverSocket.off('connect', _onConnect);
+  _driverSocket.off('disconnect', _onDisconnect);
+  _driverSocket.off('connect_error', _onConnectError);
+  _driverSocket.off('update_admin_map', _onDriverMoving);
+  _driverSocket.off('update_status', _onDriverStatus);
+  _driverSocket.off('vendor_status_update', _onDriverStatus);
+  _driverSocket.off('driver_status_change', _onDriverStatus);
   _driverSocket = null;
 }
-
-// ── Util ─────────────────────────────────────────────────────────────────────
 
 function _esc(str) {
   if (str == null) return "";
   const d = document.createElement("div");
   d.textContent = str;
-  return d.innerHTML;
+  return d.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }

@@ -2,10 +2,10 @@ const {admin} = require("../../config/firebase.js");
 const {asyncWrapper} = require("../../middleware/asyncWrapper.js");
 const { z } = require("zod");
 const {
-    pickNextIdFromList,
     formatGuardId,
     parseGuardId,
 } = require("../../utils/idGenerator.js");
+const {createSequentialRecord, deleteSequentialRecord} = require('../../services/sequentialRecordService');
 
 const FIRST_NAME_MAX = 60;
 const LAST_NAME_MAX = 60;
@@ -18,22 +18,18 @@ const guardSchema = z.object({
 });
 
 function buildFullName(firstName, lastName, middleInitial) {
-    const safeFirst = (firstName || "").trim().replace(/\\s+/g, " ");
-    const safeLast = (lastName || "").trim().replace(/\\s+/g, " ");
-    const safeMiddle = (middleInitial || "").trim().replace(/\\s+/g, " ");
+    const safeFirst = (firstName || "").trim().replace(/\s+/g, " ");
+    const safeLast = (lastName || "").trim().replace(/\s+/g, " ");
+    const safeMiddle = (middleInitial || "").trim().replace(/\s+/g, " ");
     const middlePart = safeMiddle ? `${safeMiddle} ` : "";
-    return `${safeFirst} ${middlePart}${safeLast}`.replace(/\\s+/g, " ").trim();
+    return `${safeFirst} ${middlePart}${safeLast}`.replace(/\s+/g, " ").trim();
 }
 
 exports.createGuard = asyncWrapper(async (req, res) => {
     const {firstName, lastName, middleInitial} = guardSchema.parse(req.body);
 
-    const snapshot = await admin.firestore().collection("security_guard").get();
-    const existingIds = snapshot.docs.map((doc) => doc.id);
-    const guardId = pickNextIdFromList(existingIds, formatGuardId, parseGuardId);
-
     const fullName = buildFullName(firstName, lastName, middleInitial);
-    const doc = {
+    const record = await createSequentialRecord(admin.firestore(), 'security_guard', formatGuardId, parseGuardId, guardId => ({
         guardId,
         firstName,
         lastName,
@@ -41,11 +37,8 @@ exports.createGuard = asyncWrapper(async (req, res) => {
         fullName,
         active: true,
         createdAt: new Date().toISOString(),
-    };
-
-    await admin.firestore().collection("security_guard").doc(guardId).set(doc);
-
-    return res.status(201).json({id: guardId, ...doc});
+    }));
+    return res.status(201).json(record);
 });
 
 exports.updateGuard = asyncWrapper(async (req, res) => {
@@ -110,4 +103,15 @@ exports.setGuardActive = asyncWrapper(async (req, res) => {
 
     const refreshed = await docRef.get();
     return res.status(200).json({id: refreshed.id, ...refreshed.data()});
+});
+
+exports.deleteGuard = asyncWrapper(async (req, res) => {
+    const {id} = req.params;
+    if (!parseGuardId(id)) {
+        return res.status(400).json({errors: [{field: "id", message: "Invalid guardId"}]});
+    }
+
+    const deleted = await deleteSequentialRecord(admin.firestore(), "security_guard", id, parseGuardId);
+    if (!deleted) return res.status(404).json({message: "Guard not found"});
+    return res.status(200).json({success: true, id});
 });

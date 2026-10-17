@@ -2,11 +2,12 @@ import {
     initLeafletMap,
     switchMapTheme,
     updateMarker,
-    seedMarker,
     focusOnLocation,
     clearMarkers,
     markers,
     removeMarker,
+    constrainMapToPhilippines,
+    PHILIPPINES_BOUNDS,
 } from "../components/MapManager.js";
 import {
     initTrackingPanel,
@@ -15,30 +16,29 @@ import {
     fitAllDrivers,
     clearOfflineDrivers,
 } from "../components/MapTrackingPanel.js";
-import { EVENTS, socket, getDriverSocket } from "../api/socket.js";
+import { acceptLocationUpdate, GPS_STALE_MS, savedLocationStatus } from "../components/locationState.js";
+import { EVENTS, socket, getDriverSocket, connectDriverSocket } from "../api/socket.js";
 import { AuthService } from "../api/authService.js";
 import { SAPService } from "../api/sapService.js";
+import { mergeAssignmentGroups, isDeliveredAssignment, assignmentDisplayStatus, obdDeliveryStatus, queueDriverDisplayName, groupObdRowsByShipTo, driverAssignmentFields } from './shipmentDisplay.js';
 import { SAPAssignmentService } from "../api/sapAssignmentService.js";
 import { API_CONFIG } from "../api/config.js";
 import { SecurityGuardService } from "../api/securityGuardService.js";
 import { TruckCompanyService } from "../api/truckCompanyService.js";
+import { StaffDriverService } from "../api/staffDriverService.js";
+import { subscribeRealtime, asCollectionSnapshot } from "../api/realtimeService.js";
 import { db, auth } from "../api/firebase.js";
 import { updateProfile } from "firebase/auth";
+import L from "leaflet";
 import {
     collection,
-    onSnapshot,
     query,
     where,
-    orderBy,
     doc,
     updateDoc,
-    setDoc,
-    deleteDoc,
-    addDoc,
     serverTimestamp,
     getDocs,
     getDoc,
-    limit,
 } from "firebase/firestore";
 
 // â"€â"€ XSS Prevention â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -46,10 +46,15 @@ const escapeHtml = (str) => {
     if (str == null) return "";
     const div = document.createElement("div");
     div.textContent = str;
-    return div.innerHTML;
+    return div.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+};
+const formatCoordinate = value => {
+    if (value === null || value === undefined || value === '') return '—';
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(6) : '—';
 };
 
-class Dashboard {
+export class Dashboard {
     constructor() {
         this.config = {
             mapId: "map",
@@ -66,18 +71,33 @@ class Dashboard {
         this.state = {
             activeView: "overview",
             sapShipments: [],
+            sapLoading: true,
             sapAssignments: {},
+            sapDispatchDetails: {},
             sapSortKey: "SAPDispatchNumber",
             sapSortDir: 1,
             user: null,
             drivers: [],
+            driversLoading: true,
+            driversLoadError: false,
             incidents: [],
             liveTracking: {},
             liveScans: {},      // driverId → {lat, lng, status, name, sapDocId, lastSeen, shipmentNumber, truckPlate}
+            liveScansLoading: true,
             sapDocCache: {},    // sapDocId → {shipmentNumber, truckPlate, tripStatus}
             sapFilter: "all",
             sapGroupedByDispatch: {},
             queue: [],
+            queueLoading: true,
+            queueLoadError: false,
+            assignmentsLoading: true,
+            assignmentsLoadError: false,
+            guardsLoading: true,
+            guardsLoadError: false,
+            truckCompaniesLoading: true,
+            truckCompaniesLoadError: false,
+            roleRequestsLoading: true,
+            roleRequestsLoadError: false,
             assignTarget: null,
             requiredTruckType: null,
             overrideRequestId: null,     // pending override request, if any
@@ -103,8 +123,12 @@ class Dashboard {
         };
 
         this.renderTimer = null;
+        this._sapDispatchDetailsPending = new Set();
+        this._sapDispatchDetailsFetchedAt = new Map();
+        this._sapDispatchDetailsRetryAfter = new Map();
         this._podPreviewEscapeListener = null;
         this._globalEscapeListener = null;
+        this._sapObdPreviewGroups = [];
         this._bindMethods();
     }
 
@@ -115,20 +139,18 @@ class Dashboard {
     }
 
     async init() {
-        if (typeof L === "undefined") {
-            setTimeout(() => this.init(), 500);
-            return;
-        }
-
+        console.log("[startup] dashboard initialization started");
+        this._startupStage = "authentication and profile verification";
+        this._startupRecoveryTimer = setTimeout(() => this._showStartupRecovery(), 15000);
         AuthService.subscribe((user, error) => {
+            console.log("[startup] auth/profile callback", {
+                userPresent: Boolean(user),
+                errorCode: error?.message || null,
+            });
             if (error) {
-                // Only redirect on actual NOT_REGISTERED (missing profile) errors,
-                // NOT on Firestore permission issues (those still allow the UX to show)
-                if (error.message === "NOT_REGISTERED") {
+                if (["NOT_REGISTERED", "Unauthorized", "ACCOUNT_DISABLED"].includes(error.message)) {
                     window.location.href = "index.html";
                 }
-                // Don't redirect on permission errors —" let the dashboard render
-                // with restricted features (drivers/queue will just show empty)
                 return;
             }
 
@@ -136,6 +158,8 @@ class Dashboard {
                 if (user.roleChanged) {
                     this.triggerSecurityEnforcement();
                 } else {
+                    console.log("[startup] profile accepted; starting dashboard data engines");
+                    this._startupStage = "initial dashboard data loading";
                     this.state.user = user;
                     this._updateUserUI(user);
                     this.applyRBAC(user);
@@ -145,8 +169,10 @@ class Dashboard {
         });
 
         this._initMap();
+        console.log("[startup] dashboard map initialization returned");
         this._setupEventListeners();
         this._listenToRoleRequests();
+        console.log("[startup] dashboard event listeners initialized");
     }
 
     applyRBAC(user) {
@@ -189,16 +215,37 @@ class Dashboard {
     }
 
     async _startDataEngines() {
+        console.log("[startup] dashboard data engines started");
         let assignmentReady;
+        let assignmentSnapshotReceived = false;
+        let sapSyncSettled = false;
         const assignmentsLoaded = new Promise((r) => { assignmentReady = r; });
 
         try {
             SAPService.subscribeToAssignments((data) => {
+                if (!assignmentSnapshotReceived) {
+                    assignmentSnapshotReceived = true;
+                    console.log("[startup] initial assignment snapshot received", {count: Object.keys(data || {}).length});
+                }
                 this.state.sapAssignments = data;
+                this.state.assignmentsLoading = false;
+                this.state.assignmentsLoadError = false;
+                this._reconcileLiveScansWithAssignments(data);
+                this._rebuildShipmentGroups();
+                assignmentReady();
+                this._renderAll();
+                this._scheduleLiveScansRender();
+                this._refreshOpenDispatchDetail();
+            }, (err) => {
+                console.warn("Assignments subscription failed:", err);
+                this.state.assignmentsLoading = false;
+                this.state.assignmentsLoadError = true;
                 assignmentReady();
                 this._renderAll();
             });
         } catch (err) {
+            this.state.assignmentsLoading = false;
+            this.state.assignmentsLoadError = true;
             assignmentReady(); // unblock even on failure
             console.warn(err.message);
         }
@@ -210,12 +257,24 @@ class Dashboard {
             await Promise.race([
                 (async () => {
                     await this._syncSAP(true); // defer render until assignments arrive
+                    sapSyncSettled = true;
+                    console.log("[startup] initial SAP sync settled", {
+                        shipmentCount: this.state.sapShipments.length,
+                        failed: Boolean(SAPService.state.lastError),
+                    });
                     await assignmentsLoaded;
                     this._renderAll();
                 })(),
-                new Promise((resolve) => setTimeout(resolve, 5000)),
+                new Promise((resolve) => setTimeout(() => {
+                    console.warn("[startup] initial data wait reached 5 seconds", {
+                        sapSyncSettled,
+                        assignmentSnapshotReceived,
+                    });
+                    resolve();
+                }, 5000)),
             ]);
 
+            console.log("[startup] requesting dashboard overlay removal");
             this._unlockDashboard();
         } catch (err) {
             console.error("Initial sync error:", err);
@@ -224,34 +283,37 @@ class Dashboard {
 
         setInterval(() => this._syncSAP(), 300000);
 
-        onSnapshot(collection(db, "drivers"), (snap) => {
-            this.state.drivers = snap.docs.map((doc) => ({
+        subscribeRealtime("drivers", {}, (rows) => {
+            this.state.drivers = asCollectionSnapshot(rows).docs.map((doc) => ({
                 id: doc.id,
                 ...doc.data(),
             }));
+            this.state.driversLoading = false;
+            this.state.driversLoadError = false;
+            this._renderAll();
+        }, (err) => {
+            console.warn("Drivers subscription failed:", err);
+            this.state.driversLoading = false;
+            this.state.driversLoadError = true;
             this._renderAll();
         });
 
         // Subscribe only to the current user's own incidents (security rule enforced server-side too)
         if (auth.currentUser) {
             const myUid = auth.currentUser.uid;
-            onSnapshot(
-                query(collection(db, "incidents"), where("reporterId", "==", myUid)),
-                (snap) => {
-                    this.state.incidents = snap.docs.map((doc) => ({
+            subscribeRealtime("incidents", {reporterId: myUid}, (rows) => {
+                    this.state.incidents = asCollectionSnapshot(rows).docs.map((doc) => ({
                         id: doc.id,
                         ...doc.data(),
                     }));
                     this._renderAll();
-                },
-                (err) => {
+                }, (err) => {
                     console.warn(err.message);
-                }
-            );
+                });
         }
 
-        onSnapshot(collection(db, "queue"), (snap) => {
-            const docs = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        subscribeRealtime("queue", {order: "asc", limit: 100}, (rows) => {
+            const docs = asCollectionSnapshot(rows).docs.map((doc) => ({ id: doc.id, ...doc.data() }));
             console.log("[FIRESTORE queue] docs received:", docs.length, docs.map(d => ({ id: d.id, driverName: d.driverName, registrationComplete: d.registrationComplete, status: d.status })));
             this.state.queue = docs
                 .filter((q) => q.status !== "completed")
@@ -263,11 +325,21 @@ class Dashboard {
                                 (d.updatedAt ? new Date(d.updatedAt) : new Date(0));
                     return getTs(a) - getTs(b);
                 });
+            this.state.queueLoading = false;
+            this.state.queueLoadError = false;
+            this._scheduleLiveScansRender();
+            this._renderAll();
+        }, (err) => {
+            console.warn("Queue subscription failed:", err);
+            this.state.queueLoading = false;
+            this.state.queueLoadError = true;
             this._renderAll();
         });
 
         this._setupSocket();
         this._setupDriverLocationSocket();
+        this._setupPodSocket();
+        this._renderLiveScansTable();
         this._seedLastKnownLocations();
     }
 
@@ -282,81 +354,40 @@ class Dashboard {
      * `_setupDriverLocationSocket`). No interval poll: refreshing the page
      * is the explicit way to re-sync.
      */
+    _setupPodSocket() {
+        if (this._podSocketHandler) return;
+        this._podSocketHandler = () => {
+            // POD documents are fetched when a preview opens; notifications
+            // refresh availability without modifying authoritative trip state.
+            this._renderSapTable();
+        };
+        socket.on(EVENTS.POD_UPDATED, this._podSocketHandler);
+    }
+
     async _seedLastKnownLocations() {
         try {
-            const { locations } = await SAPAssignmentService.fetchActiveLocations();
-            if (!Array.isArray(locations) || locations.length === 0) {
-                console.log("[locationSeed] no active driver locations");
-                return;
+            const {locations} = await SAPAssignmentService.fetchActiveLocations();
+            for (const loc of locations || []) {
+                this._applyTrackingUpdate({driverId: loc.driverId, lat: loc.lat, lng: loc.lng,
+                    name: loc.driverName, sapDocId: loc.dispatchKey, truckPlate: loc.truckPlate,
+                    shipmentNumber: loc.dispatchKey, tripStatus: loc.tripStatus, timestamp: loc.at || 0,
+                    status: savedLocationStatus(loc.tripStatus)}, 'location', 'firestore');
             }
-            console.log("[locationSeed] seeding", locations.length, "active locations");
-            const now = Date.now();
-            for (const loc of locations) {
-                console.log(
-                    "[locationSeed] entry:",
-                    JSON.stringify({
-                        dispatchKey: loc.dispatchKey,
-                        driverId: loc.driverId,
-                        driverName: loc.driverName,
-                        lat: loc.lat,
-                        lng: loc.lng,
-                        tripStatus: loc.tripStatus,
-                        hasCoords: !!(loc.lat && loc.lng && loc.lat !== 0 && loc.lng !== 0),
-                    }),
-                );
-                if (!loc.driverId) {
-                    console.log("[locationSeed] (skipped — missing driverId)");
-                    continue;
-                }
-
-                const realLat = typeof loc.lat === "number" && loc.lat !== 0 ? loc.lat : null;
-                const realLng = typeof loc.lng === "number" && loc.lng !== 0 ? loc.lng : null;
-                const hasRealGps = realLat != null && realLng != null;
-
-                const seeded = {
-                    driverId: loc.driverId,
-                    lat: realLat,
-                    lng: realLng,
-                    status: hasRealGps ? "offline" : "pending",
-                    name: loc.driverName || "Unknown Driver",
-                    sapDocId: loc.dispatchKey,
-                    shipmentNumber: loc.dispatchKey,
-                    truckPlate: loc.truckPlate || null,
-                    tripStatus: loc.tripStatus || null,
-                    lastSeen: typeof loc.at === "number" ? loc.at : now,
-                    awaitingGps: !hasRealGps,
-                };
-
-                this.state.liveScans[loc.driverId] = seeded;
-
-                // Only seed marker and live tracking if the truck has actual GPS coordinates
-                if (hasRealGps) {
-                    this.state.liveTracking[loc.driverId] = seeded;
-                    seedMarker(
-                        {
-                            driverId: loc.driverId,
-                            name: seeded.name,
-                            shipmentId: loc.dispatchKey,
-                            lat: realLat,
-                            lng: realLng,
-                        },
-                        "map",
-                    );
-                }
-            }
+        } catch (_) { console.warn('Saved driver locations unavailable'); }
+        finally {
+            this.state.liveScansLoading = false;
             this._scheduleLiveScansRender();
-            this._renderAll();
-        } catch (err) {
-            console.warn("[locationSeed] failed:", err?.message ?? err);
         }
     }
 
     async _syncSAP(skipRender = false) {
         try {
             this.state.sapShipments = await SAPService.fetchShipments();
-            this.state.sapGroupedByDispatch = this.groupByDispatch(this.state.sapShipments);
+            this._rebuildShipmentGroups();
+            this.state.sapLoading = false;
             if (!skipRender) this._renderAll();
         } catch (err) {
+            this.state.sapLoading = false;
             console.error("SAP sync error:", err);
             if (!skipRender) {
                 const body = document.getElementById("sapBody");
@@ -431,11 +462,36 @@ class Dashboard {
     }
 
     _unlockDashboard() {
+        clearTimeout(this._startupRecoveryTimer);
+        this._startupRecoveryTimer = null;
         const gatekeeper = document.getElementById(this.config.gatekeeperId);
+        console.log("[startup] dashboard overlay unlock", {gatekeeperFound: Boolean(gatekeeper)});
         if (gatekeeper) {
             gatekeeper.style.opacity = "0";
             setTimeout(() => gatekeeper.remove(), 500);
         }
+    }
+
+    _showStartupRecovery() {
+        const gatekeeper = document.getElementById(this.config.gatekeeperId);
+        if (!gatekeeper) return;
+
+        console.error("[startup] dashboard startup timed out", {stage: this._startupStage});
+        gatekeeper.innerHTML = `
+            <div class="max-w-md px-6 text-center">
+                <h2 class="text-white text-lg font-black tracking-[0.12em] uppercase">Dashboard could not start</h2>
+                <p class="mt-3 text-sm text-db-text3">Secure sign-in or the live profile connection did not respond. The dashboard stays locked until your account is verified.</p>
+                <div class="mt-6 flex justify-center gap-3">
+                    <button id="retryDashboardStartup" class="rounded-lg bg-sysu-red px-4 py-2 text-sm font-bold text-white">Retry</button>
+                    <button id="returnToDashboardSignIn" class="rounded-lg border border-white/15 px-4 py-2 text-sm font-bold text-white">Return to sign in</button>
+                </div>
+            </div>`;
+        gatekeeper.setAttribute("role", "alert");
+        gatekeeper.setAttribute("aria-live", "assertive");
+        gatekeeper.querySelector("#retryDashboardStartup")?.addEventListener("click", () => window.location.reload());
+        gatekeeper.querySelector("#returnToDashboardSignIn")?.addEventListener("click", () => {
+            window.location.href = "index.html";
+        });
     }
 
     _updateUserUI(user) {
@@ -729,16 +785,24 @@ class Dashboard {
         socket.emit(EVENTS.GET_ROLE_REQUESTS, { status: "all" }, (res) => {
             if (res && res.success && Array.isArray(res.data)) {
                 this.state._roleRequestsList = res.data;
+                this.state.roleRequestsLoading = false;
+                this.state.roleRequestsLoadError = false;
                 const pendingCount = res.data.filter((r) => r.status === "pending").length;
                 this._refreshRoleRequestBadge(pendingCount);
                 if (this.state._activeDocsTab === "role-requests") {
                     this._renderRoleRequestsInDocs();
                 }
+            } else {
+                this.state.roleRequestsLoading = false;
+                this.state.roleRequestsLoadError = true;
+                if (this.state._activeDocsTab === "role-requests") this._renderRoleRequestsInDocs();
             }
         });
     }
 
     _handleRoleRequestUpdate(req) {
+        this.state.roleRequestsLoading = false;
+        this.state.roleRequestsLoadError = false;
         if (!this.state._roleRequestsList) this.state._roleRequestsList = [];
         const index = this.state._roleRequestsList.findIndex((r) => r.id === req.id);
         if (index >= 0) {
@@ -767,6 +831,14 @@ class Dashboard {
     _renderRoleRequestsInDocs() {
         const container = document.getElementById("docsListContainer");
         if (!container) return;
+        if (this.state.roleRequestsLoading) {
+            container.innerHTML = this._loadingCards("Loading role requests");
+            return;
+        }
+        if (this.state.roleRequestsLoadError) {
+            container.innerHTML = '<p class="text-sm text-sysu-red">Role requests unavailable.</p>';
+            return;
+        }
 
         const requests = this.state._roleRequestsList || [];
         const pending = requests.filter((r) => r.status === "pending");
@@ -883,15 +955,6 @@ class Dashboard {
         });
     }
 
-    _formatElapsed(date) {
-        if (!date || isNaN(date.getTime())) return "just now";
-        const diff = Math.floor((Date.now() - date.getTime()) / 1000);
-        if (diff < 60) return "just now";
-        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-        return `${Math.floor(diff / 86400)}d ago`;
-    }
-
     async _approveRoleRequestSocket(requestId) {
         if (!confirm("Approve this role change request?")) return;
 
@@ -984,6 +1047,8 @@ class Dashboard {
             .getElementById(this.config.logoutBtnId)
             ?.addEventListener("click", this.handleLogout);
 
+        this._initLiveScansPanel();
+
         // Profile pill → open modal with current user data
         document.getElementById("uPill")?.addEventListener("click", () => {
             const profile = AuthService.getUserProfile();
@@ -1035,6 +1100,7 @@ class Dashboard {
         window.dashboard.fitTrackingBounds = this.fitTrackingBounds.bind(this);
         window.dashboard.clearOfflineMarkers = this.clearOfflineMarkers.bind(this);
         window.dashboard.openObdPodPreview = this.openObdPodPreview.bind(this);
+        window.dashboard.openObdPodGroupPreview = this.openObdPodGroupPreview.bind(this);
         window.dashboard.closePodPreview = this.closePodPreview.bind(this);
         window.dashboard.openGuardSigPreview = this.openGuardSigPreview.bind(this);
         window.dashboard.closeGuardSigPreview = this.closeGuardSigPreview.bind(this);
@@ -1045,7 +1111,6 @@ class Dashboard {
             "Overview",
             "Orders",
             "Drivers",
-            "Tracking",
             "Fleet",
             "Docs",
             "Settings",
@@ -1060,6 +1125,8 @@ class Dashboard {
             if (rBtn) rBtn.addEventListener("click", clickHandler);
             if (lBtn) lBtn.addEventListener("click", clickHandler);
         });
+
+        document.getElementById("underDevReturnBtn")?.addEventListener("click", () => this.handleNavClick("Overview"));
 
         document.getElementById("tbarExportArea")?.addEventListener("click", () => {
             this._syncSAP();
@@ -1163,112 +1230,69 @@ class Dashboard {
         }
     }
 
+    _applyTrackingUpdate(data, kind = 'location', source = 'socket') {
+        this._closedTrackingTrips ??= new Map();
+        const dispatchKey = data?.sapDocId ?? data?.shipmentId;
+        const linkedAssignment = dispatchKey ? this.state.sapAssignments?.[dispatchKey] : null;
+        const linkedStatus = String(linkedAssignment?.tripStatus || '').trim().toLowerCase();
+        const terminalStatuses = ['completed', 'complete', 'delivered'];
+        const activeStatuses = ['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base'];
+        const hasActiveAssignment = Object.values(this.state.sapAssignments || {}).some(assignment =>
+            assignment?.driverId === data?.driverId
+                && activeStatuses.includes(String(assignment.tripStatus || '').trim().toLowerCase()));
+        if (linkedAssignment?.driverId === data?.driverId && terminalStatuses.includes(linkedStatus)
+            && kind !== 'status') return null;
+        if (kind === 'status' && String(data?.status || '').trim().toLowerCase() === 'completed' && hasActiveAssignment) return null;
+        const next = acceptLocationUpdate(this.state.liveTracking[data?.driverId], data,
+            {kind, source, closedAt: this._closedTrackingTrips.get(data?.driverId) || 0});
+        if (!next) return null;
+        if (next.removed) {
+            this._closedTrackingTrips.set(next.driverId, next.timestamp);
+            if (this._closedTrackingTrips.size > 1000) this._closedTrackingTrips.delete(this._closedTrackingTrips.keys().next().value);
+            removeMarker(next.driverId, 'map');
+            delete this.state.liveTracking[next.driverId];
+            delete this.state.liveScans[next.driverId];
+        } else {
+            this.state.liveTracking[next.driverId] = next;
+            this.state.liveScans[next.driverId] = {...this.state.liveScans[next.driverId], ...next};
+            updateMarker({...next, shipmentId: next.sapDocId}, 'map');
+        }
+        this._scheduleLiveScansRender();
+        return next;
+    }
+
+    _reconcileLiveScansWithAssignments(assignments) {
+        const activeStatuses = new Set(['assigned', 'loading', 'loaded', 'fully_loaded', 'in_transit', 'returning_to_base']);
+        const terminalStatuses = new Set(['completed', 'complete', 'delivered']);
+        for (const [driverId, location] of Object.entries(this.state.liveTracking || {})) {
+            const dispatchKey = location.sapDocId || location.shipmentId;
+            const linked = dispatchKey ? assignments?.[dispatchKey] : null;
+            const linkedStatus = String(linked?.tripStatus || '').trim().toLowerCase();
+            if (!linked || linked.driverId !== driverId || !terminalStatuses.has(linkedStatus)) continue;
+
+            const nextActive = Object.entries(assignments || {})
+                .filter(([, assignment]) => assignment?.driverId === driverId
+                    && activeStatuses.has(String(assignment.tripStatus || '').trim().toLowerCase()))
+                .sort((a, b) => Number(b[1].tripStatus === 'in_transit') - Number(a[1].tripStatus === 'in_transit'))[0];
+
+            if (!nextActive) {
+                this._applyTrackingUpdate({driverId, status: 'completed', timestamp: Date.now()}, 'status');
+                continue;
+            }
+
+            const [nextDispatchKey, assignment] = nextActive;
+            const updated = {...location, sapDocId: nextDispatchKey, shipmentId: nextDispatchKey,
+                shipmentNumber: nextDispatchKey, tripStatus: assignment.tripStatus};
+            this.state.liveTracking[driverId] = updated;
+            this.state.liveScans[driverId] = {...this.state.liveScans[driverId], ...updated};
+            updateMarker(updated, 'map');
+            this._scheduleLiveScansRender();
+        }
+    }
+
     _setupSocket() {
-        // â"€â"€ update_admin_map â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // Forwarded from every driver_moving. Turns driver GREEN immediately
-        // even if they were previously RED (offline) —" handles reconnect race.
-        socket.on(EVENTS.DRIVER_MOVING, (data) => {
-            console.log(
-                "[socket/DRIVER_MOVING] driverId:", data?.driverId,
-                "lat:", data?.lat, "lng:", data?.lng,
-                "status:", data?.status, "name:", data?.name,
-            );
-            const existing = this.state.liveTracking[data.driverId];
-            const wasOffline = existing?.status === "offline";
-
-            // Only set "online" if the driver's last known status was NOT "offline".
-            // Prevents late/queued driver_moving (from before disconnect) from
-            // incorrectly resurrecting a RED marker to GREEN. Reconnect is still
-            // handled —" wasOffline + new driver_moving → turn GREEN.
-            const isCurrentlyOffline = existing?.status === "offline";
-            this.state.liveTracking[data.driverId] = {
-                ...existing,
-                ...data,
-                status: isCurrentlyOffline ? "offline" : "online",
-            };
-
-            // Validate coordinates - treat lat/lng = 0 same as null (no position sentinel)
-            const FALLBACK_LAT = 14.5995;
-            const FALLBACK_LNG = 120.9219;
-            const safeLat = !data.lat ? ((existing && existing.lat) || FALLBACK_LAT) : data.lat;
-            const safeLng = !data.lng ? ((existing && existing.lng) || FALLBACK_LNG) : data.lng;
-
-            if (wasOffline) {
-                // Driver was RED and just started moving → turn GREEN immediately
-                // using the fresh position from update_admin_map (with validated coordinates).
-                updateMarker({
-                    driverId: data.driverId,
-                    lat: safeLat,
-                    lng: safeLng,
-                    status: "online",
-                    name: data.name || existing?.name || "Unknown Driver",
-                });
-            } else {
-                // Update marker with validated coordinates
-                this.state.liveTracking[data.driverId].lat = safeLat;
-                this.state.liveTracking[data.driverId].lng = safeLng;
-                updateMarker(this.state.liveTracking[data.driverId]);
-            }
-
-            this._renderAll();
-        });
-
-        // â"€â"€ vendor_status_update â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // Emitted by server on every update_status from driver + on disconnect.
-        socket.on(EVENTS.STATUS_UPDATE, (data) => {
-            const { driverId, status, name, lat, lng } = data;
-
-            if (status === "online") {
-                // Driver reconnected → turn GREEN immediately.
-                const existing = this.state.liveTracking[driverId];
-                // Fallback to Manila center if no prior position (brand new driver
-                // with no SharedPreferences trip history —" first open, no driver_moving yet).
-                // Treat lat/lng = 0 same as null: FusedLocationProviderClient never sends
-                // real 0.0, 0.0 coords inside the Philippines (~4.5Â°N–21Â°N, 116Â°E–127Â°E).
-                const FALLBACK_LAT = 14.5995;
-                const FALLBACK_LNG = 120.9219;
-                // !lat catches null, undefined, AND 0 (the intentional "no position" sentinel).
-                const safeLat = !lat ? ((existing && existing.lat) || FALLBACK_LAT) : lat;
-                const safeLng = !lng ? ((existing && existing.lng) || FALLBACK_LNG) : lng;
-                this.state.liveTracking[driverId] = {
-                    ...this.state.liveTracking[driverId],
-                    driverId,
-                    lat: safeLat,
-                    lng: safeLng,
-                    status: "online",
-                    name: name || existing?.name || "Unknown Driver",
-                };
-                updateMarker(this.state.liveTracking[driverId]);
-            } else if (status === "offline") {
-                // !lat && !lng catches null, undefined, AND 0 (intentional sentinel per sysu-go spec).
-                if (lat != null && lng != null && !(lat === 0 || lng === 0)) {
-                    // Driver disconnected but we have their last known position.
-                    // → Turn RED and freeze marker at this position. Do NOT remove.
-                    this.state.liveTracking[driverId] = {
-                        ...this.state.liveTracking[driverId],
-                        lat, lng,
-                        status: "offline",
-                        name: name || this.state.liveTracking[driverId]?.name || "Unknown Driver",
-                    };
-                    updateMarker(this.state.liveTracking[driverId]);
-                } else {
-                    // Edge case: driver disconnected before sending any driver_moving
-                    // (e.g. opened app, immediately force-closed before GPS got a fix)
-                    // → Remove marker entirely — no position known to display.
-                    if (this.state.liveTracking[driverId]) {
-                        removeMarker(driverId);
-                        delete this.state.liveTracking[driverId];
-                    }
-                    // Also purge from liveScans so the Live Scans table stays in sync.
-                    if (this.state.liveScans[driverId]) {
-                        delete this.state.liveScans[driverId];
-                        this._scheduleLiveScansRender();
-                    }
-                }
-            }
-
-            this._renderAll();
-        });
+        socket.on(EVENTS.DRIVER_MOVING, data => this._applyTrackingUpdate(data));
+        socket.on(EVENTS.STATUS_UPDATE, data => this._applyTrackingUpdate(data, 'status'));
 
         socket.on(EVENTS.WAREHOUSE_BASE_UPDATED, (data) => {
             console.log("[socket/WAREHOUSE_BASE_UPDATED] Received warehouse base update:", data);
@@ -1310,188 +1334,48 @@ class Dashboard {
     // Connects directly to sysu-go-production to receive driver_moving events
     // and joins them with sap_assignments Firestore docs for shipment/plate data.
     async _setupDriverLocationSocket() {
+        if (this._driverLocationSocket) return;
         const driverSocket = getDriverSocket();
-        if (!driverSocket) {
-            console.warn("[driverSocket] getDriverSocket() returned null — driver location feed unavailable");
-            return;
+        if (!driverSocket) return;
+        this._driverLocationSocket = driverSocket;
+        this._locationFetches = new Map();
+        driverSocket.on('update_admin_map', async data => {
+            const next = this._applyTrackingUpdate(data);
+            if (!next || next.removed || !next.sapDocId) return;
+            const scan = this.state.liveScans[next.driverId];
+            const id = next.sapDocId;
+            if (!this.state.sapDocCache[id]) {
+                if (!this._locationFetches.has(id)) {
+                    this._locationFetches.set(id, getDoc(doc(db, 'sap_assignments', id)).then(snapshot => {
+                        if (!snapshot.exists()) return;
+                        if (Object.keys(this.state.sapDocCache).length >= 100) delete this.state.sapDocCache[Object.keys(this.state.sapDocCache)[0]];
+                        const record = snapshot.data();
+                        this.state.sapDocCache[id] = {shipmentNumber: id, truckPlate: record.truckPlate || '?', tripStatus: record.tripStatus};
+                    }).catch(() => { console.warn('Tracking shipment details unavailable'); }).finally(() => this._locationFetches.delete(id)));
+                }
+                await this._locationFetches.get(id);
+            }
+            if (this.state.liveScans[next.driverId] === scan && this.state.sapDocCache[id]) {
+                Object.assign(scan, this.state.sapDocCache[id]);
+                this._scheduleLiveScansRender();
+            }
+        });
+        for (const event of ['update_status', 'vendor_status_update', 'driver_status_change']) {
+            driverSocket.on(event, data => this._applyTrackingUpdate(data, 'status'));
         }
-
-        console.log("[driverSocket] subscribing to update_admin_map + update_status; URL =", API_CONFIG.DRIVER_TRACKING_URL);
-
-        // â"€â"€ update_admin_map (broadcast from sysu-go Railway) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        driverSocket.on("update_admin_map", async (data) => {
-            const { driverId, sapDocId, lat, lng, status, name } = data;
-            const now = Date.now();
-
-            // Handle completed shipments - ignore location updates
-            if (status === "completed") {
-                console.log("[driverSocket/update_admin_map] ↘ ignoring location update for completed shipment:", driverId);
-                return;
-            }
-            console.log(
-                "[driverSocket/update_admin_map] driverId:", driverId,
-                "lat:", lat, "lng:", lng,
-                "status:", status, "name:", name,
-                "sapDocId:", sapDocId,
-                "hasValidCoords:", !!(lat && lng && lat !== 0 && lng !== 0),
-            );
-
-            // Keep latest location in state
-            this.state.liveScans[driverId] = {
-                ...(this.state.liveScans[driverId] || {}),
-                driverId,
-                lat,
-                lng,
-                status: status === "offline" ? "offline" : "online",
-                name: name || "Unknown Driver",
-                sapDocId: sapDocId || null,
-                lastSeen: now,
-            };
-
-            // â˜… Show the driver's truck on the overview #map immediately when location is received.
-            // This is the counterpart to MapTrackingPanel's _upsertMarker() —" that panel handles the
-            // #trackingMap; this handler ensures the Overview map also shows the driver marker.
-            // Validate coordinates - treat lat/lng = 0 same as null (no position sentinel)
-            // Fallback to Manila center if no prior position (brand new driver
-            // with no SharedPreferences trip history — first open, no driver_moving yet).
-            // Treat lat/lng = 0 same as null: FusedLocationProviderClient never sends
-            // real 0.0, 0.0 coords inside the Philippines (~4.5°N–21°N, 116°E–127°E).
-            const FALLBACK_LAT = 14.5995;
-            const FALLBACK_LNG = 120.9219;
-            // !lat catches null, undefined, AND 0 (the intentional "no position" sentinel).
-            const safeLat = !lat ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lat) || FALLBACK_LAT) : lat;
-            const safeLng = !lng ? ((this.state.liveScans[driverId] && this.state.liveScans[driverId].lng) || FALLBACK_LNG) : lng;
-
-            const trackingPayload = {
-                driverId,
-                lat: safeLat,
-                lng: safeLng,
-                status: status === "offline" ? "offline" : "online",
-                name: name || "Unknown Driver",
-                shipmentId: sapDocId || null,
-            };
-
-            // Sync liveTracking in state
-            this.state.liveTracking[driverId] = trackingPayload;
-
-            // Show / update the driver's truck on the overview #map immediately
-            updateMarker(trackingPayload, "map");
-
-            // Fetch or use cached sap_assignments doc for shipment + plate
-            if (sapDocId) {
-                if (!this.state.sapDocCache[sapDocId]) {
-                    try {
-                        const { getDoc, doc } = await import("firebase/firestore");
-                        const docSnap = await getDoc(doc(db, "sap_assignments", sapDocId));
-                        if (docSnap.exists) {
-                            const d = docSnap.data();
-                            // Cache the doc (max 100 entries, FIFO eviction)
-                            const keys = Object.keys(this.state.sapDocCache);
-                            if (keys.length >= 100) {
-                                delete this.state.sapDocCache[keys[0]];
-                            }
-                            this.state.sapDocCache[sapDocId] = {
-                                shipmentNumber: sapDocId,
-                                truckPlate: d.truckPlate || "—",
-                                tripStatus: d.tripStatus || "in_transit",
-                            };
-                        }
-                    } catch (err) {
-                        console.warn("[liveScans] sap_doc fetch failed:", err.message);
-                    }
-                }
-
-                const cached = this.state.sapDocCache[sapDocId];
-                if (cached) {
-                    this.state.liveScans[driverId].shipmentNumber = cached.shipmentNumber;
-                    this.state.liveScans[driverId].truckPlate = cached.truckPlate;
-                    this.state.liveScans[driverId].tripStatus = cached.tripStatus;
+        this._locationAgeTimer = setInterval(() => {
+            let changed = false;
+            for (const [id, data] of Object.entries(this.state.liveTracking)) {
+                if (['online', 'stopped', 'returning_to_base'].includes(data.status) && Date.now() - data.lastSeen > GPS_STALE_MS) {
+                    data.status = 'stale';
+                    if (this.state.liveScans[id]) this.state.liveScans[id].status = 'stale';
+                    updateMarker(data, 'map');
+                    changed = true;
                 }
             }
-
-            this._scheduleLiveScansRender();
-        });
-
-        // â"€â"€ update_status (offline) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        driverSocket.on("update_status", (data) => {
-            const { driverId, status, name } = data || {};
-            if (!driverId) return;
-
-            // Handle completed shipments - remove marker AND all tracking state immediately without reload.
-            if (status === "completed") {
-                console.log("[driverSocket/update_status] ↘ trip completed — removing marker + tracking for:", driverId);
-                removeMarker(driverId);
-                delete this.state.liveScans[driverId];
-                delete this.state.liveTracking[driverId];
-                this._scheduleLiveScansRender();
-                return;
-            }
-
-            if (this.state.liveScans[driverId]) {
-
-                this.state.liveScans[driverId].status = status;
-                // Also grey-out the overview map marker so the truck disappears visually
-                updateMarker({ driverId, status, name: name || this.state.liveScans[driverId].name }, "map");
-                if (status === "offline") {
-                    // Remove from live scans after a short delay so table doesn't flash
-                    setTimeout(() => {
-                        if (this.state.liveScans[driverId]?.status === "offline") {
-                            delete this.state.liveScans[driverId];
-                            this._scheduleLiveScansRender();
-                        }
-                    }, 5000);
-                }
-                this._scheduleLiveScansRender();
-            }
-        });
-
-        // ── vendor_status_update (offline / completed from sysu-go server) ────────
-        // The sysu-go backend broadcasts this when a driver goes offline or completes
-        // a trip. Handles real-time marker removal without requiring a page reload.
-        driverSocket.on("vendor_status_update", (data) => {
-            const { driverId, status, name } = data || {};
-            if (!driverId) return;
-
-            if (status === "completed" || status === "offline") {
-                console.log(`[driverSocket/vendor_status_update] ↘ ${status} — removing marker for:`, driverId, name);
-                // Remove Leaflet marker from overview map immediately
-                removeMarker(driverId);
-                // Remove Leaflet marker from tracking map if present
-                removeMarker(driverId, "trackingMap");
-                // Clear all in-memory state
-                delete this.state.liveScans[driverId];
-                delete this.state.liveTracking[driverId];
-                this._scheduleLiveScansRender();
-            }
-        });
-
-        // Connect if not already connected (with Firebase auth token for sysu-go Railway)
-        if (!driverSocket.connected) {
-            if (auth.currentUser) {
-                try {
-                    const token = await auth.currentUser.getIdToken(false);
-                    driverSocket.auth = { token };
-                    driverSocket.connect();
-                } catch (err) {
-                    console.error("[LiveScans] Failed to get Firebase token:", err);
-                    driverSocket.connect(); // try anyway
-                }
-            } else {
-                console.warn("[LiveScans] No Firebase user, connecting driverSocket without auth");
-                driverSocket.connect();
-            }
-        }
-
-        // Diagnostic listeners for the driver's secondary socket.
-        driverSocket.on("connect", () => {
-            console.log("[driverSocket] ✓ connected to", API_CONFIG.DRIVER_TRACKING_URL);
-        });
-        driverSocket.on("disconnect", (reason) => {
-            console.warn("[driverSocket] ✗ disconnected:", reason);
-        });
-        driverSocket.on("connect_error", (err) => {
-            console.error("[driverSocket] ✗ connect_error:", err?.message ?? err);
-        });
+            if (changed) this._scheduleLiveScansRender();
+        }, 5000);
+        if (!driverSocket.connected) await connectDriverSocket();
     }
 
     _liveScansRenderTimer = null;
@@ -1501,7 +1385,120 @@ class Dashboard {
         this._liveScansRenderTimer = setTimeout(() => {
             this._liveScansRenderTimer = null;
             this._renderLiveScansTable();
+            this._renderFleetOperations();
+            this._renderFleetTree();
         }, 150);
+    }
+
+    _initLiveScansPanel() {
+        const panel = document.getElementById("resizePanel");
+        const handle = document.getElementById("liveScansResizeHandle");
+        if (!panel || !handle || this._liveScansPanelInitialized) return;
+
+        this._liveScansPanelInitialized = true;
+        this._liveScansExpandedHeight = 240;
+        this._setLiveScansPanelHeight(this._liveScansExpandedHeight);
+
+        let dragStart = null;
+        let suppressClick = false;
+        const stopDragging = (event) => {
+            if (!dragStart) return;
+            window.removeEventListener("pointermove", moveHandle);
+            window.removeEventListener("pointerup", stopDragging);
+            window.removeEventListener("pointercancel", stopDragging);
+            dragStart = null;
+            if (event.type === "pointercancel") {
+                suppressClick = false;
+            } else if (suppressClick) {
+                setTimeout(() => { suppressClick = false; }, 0);
+            }
+        };
+        const moveHandle = (event) => {
+            if (!dragStart) return;
+            const delta = dragStart.y - event.clientY;
+            if (Math.abs(delta) > 3) suppressClick = true;
+            this._setLiveScansPanelHeight(dragStart.height + delta);
+        };
+
+        handle.addEventListener("pointerdown", (event) => {
+            if (event.button !== undefined && event.button !== 0) return;
+            event.preventDefault();
+            dragStart = {
+                y: event.clientY,
+                height: panel.getBoundingClientRect().height || Number.parseFloat(panel.style.height) || 240,
+            };
+            window.addEventListener("pointermove", moveHandle);
+            window.addEventListener("pointerup", stopDragging);
+            window.addEventListener("pointercancel", stopDragging);
+        });
+        handle.addEventListener("click", () => {
+            if (suppressClick) {
+                suppressClick = false;
+                return;
+            }
+            const collapsed = panel.dataset.collapsed === "true";
+            this._setLiveScansPanelHeight(collapsed ? this._liveScansExpandedHeight : 56);
+        });
+        handle.addEventListener("keydown", (event) => {
+            const height = panel.getBoundingClientRect().height || Number.parseFloat(panel.style.height) || 240;
+            if (event.key === "ArrowUp") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(height + 24);
+            } else if (event.key === "ArrowDown") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(height - 24);
+            } else if (event.key === "Home") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(56);
+            } else if (event.key === "End") {
+                event.preventDefault();
+                this._setLiveScansPanelHeight(this._getLiveScansPanelMaxHeight());
+            }
+        });
+        window.addEventListener("resize", () => {
+            if (panel.dataset.collapsed !== "true") {
+                this._setLiveScansPanelHeight(Number.parseFloat(panel.style.height) || 240);
+            }
+        });
+    }
+
+    _getLiveScansPanelMaxHeight() {
+        const panel = document.getElementById("resizePanel");
+        const availableHeight = panel?.parentElement?.clientHeight || 680;
+        return Math.max(140, availableHeight - 350);
+    }
+
+    _setLiveScansPanelHeight(requestedHeight) {
+        const panel = document.getElementById("resizePanel");
+        const handle = document.getElementById("liveScansResizeHandle");
+        if (!panel || !handle) return;
+
+        const collapsed = requestedHeight <= 64;
+        const minHeight = collapsed ? 56 : 140;
+        const height = collapsed
+            ? 56
+            : Math.min(this._getLiveScansPanelMaxHeight(), Math.max(minHeight, requestedHeight));
+        if (!collapsed) this._liveScansExpandedHeight = height;
+
+        panel.style.height = `${height}px`;
+        panel.dataset.collapsed = String(collapsed);
+        handle.setAttribute("aria-expanded", String(!collapsed));
+        handle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} Live Scans panel; drag to resize`);
+        handle.title = `Drag to resize; click to ${collapsed ? "expand" : "collapse"}`;
+        document.getElementById("liveScansHeader")?.classList.toggle("py-1", collapsed);
+        document.getElementById("liveScansHeader")?.classList.toggle("py-3", !collapsed);
+        document.querySelectorAll("[data-live-scans-detail], #shipmentTabs, #tableWrap")
+            .forEach((element) => element.classList.toggle("hidden", collapsed));
+
+        if (!this._liveScansMapResizeFrame) {
+            const refreshMapSize = () => {
+                this._liveScansMapResizeFrame = null;
+                window.map?.invalidateSize({pan: false});
+            };
+            this._liveScansMapResizeFrame = typeof requestAnimationFrame === "function"
+                ? requestAnimationFrame(refreshMapSize)
+                : setTimeout(refreshMapSize, 0);
+        }
     }
 
     _formatCoord(val, digits = 5) {
@@ -1515,6 +1512,29 @@ class Dashboard {
         if (!container) return;
 
         const drivers = Object.values(this.state.liveScans);
+
+        if (this.state.liveScansLoading) {
+            const skeletonRows = Array.from({length: 3}, () => `
+                <tr aria-hidden="true" class="border-b border-db-border/50 animate-pulse">
+                    ${Array.from({length: 5}, () => '<td class="px-4 py-3"><div class="h-3 w-24 rounded bg-db-border/60"></div></td>').join("")}
+                </tr>`).join("");
+            container.innerHTML = `
+                <div class="overflow-y-auto h-full" role="status" aria-label="Loading live scans">
+                    <table class="w-full border-collapse">
+                        <thead class="sticky top-0 z-10 bg-db-panel/95 backdrop-blur-sm">
+                            <tr class="text-left border-b border-db-border">
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Shipment No.</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Driver Name</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Plate No.</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest">Current Lat / Lng</th>
+                                <th class="px-4 py-2 text-[10px] font-black text-db-text3 uppercase tracking-widest text-right">Last Update</th>
+                            </tr>
+                        </thead>
+                        <tbody>${skeletonRows}</tbody>
+                    </table>
+                </div>`;
+            return;
+        }
 
         if (drivers.length === 0) {
             container.innerHTML = `
@@ -1544,13 +1564,25 @@ class Dashboard {
 
         const esc = escapeHtml;
 
+        const activeTripStatuses = new Set(["assigned", "loading", "loaded", "fully_loaded", "in_transit", "returning_to_base"]);
         const rows = drivers.map((d) => {
             const isOnline = d.status === "online";
-            const shipNo = d.shipmentNumber
-                ? `<span class="font-mono font-bold text-db-text text-[12px]">${esc(d.shipmentNumber)}</span>`
+            const linkedAssignment = Object.entries(this.state.sapAssignments || {})
+                .filter(([, assignment]) => assignment?.driverId === d.driverId && activeTripStatuses.has(assignment.tripStatus))
+                .sort((a, b) => Number(b[1].tripStatus === "in_transit") - Number(a[1].tripStatus === "in_transit"))[0];
+            const queueEntry = this.state.queue.find(entry => entry.driverId === d.driverId);
+            const profile = this.state.drivers.find(entry => entry.id === d.driverId);
+            const usableName = d.name && !["driver", "unknown", "unknown driver"].includes(d.name.trim().toLowerCase());
+            const driverName = usableName
+                ? d.name
+                : linkedAssignment?.[1]?.driverName || queueDriverDisplayName(queueEntry, [profile].filter(Boolean));
+            const shipmentNumber = d.shipmentNumber || linkedAssignment?.[0];
+            const truckPlate = d.truckPlate || linkedAssignment?.[1]?.truckPlate || queueEntry?.plateNumber || profile?.truckPlate;
+            const shipNo = shipmentNumber
+                ? `<span class="font-mono font-bold text-db-text text-[12px]">${esc(shipmentNumber)}</span>`
                 : `<span class="text-db-text3 italic text-[11px]">No shipment</span>`;
-            const plate = d.truckPlate
-                ? `<span class="font-mono text-[11px] text-db-text2">${esc(d.truckPlate)}</span>`
+            const plate = truckPlate
+                ? `<span class="font-mono text-[11px] text-db-text2">${esc(truckPlate)}</span>`
                 : `<span class="text-db-text3 text-[11px]">—"</span>`;
             const latLng = d.lat != null && d.lng != null
                 ? `<span class="font-mono text-[10.5px] text-db-text3">${this._formatCoord(d.lat)}</span>
@@ -1565,7 +1597,7 @@ class Dashboard {
                 <td class="px-4 py-2.5">
                     <div class="flex items-center gap-1.5">
                         <div class="w-1.5 h-1.5 rounded-full ${isOnline ? "bg-green-500 animate-pulse" : "bg-db-text3"}"></div>
-                        <span class="text-[12px] font-semibold text-db-text">${esc(d.name || "Unknown")}</span>
+                        <span class="text-[12px] font-semibold text-db-text">${esc(driverName)}</span>
                     </div>
                 </td>
                 <td class="px-4 py-2.5">${plate}</td>
@@ -1663,8 +1695,17 @@ class Dashboard {
     _refreshGuardList() {
         const listBody = document.getElementById("guardListBody");
         if (!listBody) return;
+        if (this.state.guardsLoading) {
+            listBody.innerHTML = this._loadingCards("Loading security guards");
+            return;
+        }
+        if (this.state.guardsLoadError) {
+            listBody.innerHTML = '<p class="text-sm text-sysu-red">Security guards unavailable.</p>';
+            return;
+        }
 
         const docs = Object.values(this.state._guards || {});
+        const canDeleteMasterRecords = ["admin", "super_admin"].includes(this.state.user?.role);
         docs.sort((a, b) => {
             const an = parseInt(String(a.guardId || "").replace(/\D/g, ""), 10) || 0;
             const bn = parseInt(String(b.guardId || "").replace(/\D/g, ""), 10) || 0;
@@ -1680,7 +1721,7 @@ class Dashboard {
             return;
         }
 
-        listBody.innerHTML = filtered.map((g) => this._renderGuardCard(g)).join("");
+        listBody.innerHTML = filtered.map((g) => this._renderGuardCard(g, canDeleteMasterRecords)).join("");
 
         listBody.querySelectorAll("[data-action='guard-edit']").forEach((btn) => {
             btn.addEventListener("click", () => this._openGuardModal(btn.dataset.id));
@@ -1692,9 +1733,12 @@ class Dashboard {
                 this._softDeleteGuard(id, currentlyActive);
             });
         });
+        listBody.querySelectorAll("[data-action='guard-delete']").forEach((btn) => {
+            btn.addEventListener("click", () => this._deleteGuard(btn.dataset.id));
+        });
     }
 
-    _renderGuardCard(g) {
+    _renderGuardCard(g, canDelete = false) {
         // Guard fullName is stored with Title Case from _saveGuard. Display as-is (already sanitized).
         const displayName = this._toTitleCase(g.fullName || "");
         const statusPill = g.active
@@ -1722,6 +1766,7 @@ class Dashboard {
                     <div class="flex items-center gap-1.5 shrink-0">
                         <button data-action="guard-edit" data-id="${escapeHtml(g.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider text-db-text2 border border-db-border hover:border-sysu-gold/40 hover:bg-db-item-hover transition-all">Edit</button>
                         <button data-action="guard-toggle" data-id="${escapeHtml(g.id || "")}" data-active="${g.active ? "true" : "false"}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${toggleClass} transition-all">${toggleLabel}</button>
+                        ${canDelete ? `<button data-action="guard-delete" data-id="${escapeHtml(g.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-sysu-red/30 text-sysu-red hover:bg-sysu-red/10 transition-all">Delete</button>` : ""}
                     </div>
                 </div>
             </div>
@@ -1770,8 +1815,17 @@ class Dashboard {
     _refreshTcList() {
         const listBody = document.getElementById("tcListBody");
         if (!listBody) return;
+        if (this.state.truckCompaniesLoading) {
+            listBody.innerHTML = this._loadingCards("Loading truck companies");
+            return;
+        }
+        if (this.state.truckCompaniesLoadError) {
+            listBody.innerHTML = '<p class="text-sm text-sysu-red">Truck companies unavailable.</p>';
+            return;
+        }
 
         const docs = Object.values(this.state._truckCompanies || {});
+        const canDeleteMasterRecords = ["admin", "super_admin"].includes(this.state.user?.role);
         docs.sort((a, b) => {
             const an = parseInt(a.companyCode || "0", 10) || 0;
             const bn = parseInt(b.companyCode || "0", 10) || 0;
@@ -1787,7 +1841,7 @@ class Dashboard {
             return;
         }
 
-        listBody.innerHTML = filtered.map((c) => this._renderTruckCompanyCard(c)).join("");
+        listBody.innerHTML = filtered.map((c) => this._renderTruckCompanyCard(c, canDeleteMasterRecords)).join("");
 
         listBody.querySelectorAll("[data-action='tc-edit']").forEach((btn) => {
             btn.addEventListener("click", () => this._openTruckCompanyModal(btn.dataset.id));
@@ -1799,9 +1853,12 @@ class Dashboard {
                 this._softDeleteTruckCompany(id, currentlyActive);
             });
         });
+        listBody.querySelectorAll("[data-action='tc-delete']").forEach((btn) => {
+            btn.addEventListener("click", () => this._deleteTruckCompany(btn.dataset.id));
+        });
     }
 
-    _renderTruckCompanyCard(c) {
+    _renderTruckCompanyCard(c, canDelete = false) {
         // Truck company name is stored UPPERCASE from _saveTruckCompany
         const displayName = (c.name || "").toUpperCase();
         const statusPill = c.active
@@ -1830,6 +1887,7 @@ class Dashboard {
                     <div class="flex items-center gap-1.5 shrink-0">
                         <button data-action="tc-edit" data-id="${escapeHtml(c.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider text-db-text2 border border-db-border hover:border-sysu-gold/40 hover:bg-db-item-hover transition-all">Edit</button>
                         <button data-action="tc-toggle" data-id="${escapeHtml(c.id || "")}" data-active="${c.active ? "true" : "false"}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${toggleClass} transition-all">${toggleLabel}</button>
+                        ${canDelete ? `<button data-action="tc-delete" data-id="${escapeHtml(c.id || "")}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider border border-sysu-red/30 text-sysu-red hover:bg-sysu-red/10 transition-all">Delete</button>` : ""}
                     </div>
                 </div>
             </div>
@@ -1960,6 +2018,19 @@ class Dashboard {
         }
     }
 
+    async _deleteGuard(guardId) {
+        const guard = this.state._guards?.[guardId];
+        const label = guard?.fullName || guard?.guardId || guardId;
+        if (!window.confirm(`Permanently delete guard ${guardId} (${label})? Historical POD/assignment snapshots will be kept.`)) return;
+        try {
+            await SecurityGuardService.delete(guardId);
+            this._showToast("Guard permanently deleted");
+        } catch (err) {
+            console.error("Delete guard error:", err);
+            this._showToast("Failed to delete guard: " + err.message);
+        }
+    }
+
     _openTruckCompanyModal(code) {
         this._editTruckCompanyCode = code || null;
         const modal = document.getElementById("truckCompanyModal");
@@ -2058,6 +2129,19 @@ class Dashboard {
         } catch (err) {
             console.error("Toggle truck company error:", err);
             this._showToast("Failed: " + err.message);
+        }
+    }
+
+    async _deleteTruckCompany(code) {
+        const company = this.state._truckCompanies?.[code];
+        const label = company?.name || company?.companyCode || code;
+        if (!window.confirm(`Permanently delete truck company ${code} (${label})? Historical assignment snapshots will be kept.`)) return;
+        try {
+            await TruckCompanyService.delete(code);
+            this._showToast("Truck company permanently deleted");
+        } catch (err) {
+            console.error("Delete truck company error:", err);
+            this._showToast("Failed to delete truck company: " + err.message);
         }
     }
 
@@ -2251,7 +2335,7 @@ class Dashboard {
 
         // Cleanup existing base map instance if any
         if (this._wbMap) {
-            try { this._wbMap.remove(); } catch (e) { }
+            try { this._wbMap.remove(); } catch (e) { /* Best-effort cleanup; the view is already dismissed. */ }
             this._wbMap = null;
         }
 
@@ -2259,15 +2343,23 @@ class Dashboard {
         const map = L.map("warehouseBaseMap", {
             center: [initLat, initLng],
             zoom: 15,
+            zoomSnap: 0,
+            minZoom: 5,
+            maxBounds: PHILIPPINES_BOUNDS,
+            maxBoundsViscosity: 1,
             zoomControl: true,
-            attributionControl: false,
+            attributionControl: true,
         });
         this._wbMap = map;
+        map.attributionControl?.setPosition("bottomleft");
+        map.attributionControl?.setPrefix(false);
+        constrainMapToPhilippines(map);
 
-        // Dark carto tile layer
-        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
+        // Match the keyless tile provider used by the Overview map.
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
-            subdomains: "abcd",
+            subdomains: ["a", "b", "c"],
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         }).addTo(map);
 
         // Custom Warehouse Icon
@@ -2750,6 +2842,8 @@ class Dashboard {
         if (this._guardsUnsub) return; // guard against double-subscribe
         SecurityGuardService.subscribe((data) => {
             this.state._guards = data;
+            this.state.guardsLoading = false;
+            this.state.guardsLoadError = false;
             const currentTab = this.state._activeDocsTab;
             if (currentTab === "guards") {
                 // If the toolbar is already rendered (user is actively on this tab),
@@ -2760,15 +2854,27 @@ class Dashboard {
                     this._renderGuardsView();
                 }
             }
+        }, (err) => {
+            console.warn("Security guards unavailable:", err);
+            this.state.guardsLoading = false;
+            this.state.guardsLoadError = true;
+            if (this.state._activeDocsTab === "guards") this._refreshGuardList();
         })
             .then((unsub) => { this._guardsUnsub = unsub; })
-            .catch((err) => console.warn("Guards listener failed:", err.message));
+            .catch((err) => {
+                console.warn("Guards listener failed:", err.message);
+                this.state.guardsLoading = false;
+                this.state.guardsLoadError = true;
+                if (this.state._activeDocsTab === "guards") this._refreshGuardList();
+            });
     }
 
     _subscribeTruckCompanies() {
         if (this._truckCompaniesUnsub) return;
         TruckCompanyService.subscribe((data) => {
             this.state._truckCompanies = data;
+            this.state.truckCompaniesLoading = false;
+            this.state.truckCompaniesLoadError = false;
             const currentTab = this.state._activeDocsTab;
             if (currentTab === "truck-companies") {
                 if (document.getElementById("tcListBody")) {
@@ -2777,15 +2883,26 @@ class Dashboard {
                     this._renderTruckCompaniesView();
                 }
             }
+        }, (err) => {
+            console.warn("Truck companies unavailable:", err);
+            this.state.truckCompaniesLoading = false;
+            this.state.truckCompaniesLoadError = true;
+            if (this.state._activeDocsTab === "truck-companies") this._refreshTcList();
         })
             .then((unsub) => { this._truckCompaniesUnsub = unsub; })
-            .catch((err) => console.warn("Truck companies listener failed:", err.message));
+            .catch((err) => {
+                console.warn("Truck companies listener failed:", err.message);
+                this.state.truckCompaniesLoading = false;
+                this.state.truckCompaniesLoadError = true;
+                if (this.state._activeDocsTab === "truck-companies") this._refreshTcList();
+            });
     }
 
     _renderAll() {
         if (this.renderTimer) return;
         this.renderTimer = setTimeout(() => {
             this._renderFleetTree();
+            this._renderFleetOperations();
             this._renderSapTable();
             const view = this.state.activeView;
             if (view === "drivers" || view === "fleet" || view === "") this.renderFleet();
@@ -2798,75 +2915,167 @@ class Dashboard {
         const tree = document.getElementById(this.config.fleetTreeId);
         if (!tree) return;
 
-        const groups = {};
+        if (this.state.driversLoading) {
+            const count = document.getElementById("fleetDirectoryCount");
+            if (count) count.textContent = "Loading drivers";
+            tree.innerHTML = this._loadingCards("Loading driver directory", 4);
+            return;
+        }
+        if (this.state.driversLoadError) {
+            const count = document.getElementById("fleetDirectoryCount");
+            if (count) count.textContent = "Unavailable";
+            tree.innerHTML = '<p class="px-2 py-3 text-[11px] text-sysu-red">Driver directory unavailable.</p>';
+            return;
+        }
 
-        this.state.drivers.forEach((p) => {
-            const live =
-                this.state.liveTracking[p.id] || this.state.liveTracking[p.phone];
-            const company = p.truckingCompany || p.company;
-            if (!company) return;
+        const search = document.getElementById("driverDirectorySearch");
+        if (search && !search.dataset.searchWired) {
+            search.addEventListener("input", () => this._renderFleetTree());
+            search.dataset.searchWired = "true";
+        }
+        if (!tree.dataset.focusWired) {
+            tree.addEventListener("click", (event) => {
+                const button = event.target.closest("[data-focus-driver]");
+                if (button && !button.disabled) this.focusOnTruck(button.dataset.focusDriver);
+            });
+            tree.dataset.focusWired = "true";
+        }
+
+        const term = (search?.value || "").trim().toLowerCase();
+        if (tree.querySelector("details") && !this._fleetSearchActive) {
+            this._fleetExpandedCompanies = new Set([...tree.querySelectorAll("details[open]")].map(group => group.dataset.company));
+        }
+        const expandedCompanies = this._fleetExpandedCompanies || new Set();
+        this._fleetSearchActive = Boolean(term);
+        const groups = Object.create(null);
+        this.state.drivers.forEach((profile) => {
+            const live = this.state.liveTracking[profile.id] || this.state.liveTracking[profile.phone];
+            const company = String(profile.truckingCompany || profile.company || "Other").trim() || "Other";
+            const name = String(profile.driverName || profile.name || "Unnamed driver");
+            if (term && !`${name} ${company}`.toLowerCase().includes(term)) return;
             if (!groups[company]) groups[company] = [];
-            groups[company].push({ ...p, ...(live || {}) });
+            groups[company].push({...profile, ...(live || {}), name, company, live});
         });
 
-        tree.innerHTML = Object.keys(groups)
-            .map((company) => {
-                const drivers = groups[company];
-                const sortAsc = true;
-                drivers.sort((a, b) => {
-                    const ta = a.entryTime?.toDate?.()?.getTime() || 0;
-                    const tb = b.entryTime?.toDate?.()?.getTime() || 0;
-                    return sortAsc ? ta - tb : tb - ta;
-                });
-                const displayLimit = 20;
-                const visibleDrivers = drivers.slice(0, displayLimit);
-                const hasMore = drivers.length > displayLimit;
+        const companies = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+        const total = companies.reduce((count, company) => count + groups[company].length, 0);
+        const countLabel = document.getElementById("fleetDirectoryCount");
+        if (countLabel) countLabel.textContent = `${total} ${total === 1 ? "driver" : "drivers"}`;
+        if (!total) {
+            tree.innerHTML = `<p class="px-2 py-3 text-center text-[11px] text-db-text3">${term ? "No drivers match your search." : "No drivers registered yet."}</p>`;
+            return;
+        }
 
+        tree.innerHTML = companies.map((company) => {
+            const drivers = groups[company].sort((a, b) => a.name.localeCompare(b.name));
+            const visibleDrivers = drivers.slice(0, 20);
+            const hasMore = drivers.length > visibleDrivers.length;
+            const rows = visibleDrivers.map((driver) => {
+                const live = driver.live;
+                const id = String(driver.id || driver.driverId || "");
+                const hasLocation = Number.isFinite(live?.lat) && Number.isFinite(live?.lng);
                 return `
-          <div class="mb-2">
-              <div class="flex items-center justify-between px-2 py-1.5 hover:bg-db-item-hover rounded-md cursor-pointer transition-colors group" onclick="this.nextElementSibling.classList.toggle('hidden')">
-                  <div class="flex items-center gap-2 overflow-hidden">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-3.5 h-3.5 shrink-0 opacity-50"><polyline points="9 18 15 12 9 6"/></svg>
-                      <span class="text-[12px] font-medium text-db-text2 group-hover:text-db-text truncate">${escapeHtml(company)}</span>
-                  </div>
-                  <span class="text-[10px] font-bold text-db-text3 bg-db-item-hover px-1.5 rounded">${drivers.length}</span>
-              </div>
-              <div class="pl-5 mt-1">
-                  ${visibleDrivers
-                        .map(
-                            (d) => `
-                      <div class="flex items-center gap-2 py-1 cursor-pointer hover:text-sysu-red transition-colors" onclick="window.dashboard.focusOnTruck('${encodeURIComponent(d.id)}')">
-                          <div class="w-1.5 h-1.5 rounded-full ${d.status === "online" ? "bg-green-500" : "bg-red-500"}"></div>
-                          <span class="text-[11.5px] text-db-text3 truncate">${escapeHtml(d.name)}</span>
-                      </div>
-                  `,
-                        )
-                        .join("")}
-                  ${hasMore ? `<div class="text-[10px] text-db-text3 italic pl-3.5 py-1">+ ${drivers.length - displayLimit} more drivers</div>` : ""}
-              </div>
-          </div>
-      `;
-            })
-            .join("");
+                    <button type="button" data-focus-driver="${escapeHtml(id)}" ${hasLocation ? "" : "disabled"}
+                            aria-label="${escapeHtml(`Focus map on ${driver.name}`)}${hasLocation ? "" : "; no saved location"}"
+                            class="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left transition-colors ${hasLocation ? "cursor-pointer hover:bg-db-item-hover" : "cursor-default opacity-70"}">
+                        <span class="min-w-0 truncate text-[11.5px] text-db-text2">${escapeHtml(driver.name)}</span>
+                    </button>`;
+            }).join("");
+            return `
+                <details class="group rounded-md" data-company="${escapeHtml(company)}" ${term || expandedCompanies.has(company) ? "open" : ""}>
+                    <summary class="flex items-center justify-between px-2 py-1.5 hover:bg-db-item-hover rounded-md cursor-pointer transition-colors list-none">
+                        <span class="min-w-0 truncate text-[11px] font-medium text-db-text2">${escapeHtml(company)}</span>
+                        <span class="ml-2 shrink-0 text-[10px] font-bold text-db-text3 bg-db-item-hover px-1.5 rounded">${drivers.length}</span>
+                    </summary>
+                    <div class="pl-1 mt-1 space-y-0.5">
+                        ${rows}
+                        ${hasMore ? `<div class="px-2 py-1 text-[10px] text-db-text3 italic">Showing ${visibleDrivers.length} of ${drivers.length}; refine search to find others.</div>` : ""}
+                    </div>
+                </details>`;
+        }).join("");
+    }
+
+    _renderFleetOperations() {
+        const transitEl = document.getElementById("fleetStatTransit");
+        const queueEl = document.getElementById("fleetStatQueue");
+        const returningEl = document.getElementById("fleetStatReturning");
+        if (!transitEl && !queueEl && !returningEl) return;
+
+        const transit = new Set();
+        const returning = new Set();
+        for (const assignment of Object.values(this.state.sapAssignments || {})) {
+            if (!assignment?.driverId) continue;
+            const status = String(assignment.tripStatus || "").toLowerCase();
+            if (status === "in_transit") transit.add(assignment.driverId);
+            if (status === "returning_to_base") returning.add(assignment.driverId);
+        }
+        for (const [key, location] of Object.entries(this.state.liveTracking || {})) {
+            const driverId = location.driverId || key;
+            if (location.tripStatus === "in_transit") transit.add(driverId);
+            if (location.tripStatus === "returning_to_base" || location.status === "returning_to_base") returning.add(driverId);
+        }
+        const queued = new Set((this.state.queue || [])
+            .filter(entry => ["waiting", "available"].includes(String(entry.status || "").toLowerCase())
+                && entry.isAssigned !== true && entry.registrationComplete !== false)
+            .map(entry => entry.driverId || entry.id)
+            .filter(Boolean));
+
+        if (transitEl) transitEl.textContent = String(transit.size);
+        if (queueEl) queueEl.textContent = String(queued.size);
+        if (returningEl) returningEl.textContent = String(returning.size);
     }
 
     focusOnTruck(id) {
-        const d = this.state.liveTracking[id];
-        if (d?.lat && d?.lng) focusOnLocation(d.lat, d.lng);
+        const profile = this.state.drivers.find(driver => driver.id === id);
+        const d = this.state.liveTracking[id] || this.state.liveTracking[profile?.phone];
+        if (Number.isFinite(d?.lat) && Number.isFinite(d?.lng)) focusOnLocation(d.lat, d.lng);
+    }
+
+    _loadingCards(label, count = 3) {
+        return `<div role="status" aria-label="${label}" aria-busy="true" class="space-y-3">
+            ${Array.from({length: count}, () => `<div class="p-4 rounded-lg border border-db-border animate-pulse" aria-hidden="true">
+                <div class="h-4 w-1/3 rounded bg-db-item-hover mb-3"></div>
+                <div class="h-3 w-3/4 rounded bg-db-item-hover mb-2"></div>
+                <div class="h-3 w-1/2 rounded bg-db-item-hover"></div>
+            </div>`).join("")}
+        </div>`;
+    }
+
+    _loadingTableRows(columns, count, label) {
+        return `<tr><td colspan="${columns}" class="p-4">
+            <div role="status" aria-label="${label}" aria-busy="true" class="space-y-3">
+                ${Array.from({length: count}, () => `<div class="flex gap-4 py-3 border-b border-db-border/50 animate-pulse" aria-hidden="true">
+                    <div class="h-4 w-1/5 rounded bg-db-item-hover"></div>
+                    <div class="h-4 w-2/5 rounded bg-db-item-hover"></div>
+                    <div class="h-4 w-1/4 rounded bg-db-item-hover"></div>
+                </div>`).join("")}
+            </div>
+        </td></tr>`;
     }
 
     _renderSapTable() {
         const body = document.getElementById("sapBody");
         if (!body) return;
 
+        if (this.state.sapLoading) {
+            body.innerHTML = this._loadingTableRows(9, 4, "Loading shipments");
+            return;
+        }
+
         const groups = this.state.sapGroupedByDispatch;
         const allKeys = Object.keys(groups);
 
         if (allKeys.length === 0) {
+            for (const id of ['sapStatAll', 'sapStatDel', 'sapStatTransit']) {
+                const stat = document.getElementById(id);
+                if (stat) stat.textContent = '0';
+            }
+            const resultCount = document.getElementById('sapResultCount');
+            if (resultCount) resultCount.textContent = '0 dispatches';
             body.innerHTML = `<tr>
           <td colspan="9" class="px-4 py-0">
             <div class="flex flex-col items-center justify-center min-h-[240px] text-center w-full">
-              <span class="text-db-text3 italic tracking-wide">No shipments found in SAP.</span>
+              <span class="text-db-text3 italic tracking-wide">No shipments available.</span>
             </div>
         </td>
         </tr>`;
@@ -2883,7 +3092,8 @@ class Dashboard {
         // Build grouped list with helper fields
         const groupedList = allKeys.map((key) => {
             const records = groups[key];
-            const rec = records[0]; // representative record
+            const rec = records.find(row => row.Route || row.PlanningDate || row.Planning_Date || row.ActualDelDate)
+                || records[0]; // prefer a row with dispatch-level date and route fields
 
             // â"€â"€ Skip records that are still in planning stage â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             // No SAPDispatchNumber → still planning, don't show
@@ -2929,8 +3139,9 @@ class Dashboard {
 
         // Filter
         const filtered = groupedList.filter((g) => {
+            const isTemporaryReviewDispatch = g.key === "0010139586";
             if (q) {
-                const hay = `${g.key} ${g.rec.OBDNumber || ""} ${g.rec.SoldToParty || g.rec.ShipToPartyName || ""} ${g.rec.Route || ""}`.toLowerCase();
+                const hay = `${g.key} ${g.records.map(rec => `${rec.OBDNumber || ''} ${rec.SoldToParty || rec.ShipToPartyName || ''} ${rec.Route || ''}`).join(' ')}`.toLowerCase();
                 if (!hay.includes(q.toLowerCase())) return false;
             }
 
@@ -2950,28 +3161,25 @@ class Dashboard {
             }
 
             if (this.state.sapFilter === "delivered") {
-                // Only show rows that have an assignment entry with tripStatus === "completed"
-                // from our local sap_assignments database, NOT from SAP ODATA.
-                // Using case-insensitive comparison to handle potential case variations
-                if (!asgn || !(asgn.tripStatus?.toLowerCase() === "completed")) return false;
+                if (!isDeliveredAssignment(asgn)) return false;
             } else if (this.state.sapFilter === "in_transit") {
-                if (tripStatus !== "in_transit") return false;
+                if (tripStatusLower !== "in_transit") return false;
             } else if (this.state.sapFilter === "fully_loaded") {
                 // Matches either "loaded" or "fully_loaded" (case-insensitive)
                 if (tripStatusLower !== "loaded" && tripStatusLower !== "fully_loaded") return false;
             } else if (this.state.sapFilter === "loading") {
-                if (tripStatus !== "loading") return false;
+                if (tripStatusLower !== "loading") return false;
             } else if (this.state.sapFilter === "assigned") {
                 // A fresh assignment has tripStatus === "assigned" until the
                 // driver transitions to "loading" / "loaded" / "in_transit".
-                if (tripStatus !== "assigned") return false;
+                if (tripStatusLower !== "assigned") return false;
             } else if (this.state.sapFilter === "forAssignment") {
                 // Exclude already DELIVERED — no point assigning something already delivered
-                if ((g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
+                if (!isTemporaryReviewDispatch && (g.rec.Delivery || "").toUpperCase() === "DELIVERED") return false;
                 // Only show SYSU-owned shipments (ForwardingAgent == "0000001102")
-                if (!g.isOurs) return false;
-                if (!g.isUnassignable) return false;
-                if (this.state.sapAssignments[g.key]) return false;
+                if (!isTemporaryReviewDispatch && !g.isOurs) return false;
+                if (!isTemporaryReviewDispatch && !g.isUnassignable) return false;
+                if (!isTemporaryReviewDispatch && this.state.sapAssignments[g.key]) return false;
             }
             // For any other filter (including undefined or 'all'), show all
             return true;
@@ -3003,8 +3211,8 @@ class Dashboard {
         });
 
         // Stats from valid (non-planning) entries only
-        const del = validKeys.filter((k) => this.state.sapAssignments[k]?.tripStatus === "completed").length;
-        const tra = validKeys.filter((k) => (groups[k][0].PgiStatus || groups[k][0].CheckStatus || "").toUpperCase() === "IN TRANSIT").length;
+        const del = validKeys.filter((k) => isDeliveredAssignment(this.state.sapAssignments[k])).length;
+        const tra = validKeys.filter((k) => this.state.sapAssignments[k]?.tripStatus?.toLowerCase() === 'in_transit').length;
 
         const e = (id, v) => {
             const el = document.getElementById(id);
@@ -3039,15 +3247,16 @@ class Dashboard {
                 const { key, rec, count } = g;
                 const shipmentDisplay = stripZeros(key);
                 const asgn = this.state.sapAssignments[key];
-                const status = rec.PgiStatus || rec.CheckStatus || "Pending";
-                const isDelivered = status.toUpperCase() === "DELIVERED" || (asgn?.tripStatus?.toLowerCase() === "completed");
+                const status = assignmentDisplayStatus(asgn, rec);
+                const isDelivered = isDeliveredAssignment(asgn);
+                const isTemporaryReviewDispatch = key === "0010139586";
 
                 return `
         <tr class="hover:bg-db-item-hover transition-colors border-b border-db-border">
           <td class="px-6 py-4 text-center font-mono text-[10px] text-db-text3 font-bold">${index + 1}</td>
           <td class="px-6 py-4 font-mono font-bold text-db-text cursor-pointer hover:text-sysu-red transition-colors"
-              onclick="window.dashboard.openSapDispatchDetail('${encodeURIComponent(key)}')">
-              #${shipmentDisplay}
+              onclick="window.dashboard.openSapDispatchDetail('${encodeURIComponent(key).replaceAll("'", '%27')}')">
+              #${escapeHtml(shipmentDisplay)}
               ${count > 1 ? `<span class="ml-1 text-[12px] bg-db-item-hover px-1.5 py-0.5 rounded font-bold">${count}</span>` : ""}
           </td>
           <td class="px-6 py-4 text-db-text2 font-semibold uppercase">${escapeHtml(rec.TruckType || "—")}</td>
@@ -3060,11 +3269,13 @@ class Dashboard {
              </span>
           </td>
           <td class="px-6 py-4">
-             ${asgn ? `<div class="font-bold text-db-text">${escapeHtml(asgn.driverName || "")}</div><div class="text-[10px] text-db-text3">${escapeHtml(asgn.truckPlate || "")}</div>` : '<span class="text-db-text3">Unassigned</span>'}
+             ${(asgn?.driverName || rec.Driver || asgn?.truckPlate || rec.PlateNumber) ? `<div class="font-bold text-db-text">${escapeHtml(asgn?.driverName || rec.Driver || "")}</div><div class="text-[10px] text-db-text3">${escapeHtml(asgn?.truckPlate || rec.PlateNumber || "")}</div>` : '<span class="text-db-text3">Unassigned</span>'}
           </td>
           <td class="px-6 py-4 text-right">
-             ${isDelivered
-                        ? '<span class="text-green-500 font-bold text-xs">COMPLETE</span>'
+             ${isTemporaryReviewDispatch
+                        ? '<span class="text-db-text3 text-[10px] font-bold uppercase tracking-wider">Review only — not assignable</span>'
+                        : isDelivered
+                        ? `<span class="text-green-500 font-bold text-xs">${asgn?.tripStatus?.toLowerCase() === 'returning_to_base' ? 'RETURNING TO BASE' : 'COMPLETE'}</span>`
                         : asgn
                             ? (
                                 // Hide the cancel/change dropdown once the driver
@@ -3092,6 +3303,8 @@ class Dashboard {
       `;
             })
             .join("");
+
+        this._loadSapDispatchDetails(finalRenderList.map(group => group.key));
 
         // Wire the per-row action dropdown (Cancel / Change). One delegated
         // listener, attached once, so re-renders don't lose it.
@@ -3281,6 +3494,14 @@ class Dashboard {
         const container = document.getElementById("fleetContent");
         console.log("[renderFleet] CALLED | body=", !!body, "container=", !!container, "containerHidden=", container?.classList.contains("hidden"));
         if (!body || !container || container.classList.contains("hidden")) return;
+        if (this.state.queueLoading) {
+            body.innerHTML = this._loadingCards("Loading fleet queue");
+            return;
+        }
+        if (this.state.queueLoadError) {
+            body.innerHTML = '<p class="text-sm text-sysu-red">Fleet queue unavailable.</p>';
+            return;
+        }
 
         const queue = this.state.queue;
         const drivers = this.state.drivers;
@@ -3702,8 +3923,8 @@ class Dashboard {
                     obdNumber: r.OBDNumber,
                     quantity: qtyStr,
                     quantityNumeric: parseFloat(qtyStr) || 0,
-                    volume: parseFloat(r.Volume) || 0,
                     customerName: r.ShipToPartyName || r.ShipToParty || "",
+                    ...driverAssignmentFields(r),
                     actualDelDate: this._normalizeDelDate(r.ActualDelDate),
                 };
             });
@@ -3785,7 +4006,8 @@ class Dashboard {
         }
 
         // Refresh data and render
-        this._syncSAP().finally(() => {
+        this._renderSapTable();
+        return this._syncSAP().finally(() => {
             // Hide spinner when data is loaded
             if (spinner) {
                 spinner.classList.add('hidden');
@@ -3885,9 +4107,11 @@ class Dashboard {
             if (sidePanel) sidePanel.classList.remove("open");
             this.renderFleet();
         } else if (viewId === "orders") {
-            showView(document.getElementById("ordersContent"));
             if (sidePanel) sidePanel.classList.remove("open");
-            this.renderOrders();
+            if (!import.meta.env.PROD) {
+                showView(document.getElementById("ordersContent"));
+                this.renderOrders();
+            }
         } else if (viewId === "tracking") {
             showView(trackingContent);
             if (sidePanel) sidePanel.classList.remove("open");
@@ -3932,17 +4156,32 @@ class Dashboard {
             }
         }
 
-        // Show under development overlay for Fleet Manager and Live Tracking views
+        // Keep unfinished workspaces unavailable in production while preserving local development access.
         const underDevOverlay = document.getElementById('underDevOverlay');
         if (underDevOverlay) {
-            if (viewId === 'drivers' || viewId === 'tracking') {
-                // Show overlay for Fleet Manager and Live Tracking views
+            const ordersUnderDevelopment = viewId === 'orders' && import.meta.env.PROD;
+            const showUnderDevelopment = viewId === 'drivers' || ordersUnderDevelopment;
+            if (showUnderDevelopment) {
+                const title = document.getElementById('underDevTitle');
+                const description = document.getElementById('underDevDescription');
+                if (title) {
+                    title.textContent = ordersUnderDevelopment
+                        ? "Orders is under development"
+                        : "Fleet Manager is under development";
+                }
+                if (description) {
+                    description.textContent = ordersUnderDevelopment
+                        ? "We are preparing a clearer, responsive dispatch workspace. Orders is temporarily unavailable while this work continues."
+                        : "We are refining the Fleet Manager workspace before it becomes available.";
+                }
                 underDevOverlay.style.opacity = "1";
                 underDevOverlay.style.pointerEvents = "auto";
+                underDevOverlay.setAttribute("aria-hidden", "false");
             } else {
                 // Hide overlay for all other views
                 underDevOverlay.style.opacity = "0";
                 underDevOverlay.style.pointerEvents = "none";
+                underDevOverlay.setAttribute("aria-hidden", "true");
             }
         }
 
@@ -4043,7 +4282,6 @@ class Dashboard {
     }
 
     async saveDriver() {
-        console.log("[saveDriver] CALLED — queue snapshot:", this.state.queue.map(q => ({ id: q.id, driverName: q.driverName, registrationComplete: q.registrationComplete })));
         const fn = document.getElementById("drvFName").value.trim();
         const ln = document.getElementById("drvLName").value.trim();
         const nm = `${fn} ${ln}`.trim();
@@ -4069,42 +4307,11 @@ class Dashboard {
             truckingCompany: document.getElementById("drvCompany").value.trim(),
             helper: document.getElementById("drvHelper").value.trim(),
             notes: document.getElementById("drvNotes").value.trim(),
-            updatedAt: new Date().toISOString(),
         };
 
         try {
-            const id = this.state.editDrvId || phone;
-            await setDoc(doc(db, "drivers", id), data, { merge: true });
-
-            // â"€â"€ Back-fill registrationComplete to ALL incomplete queue entries â"€â"€
-            // When a driver completes trip registration (saves Edit Driver), ALL incomplete
-            // queue entries are marked with registrationComplete: true so they become visible
-            // in Fleet Manager. Also update local state immediately for instant UI feedback.
-            const queueSnapshot = await getDocs(
-                query(collection(db, "queue"), where("status", "!=", "completed"))
-            );
-            const updates = [];
-            queueSnapshot.forEach((qDoc) => {
-                const qData = qDoc.data();
-                if (qData.registrationComplete === false) {
-                    // 1. Update Firestore
-                    updates.push(
-                        updateDoc(doc(db, "queue", qDoc.id), {
-                            registrationComplete: true,
-                            updatedAt: new Date().toISOString(),
-                        })
-                    );
-                    // 2. Update local state immediately (for instant Fleet Manager UI update)
-                    const queueEntry = this.state.queue.find((q) => q.id === qDoc.id);
-                    if (queueEntry) queueEntry.registrationComplete = true;
-                    console.log("[saveDriver] Marking queue entry", qDoc.id, "as registrationComplete=true");
-                }
-            });
-            if (updates.length === 0) {
-                console.log("[saveDriver] No queue entries with registrationComplete === false — nothing to update");
-            }
-            console.log("[saveDriver] Queued Firestore updates:", updates.length);
-            if (updates.length > 0) await Promise.all(updates);
+            const id = this.state.editDrvId;
+            await StaffDriverService.save(id, data);
 
             this.closeDrvModal();
             alert("Driver saved. Fleet Manager updated.");
@@ -4129,7 +4336,7 @@ class Dashboard {
             return;
 
         try {
-            await deleteDoc(doc(db, "drivers", id));
+            await StaffDriverService.remove(id);
             const toast = document.getElementById("toast");
             if (toast) {
                 toast.textContent = "Driver profile deleted.";
@@ -4146,8 +4353,7 @@ class Dashboard {
         const tbody = document.getElementById("userTableBody");
         if (!tbody) return;
 
-        tbody.innerHTML =
-            '<tr><td colspan="5" class="text-center py-8 text-db-text3">Loading users...</td></tr>';
+        tbody.innerHTML = this._loadingTableRows(5, 4, "Loading users");
 
         const myUser = this.state.user;
         if (!myUser) return;
@@ -4210,10 +4416,11 @@ class Dashboard {
             this._usersSubs = null;
         }
 
-        this._usersSubs = onSnapshot(collection(db, "users"), (snap) => {
+        this._usersSubs = subscribeRealtime("users", {}, (rows) => {
             const users = [];
-            snap.forEach((docSnap) => {
-                users.push({ id: docSnap.id, ...docSnap.data() });
+            asCollectionSnapshot(rows).forEach((docSnap) => {
+                const user = { id: docSnap.id, ...docSnap.data() };
+                if (user.deletionState !== "complete") users.push(user);
             });
             // Sort: Super Admins, Admins, Fleet Managers, QR Generator, Drivers, Pending
             const roleOrder = { super_admin: 1, admin: 2, fleet_manager: 3, qr_generator: 4, driver: 5, pending: 6 };
@@ -4240,6 +4447,8 @@ class Dashboard {
         const tbody = document.getElementById("userTableBody");
         if (!tbody) return;
 
+        const visibleUsers = users.filter((user) => user.deletionState !== "complete");
+
         const myUser = this.state.user;
         const isSuperAdmin = myUser?.role === "super_admin";
         const isAdmin = myUser?.role === "admin" || isSuperAdmin;
@@ -4248,7 +4457,7 @@ class Dashboard {
         const activeTab = this.state._activeUserTab || "employees";
 
         // Tab filter: Drivers only vs Employees/Executives (non-driver)
-        const tabFilteredUsers = users.filter((u) => {
+        const tabFilteredUsers = visibleUsers.filter((u) => {
             if (activeTab === "drivers") {
                 return u.role === "driver";
             } else {
@@ -4277,10 +4486,17 @@ class Dashboard {
 
         filtered.forEach((u) => {
             const docId = u.id;
+            const accountSuffix = docId.slice(-6);
+            const name = [u.name, u.displayName, u.fullName]
+                .map((value) => typeof value === "string" ? value.trim() : "")
+                .find((value) => value && value.toLowerCase() !== "user");
+            const email = typeof u.email === "string" ? u.email.trim() : "";
+            const userLabel = name || email || `Unnamed account · …${accountSuffix}`;
             const isPending = u.role === "pending" || u.status === "inactive";
+            const deletionPending = u.deletionState === "pending";
 
-            let roleSelectHtml = "";
-            if (isSuperAdmin && u.role !== "super_admin") {
+            let roleSelectHtml;
+            if (isSuperAdmin && u.role !== "super_admin" && !u.deletionState) {
                 roleSelectHtml = `
                 <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-[#1f2937] border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-[#60a5fa] transition-colors focus:ring-1 focus:ring-[#60a5fa]">
                   <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
@@ -4293,7 +4509,8 @@ class Dashboard {
                 isAdmin &&
                 !isSuperAdmin &&
                 u.role !== "super_admin" &&
-                u.role !== "admin"
+                u.role !== "admin" &&
+                !u.deletionState
             ) {
                 roleSelectHtml = `
                 <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-[#1f2937] border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-[#60a5fa] transition-colors focus:ring-1 focus:ring-[#60a5fa]">
@@ -4330,7 +4547,7 @@ class Dashboard {
             const statusBg = isPending
                 ? "rgba(251,191,36,0.1)"
                 : "rgba(74,222,128,0.1)";
-            const statusText = isPending ? "Pending" : "Active";
+            const statusText = deletionPending ? "Deletion in progress" : isPending ? "Pending" : "Active";
 
             const canDelete = isSuperAdmin && u.role !== "super_admin" && docId !== currentUserId;
 
@@ -4338,8 +4555,8 @@ class Dashboard {
             tr.className = "hover:bg-db-item-hover transition-colors";
             tr.innerHTML = `
               <td class="px-6 py-4 border-b border-db-border">
-                <div class="font-semibold text-db-text">${escapeHtml(u.name || "User")}</div>
-                <div class="text-[11px] text-db-text3">${escapeHtml(u.email || "")}</div>
+                <div class="font-semibold text-db-text">${escapeHtml(userLabel)}</div>
+                <div class="text-[11px] text-db-text3">${escapeHtml(email || `Account ID ending ${accountSuffix}`)}</div>
               </td>
               <td class="px-6 py-4 border-b border-db-border text-db-text2 text-sm">${escapeHtml(u.position || "—")}</td>
               <td class="px-6 py-4 border-b border-db-border">${roleSelectHtml}</td>
@@ -4350,7 +4567,7 @@ class Dashboard {
                 </span>
               </td>
               <td class="px-6 py-4 border-b border-db-border text-right">
-                ${canDelete ? `<button data-action="delete-user" data-uid="${escapeHtml(docId)}" data-name="${escapeHtml(u.name || u.email || 'User')}" class="bg-[#f04444]/10 hover:bg-[#f04444]/20 border border-[#f04444]/20 text-[#f04444] px-3 py-1.5 rounded-lg text-xs cursor-pointer font-bold transition-colors">Delete Account</button>` : ""}
+                ${canDelete ? `<button data-action="delete-user" data-uid="${escapeHtml(docId)}" data-name="${escapeHtml(userLabel)}" class="bg-[#f04444]/10 hover:bg-[#f04444]/20 border border-[#f04444]/20 text-[#f04444] px-3 py-1.5 rounded-lg text-xs cursor-pointer font-bold transition-colors">${deletionPending ? "Retry Delete" : "Delete Account"}</button>` : ""}
               </td>`;
             tbody.appendChild(tr);
         });
@@ -4415,8 +4632,13 @@ class Dashboard {
     loadOverrideRequestsIntoContainer(container, filter) {
         if (!container) return;
 
-        container.innerHTML =
-            '<div class="flex items-center justify-center min-h-[200px] text-db-text3 italic text-sm">Loading...</div>';
+        container.innerHTML = `<div role="status" aria-label="Loading requests" class="space-y-3" aria-busy="true">
+            ${Array.from({length: 3}, () => `<div class="rounded-lg border border-db-border p-4 animate-pulse" aria-hidden="true">
+                <div class="h-4 w-1/3 rounded bg-db-item-hover mb-4"></div>
+                <div class="h-3 w-3/4 rounded bg-db-item-hover mb-2"></div>
+                <div class="h-3 w-1/2 rounded bg-db-item-hover"></div>
+            </div>`).join("")}
+        </div>`;
 
         // Set up Firestore listener for override requests
         // Dispose of any existing subscription to avoid conflicts
@@ -4426,15 +4648,12 @@ class Dashboard {
         }
 
         // Build query based on filter
-        let overrideReqQuery = collection(db, "override_requests");
         // Only apply status filter for actual status values
         const statusFilters = ["pending", "approved", "rejected", "expired", "completed"];
-        if (filter && statusFilters.includes(filter)) {
-            overrideReqQuery = query(collection(db, "override_requests"), where("status", "==", filter));
-        }
         // For guards and truck-companies filters, we show all requests (can be refined later)
 
-        this._overrideRequestsSubs = onSnapshot(overrideReqQuery, (snap) => {
+        this._overrideRequestsSubs = subscribeRealtime("legacyOverrideRequests", {status: statusFilters.includes(filter) ? filter : null}, (rows) => {
+            const snap = asCollectionSnapshot(rows);
             container.innerHTML = "";
             if (snap.empty) {
                 container.innerHTML =
@@ -4498,8 +4717,8 @@ class Dashboard {
                     errorData = await response.json();
                 } catch (e) {
                     if (response.status === 403)
-                        throw new Error("CORS or Permission Blocked (403)");
-                    throw new Error(`HTTP Error ${response.status}`);
+                        throw new Error("CORS or Permission Blocked (403)", {cause: e});
+                    throw new Error(`HTTP Error ${response.status}`, {cause: e});
                 }
                 throw new Error(errorData.message || "Failed to update role");
             }
@@ -4512,9 +4731,9 @@ class Dashboard {
     }
 
     groupByDispatch(shipments) {
-        const groups = {};
+        const groups = Object.create(null);
         for (const s of shipments) {
-            const key = (s.SAPDispatchNumber || "").trim() || s.TrId || "";
+            const key = typeof s?.SAPDispatchNumber === 'string' ? s.SAPDispatchNumber.trim() : '';
             if (!key) continue;
             if (!groups[key]) groups[key] = [];
             groups[key].push(s);
@@ -4522,13 +4741,58 @@ class Dashboard {
         return groups;
     }
 
+    async _loadSapDispatchDetails(dispatchKeys) {
+        const now = Date.now();
+        const keys = [...new Set(dispatchKeys)].filter(key => this.state.sapAssignments[key]
+            && !this._sapDispatchDetailsPending.has(key)
+            && now - (this._sapDispatchDetailsFetchedAt.get(key) || 0) >= 5 * 60 * 1000
+            && now >= (this._sapDispatchDetailsRetryAfter.get(key) || 0));
+        if (!keys.length) return;
+
+        const batches = [];
+        for (let index = 0; index < keys.length; index += 100) batches.push(keys.slice(index, index + 100));
+        await Promise.all(batches.map(async batch => {
+            batch.forEach(key => this._sapDispatchDetailsPending.add(key));
+            try {
+                const details = await SAPService.fetchDispatchDetails(batch);
+                for (const key of batch) {
+                    this.state.sapDispatchDetails[key] = Array.isArray(details?.[key]) ? details[key] : [];
+                    this._sapDispatchDetailsFetchedAt.set(key, Date.now());
+                    this._sapDispatchDetailsRetryAfter.delete(key);
+                }
+                this._rebuildShipmentGroups();
+                this._renderSapTable();
+            } catch (error) {
+                for (const key of batch) this._sapDispatchDetailsRetryAfter.set(key, Date.now() + 30_000);
+                console.warn('Assigned shipment details unavailable');
+            } finally {
+                batch.forEach(key => this._sapDispatchDetailsPending.delete(key));
+            }
+        }));
+    }
+
+    _rebuildShipmentGroups() {
+        this.state.sapGroupedByDispatch = mergeAssignmentGroups(
+            this.groupByDispatch(this.state.sapShipments), this.state.sapAssignments, this.state.sapDispatchDetails,
+        );
+    }
+
+    _refreshOpenDispatchDetail() {
+        const modal = document.getElementById('sapDispatchDetail');
+        if (!modal || modal.classList.contains('hidden') || !this._currentDispatchKey) return;
+        if (!this.state.sapGroupedByDispatch[this._currentDispatchKey]?.length) {
+            this.closeSapDispatchModal();
+            return;
+        }
+        this.openSapDispatchDetail(this._currentDispatchKey);
+    }
+
     openSapDispatchDetail(dispatchNumber) {
-        this._currentDispatchKey = dispatchNumber;
         this._currentDispatchKey = dispatchNumber;
         const group = this.state.sapGroupedByDispatch[dispatchNumber];
         if (!group || group.length === 0) return;
 
-        const rec = group[0];
+        const rec = group.find(row => row.Route || row.PlanningDate || row.Planning_Date || row.ActualDelDate) || group[0];
         const asgn = this.state.sapAssignments[dispatchNumber];
 
         const set = (id, val) => {
@@ -4537,7 +4801,7 @@ class Dashboard {
         };
 
         set("sapDtlDispatchNum", rec.SAPDispatchNumber || dispatchNumber);
-        set("sapDtlStatus", rec.PgiStatus || rec.CheckStatus || "—");
+        set("sapDtlStatus", assignmentDisplayStatus(asgn, rec));
         set("sapDtlDelivery", rec.Delivery || "—");
         set("sapDtlPlanDate", SAPService.parseDate(rec.PlanningDate));
         set("sapDtlActualDate", this._formatDelDateDisplay(rec.ActualDelDate));
@@ -4551,20 +4815,52 @@ class Dashboard {
         set("sapDtlShipStart", this._parseSAPTime(rec.ShipmentStart));
         set("sapDtlRemarks", rec.PlanningRemarks || "—");
 
-        // Build OBD line items table
+        // Build grouped Ship-To summaries while retaining every source OBD in its expandable detail.
         let totalAmount = 0, totalVolume = 0, totalWeight = 0, totalQty = 0;
         const linesTbody = document.getElementById("sapDtlOBDLines");
         if (linesTbody) {
-            linesTbody.innerHTML = group.map((r) => {
-                const amt = Number(r.Amount) || 0;
-                const vol = Number(r.Volume) || 0;
-                const wgt = Number(r.Weight) || 0;
-                const qty = Number(r.Quantity) || 0;
-                totalAmount += amt;
-                totalVolume += vol;
-                totalWeight += wgt;
-                totalQty += qty;
+            if (!linesTbody.dataset.obdGroupToggleBound) {
+                linesTbody.addEventListener('click', event => {
+                    const obdPreview = event.target.closest('[data-obd-number]');
+                    if (obdPreview && linesTbody.contains(obdPreview)) {
+                        let obdNumber;
+                        try { obdNumber = decodeURIComponent(obdPreview.dataset.obdNumber); } catch (_) { return; }
+                        this.openObdPodPreview(obdNumber);
+                        return;
+                    }
+                    const preview = event.target.closest('[data-obd-group-preview]');
+                    if (preview && linesTbody.contains(preview)) {
+                        const groupIndex = Number(preview.dataset.obdGroupPreview);
+                        if (Number.isInteger(groupIndex)) this.openObdPodGroupPreview(groupIndex);
+                        return;
+                    }
+                    const button = event.target.closest('[data-obd-group-toggle]');
+                    if (!button || !linesTbody.contains(button)) return;
+                    const details = document.getElementById(button.getAttribute('aria-controls'));
+                    if (!details) return;
+                    details.hidden = !details.hidden;
+                    button.setAttribute('aria-expanded', String(!details.hidden));
+                    const icon = button.querySelector('[aria-hidden="true"]');
+                    if (icon) icon.textContent = details.hidden ? 'v' : '^';
+                });
+                linesTbody.dataset.obdGroupToggleBound = 'true';
+            }
 
+            const metrics = row => ({
+                amount: Number(row.Amount) || 0,
+                volume: Number(row.Volume) || 0,
+                weight: Number(row.Weight) || 0,
+                quantity: Number(row.Quantity) || 0,
+            });
+            const formatAmount = amount => amount > 0 ? `PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : "\u2014";
+            const formatMeasure = value => value > 0 ? value.toFixed(3) : "\u2014";
+            const canPreviewObd = r => {
+                const podMatch = asgn?.lineItems?.find(li => li.obdNumber === r.OBDNumber);
+                return asgn && ['in_transit', 'completed', 'returning_to_base'].includes(asgn.tripStatus?.toLowerCase()) &&
+                    (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64);
+            };
+            const renderObdRow = (r, showPreview = true) => {
+                const amt = Number(r.Amount) || 0;
                 // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
                 const podMatch = asgn?.lineItems?.find(li => li.obdNumber === r.OBDNumber);
                 const asgnGuardSig = asgn?.guardSignatureBase64;
@@ -4578,20 +4874,64 @@ class Dashboard {
 
                 return `
                     <tr class="border-b border-db-border/50 hover:bg-db-item-hover/30 transition-colors">
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.OBDNumber || "—")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${amt > 0 ? `PHP ${amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : "—"}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${vol > 0 ? vol.toFixed(3) : "—"}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${wgt > 0 ? wgt.toFixed(3) : "—"}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text text-[11px] whitespace-nowrap tabular-nums">${qty > 0 ? qty.toFixed(3) : "—"}</td>
-                        <td class="py-2 pr-3 font-mono text-db-text text-[11px] text-center whitespace-nowrap">${escapeHtml(r.ShipToParty || "—")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "—")}</td>
-                        <td class="py-2 pr-3 text-db-text text-[11px] text-center break-words leading-snug">${escapeHtml(r.Address || "—")}</td>
-                        <td class="py-2 pr-3 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Latitude ? parseFloat(r.Latitude).toFixed(6) : "—"}</td>
-                        <td class="py-2 text-center font-mono text-db-text2 text-[11px] whitespace-nowrap tabular-nums">${r.Longitude ? parseFloat(r.Longitude).toFixed(6) : "—"}</td>
-                        <td class="py-2 text-center">
-                          ${asgn && (asgn?.tripStatus === 'in_transit' || asgn?.tripStatus === 'completed') && (podMatch?.podImageUrl || podMatch?.isPodCompleted || podMatch?.guardSignatureBase64 || asgn?.guardSignatureBase64) ? `<button onclick="window.dashboard.openObdPodPreview('${encodeURIComponent(r.OBDNumber)}')" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
+                        <td data-label="OBD Number" class="py-2 px-1 font-mono text-db-text text-[10px] text-center break-words">${escapeHtml(r.OBDNumber || "\u2014")}</td>
+                        <td data-label="Amount" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatAmount(amt)}</td>
+                        <td data-label="Volume (m³)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(Number(r.Volume) || 0)}</td>
+                        <td data-label="Weight (kg)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(Number(r.Weight) || 0)}</td>
+                        <td data-label="Quantity" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(Number(r.Quantity) || 0)}</td>
+                        <td data-label="Ship-To" class="py-2 px-1 font-mono text-db-text text-[10px] text-center break-words">${escapeHtml(r.ShipToParty || "\u2014")}</td>
+                        <td data-label="Customer Name" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(r.ShipToPartyName || "\u2014")}</td>
+                        <td data-label="Delivery Address" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(r.Address || "\u2014")}</td>
+                        <td data-label="Latitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(r.Latitude)}</td>
+                        <td data-label="Longitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(r.Longitude)}</td>
+                        <td data-label="POD Preview" class="py-2 px-1 text-center">
+                          ${showPreview && canPreviewObd(r) ? `<button type="button" data-obd-number="${escapeHtml(encodeURIComponent(r.OBDNumber || '').replaceAll("'", "%27"))}" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD">Preview</button>` : ''}
                         </td>
+                        <td data-label="Delivery Status" class="py-2 px-1 text-center text-db-text text-[10px]" data-pod-status>${obdDeliveryStatus(podMatch)}</td>
                     </tr>`;
+            };
+
+            const rowGroups = groupObdRowsByShipTo(group);
+            this._sapObdPreviewGroups = rowGroups;
+            linesTbody.innerHTML = rowGroups.map((rows, groupIndex) => {
+                for (const row of rows) {
+                    const values = metrics(row);
+                    totalAmount += values.amount;
+                    totalVolume += values.volume;
+                    totalWeight += values.weight;
+                    totalQty += values.quantity;
+                }
+                if (rows.length === 1) return renderObdRow(rows[0]);
+
+                const total = rows.reduce((sum, row) => {
+                    const values = metrics(row);
+                    return {
+                        amount: sum.amount + values.amount,
+                        volume: sum.volume + values.volume,
+                        weight: sum.weight + values.weight,
+                        quantity: sum.quantity + values.quantity,
+                    };
+                }, {amount: 0, volume: 0, weight: 0, quantity: 0});
+                const representative = rows[0];
+                const statuses = [...new Set(rows.map(row => obdDeliveryStatus(asgn?.lineItems?.find(li => li.obdNumber === row.OBDNumber))))];
+                const status = statuses.length === 1 ? statuses[0] : 'Mixed';
+                const detailsId = `sapObdGroupDetails-${groupIndex}`;
+                return `
+                    <tr class="border-b border-db-border/50 bg-db-panel/40">
+                        <td data-label="OBD Number" class="py-2 px-1 text-center"><button type="button" data-obd-group-toggle aria-expanded="false" aria-controls="${detailsId}" class="text-sysu-gold hover:text-white text-[10px] font-bold" aria-label="Show ${rows.length} OBD records">${rows.length} OBDs <span aria-hidden="true">v</span></button></td>
+                        <td data-label="Amount" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatAmount(total.amount)}</td>
+                        <td data-label="Volume (m³)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.volume)}</td>
+                        <td data-label="Weight (kg)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.weight)}</td>
+                        <td data-label="Quantity" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.quantity)}</td>
+                        <td data-label="Ship-To" class="py-2 px-1 font-mono text-db-text text-[10px] text-center break-words">${escapeHtml(representative.ShipToParty || "\u2014")}</td>
+                        <td data-label="Customer Name" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(representative.ShipToPartyName || "\u2014")}</td>
+                        <td data-label="Delivery Address" class="py-2 px-1 text-db-text text-[10px] text-center break-words leading-snug">${escapeHtml(representative.Address || "\u2014")}</td>
+                        <td data-label="Latitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(representative.Latitude)}</td>
+                        <td data-label="Longitude" class="py-2 px-1 text-center font-mono text-db-text2 text-[10px] break-words tabular-nums">${formatCoordinate(representative.Longitude)}</td>
+                        <td data-label="POD Preview" class="py-2 px-1 text-center">${rows.some(canPreviewObd) ? `<button type="button" data-obd-group-preview="${groupIndex}" class="border border-sysu-gold/20 hover:border-sysu-gold/50 bg-sysu-gold/10 hover:bg-sysu-gold/20 text-sysu-gold px-2 py-1 rounded-md text-xs font-bold transition-colors" title="Preview POD for all ${rows.length} OBDs">Preview</button>` : '<span class="text-db-text3 text-[11px]">—</span>'}</td>
+                        <td data-label="Delivery Status" class="py-2 px-1 text-center text-db-text text-[10px] break-words" data-pod-status>${status}</td>
+                    </tr>
+                    <tr id="${detailsId}" hidden data-obd-group-details><td colspan="12" class="p-0"><table class="sap-obd-table w-full min-w-0"><tbody>${rows.map(row => renderObdRow(row, false)).join('')}</tbody></table></td></tr>`;
             }).join("");
         }
 
@@ -4624,29 +4964,59 @@ class Dashboard {
         }
     }
 
-    // POD preview for a specific OBD item
-    async openObdPodPreview(obdNumber) {
-        const key = this._currentDispatchKey;
-        if (!key) return;
-        // Look up pod data from the assignment's lineItems (Firebase), not from SAP records
-        const asgn = this.state.sapAssignments[key];
+    async _loadObdPodPreviewData(key, asgn, obdNumber) {
         const match = asgn?.lineItems?.find(li => li.obdNumber === obdNumber);
-
         let imageUrl = match?.podImageUrl;
-        // If image is stored in pod_images subcollection or empty, fetch it directly
+        let podRecord = null;
+        let groupPodId = match?.podGroupId || null;
         if (!imageUrl || imageUrl === 'saved_in_subcollection') {
             try {
                 const podDocSnap = await getDoc(doc(db, "sap_assignments", key, "pod_images", obdNumber));
                 if (podDocSnap.exists()) {
-                    imageUrl = podDocSnap.data()?.base64Image || podDocSnap.data()?.imageUrl || podDocSnap.data()?.podImageUrl;
+                    podRecord = podDocSnap.data();
+                    imageUrl = podRecord?.base64Image || podRecord?.imageUrl || podRecord?.podImageUrl;
+                    groupPodId = podRecord?.groupPodId || groupPodId;
+                }
+                if (!imageUrl && groupPodId) {
+                    const groupSnap = await getDoc(doc(db, "sap_assignments", key, "pod_groups", groupPodId));
+                    if (groupSnap.exists()) {
+                        const groupRecord = groupSnap.data();
+                        imageUrl = groupRecord?.base64Image || '';
+                        podRecord = {...podRecord, ...groupRecord};
+                    }
                 }
             } catch (err) {
                 console.warn('Failed to fetch pod image from subcollection:', err);
             }
         }
 
+        return {
+            obdNumber,
+            match,
+            imageUrl,
+            groupPodId,
+            capturedAt: match?.podCapturedAt || podRecord?.podCapturedAt || podRecord?.capturedAtMillis || null,
+            guardSignatureBase64: match?.guardSignatureBase64 || asgn?.guardSignatureBase64 || '',
+            deliveryStatus: obdDeliveryStatus(match),
+        };
+    }
+
+    // POD preview for a specific OBD item
+    async openObdPodPreview(obdNumber) {
+        const key = this._currentDispatchKey;
+        if (!key) return;
+        const asgn = this.state.sapAssignments[key];
+        const preview = await this._loadObdPodPreviewData(key, asgn, obdNumber);
+        const {match, imageUrl} = preview;
+
         const modal = document.getElementById('podPreviewModal');
         if (!modal) return;
+        const gallery = modal.querySelector('#podPreviewGallery');
+        const singleContent = modal.querySelector('#podPreviewSingleContent');
+        if (gallery) { gallery.hidden = true; gallery.replaceChildren(); }
+        if (singleContent) singleContent.hidden = false;
+        const title = modal.querySelector('#podPreviewTitle');
+        if (title) title.textContent = 'POD Preview';
         const imgEl = modal.querySelector('#podPreviewImg');
         const tsEl = modal.querySelector('#podTimestamp');
         const signatureContainer = modal.querySelector('#podPreviewSignature');
@@ -4694,19 +5064,14 @@ class Dashboard {
                 this._calculatePodMaxOffsets(imgEl);
             };
         }
-        if (tsEl) {
-            const captureDate = match.podCapturedAt?.toDate
-                ? match.podCapturedAt.toDate()
-                : new Date(match.podCapturedAt.seconds * 1000);
-            tsEl.textContent = captureDate.toLocaleString();
-        }
+        const captureTime = match?.podCapturedAt;
+        const captureDate = captureTime?.toDate ? captureTime.toDate()
+            : typeof captureTime?.seconds === 'number' ? new Date(captureTime.seconds * 1000)
+                : typeof captureTime === 'number' ? new Date(captureTime) : null;
+        const captureText = captureDate && Number.isFinite(captureDate.getTime()) ? captureDate.toLocaleString() : '—';
+        if (tsEl) tsEl.textContent = captureText;
         const verifiedEl = modal.querySelector('#podVerifiedTimestamp');
-        if (verifiedEl) {
-            const captureDate = match.podCapturedAt?.toDate
-                ? match.podCapturedAt.toDate()
-                : new Date(match.podCapturedAt.seconds * 1000);
-            verifiedEl.textContent = captureDate.toLocaleString();
-        }
+        if (verifiedEl) verifiedEl.textContent = captureText;
         // Handle signature button
         if (signatureContainer) {
             const guardSignatureBase64 = match?.guardSignatureBase64 || asgn?.guardSignatureBase64;
@@ -4752,6 +5117,113 @@ class Dashboard {
         this._addPodPreviewEventListeners(imgEl, modal);
     }
 
+    async openObdPodGroupPreview(groupIndex) {
+        const key = this._currentDispatchKey;
+        const group = this._sapObdPreviewGroups[groupIndex];
+        const asgn = key && this.state.sapAssignments[key];
+        if (!key || !asgn || !Array.isArray(group) || !group.length) return;
+
+        const previews = await Promise.all(group.map(row => this._loadObdPodPreviewData(key, asgn, row.OBDNumber)));
+        const modal = document.getElementById('podPreviewModal');
+        const gallery = modal?.querySelector('#podPreviewGallery');
+        const singleContent = modal?.querySelector('#podPreviewSingleContent');
+        if (!modal || !gallery || !singleContent) {
+            return this.openObdPodPreview(group[0].OBDNumber);
+        }
+
+        const groupedCaptures = [];
+        const captureIndexes = new Map();
+        for (const preview of previews) {
+            const captureKey = preview.groupPodId ? `group:${preview.groupPodId}` : preview.imageUrl ? `image:${preview.imageUrl}` : `obd:${preview.obdNumber}`;
+            let capture = captureIndexes.has(captureKey) ? groupedCaptures[captureIndexes.get(captureKey)] : null;
+            if (!capture) {
+                capture = {...preview, obdNumbers: []};
+                captureIndexes.set(captureKey, groupedCaptures.length);
+                groupedCaptures.push(capture);
+            }
+            capture.obdNumbers.push(preview.obdNumber);
+            if (!capture.imageUrl && preview.imageUrl) capture.imageUrl = preview.imageUrl;
+            if (!capture.capturedAt && preview.capturedAt) capture.capturedAt = preview.capturedAt;
+            if (preview.guardSignatureBase64 && !capture.guardSignatureBase64) capture.guardSignatureBase64 = preview.guardSignatureBase64;
+        }
+
+        const captureTime = capture => {
+            const value = capture.capturedAt;
+            if (typeof value?.toMillis === 'function') return value.toMillis();
+            if (typeof value?.seconds === 'number') return value.seconds * 1000;
+            const timestamp = typeof value === 'number' ? value : Date.parse(value);
+            return Number.isFinite(timestamp) ? timestamp : 0;
+        };
+        // Prefer a shared group capture; otherwise use the latest available legacy OBD capture.
+        const selectedCapture = groupedCaptures.filter(capture => capture.imageUrl)
+            .sort((left, right) => right.obdNumbers.length - left.obdNumbers.length || captureTime(right) - captureTime(left))[0] || null;
+
+        this._removePodPreviewEventListeners();
+        singleContent.hidden = true;
+        gallery.hidden = false;
+        gallery.replaceChildren();
+        const summary = document.createElement('p');
+        summary.className = 'mb-3 text-sm text-gray-600 dark:text-gray-300';
+        summary.textContent = `One delivery point · ${group.length} OBDs · ${selectedCapture ? '1 POD photo' : 'POD photo unavailable'}`;
+        gallery.append(summary);
+
+        const card = document.createElement('section');
+        card.className = 'rounded-lg border border-gray-200 dark:border-gray-700 p-3';
+        const heading = document.createElement('h3');
+        heading.className = 'mb-2 text-sm font-bold text-gray-800 dark:text-gray-100';
+        heading.textContent = `POD for delivery point · ${group.length} OBDs`;
+        card.append(heading);
+
+        const obdList = document.createElement('p');
+        obdList.className = 'mb-3 text-xs text-gray-600 dark:text-gray-300 break-words';
+        obdList.textContent = previews.map(item => `${item.obdNumber} · ${item.deliveryStatus}`).join(' | ');
+        card.append(obdList);
+
+        if (selectedCapture) {
+            const image = document.createElement('img');
+            image.src = selectedCapture.imageUrl;
+            image.alt = `POD for delivery point covering ${group.length} OBDs`;
+            image.className = 'mx-auto max-h-[60vh] w-auto rounded object-contain';
+            card.append(image);
+
+            if (selectedCapture.capturedAt) {
+                const timestamp = selectedCapture.capturedAt?.toDate ? selectedCapture.capturedAt.toDate()
+                    : typeof selectedCapture.capturedAt?.seconds === 'number' ? new Date(selectedCapture.capturedAt.seconds * 1000)
+                        : new Date(selectedCapture.capturedAt);
+                const timestampText = document.createElement('p');
+                timestampText.className = 'mt-2 text-xs text-gray-500 dark:text-gray-400';
+                timestampText.textContent = `Captured at: ${Number.isFinite(timestamp.getTime()) ? timestamp.toLocaleString() : '—'}`;
+                card.append(timestampText);
+            }
+        }
+
+        const signatureRows = previews.filter(item => item.guardSignatureBase64?.length > 50);
+        for (const item of signatureRows) {
+            const signatureButton = document.createElement('button');
+            signatureButton.type = 'button';
+            signatureButton.className = 'mt-2 mr-2 rounded border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm font-bold text-red-600';
+            signatureButton.textContent = `View ${item.obdNumber} Guard Signature`;
+            signatureButton.addEventListener('click', () => this.openGuardSigPreview(item.obdNumber));
+            card.append(signatureButton);
+        }
+        gallery.append(card);
+
+        const title = modal.querySelector('#podPreviewTitle');
+        if (title) title.textContent = `POD Preview · ${group.length} OBDs`;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+
+        if (this._globalEscapeListener) document.removeEventListener('keydown', this._globalEscapeListener);
+        this._globalEscapeListener = event => {
+            if (event.key === 'Escape') {
+                const guardModal = document.getElementById('guardPreviewModal');
+                if (guardModal?.classList.contains('flex')) this.closeGuardSigPreview();
+                else this.closePodPreview();
+            }
+        };
+        document.addEventListener('keydown', this._globalEscapeListener);
+    }
+
     closePodPreview() {
         const modal = document.getElementById('podPreviewModal');
         if (modal) {
@@ -4762,6 +5234,12 @@ class Dashboard {
             }
             modal.classList.add('hidden');
             modal.classList.remove('flex');
+            const gallery = modal.querySelector('#podPreviewGallery');
+            const singleContent = modal.querySelector('#podPreviewSingleContent');
+            if (gallery) { gallery.hidden = true; gallery.replaceChildren(); }
+            if (singleContent) singleContent.hidden = false;
+            const title = modal.querySelector('#podPreviewTitle');
+            if (title) title.textContent = 'POD Preview';
             // Remove event listeners when closing modal
             this._removePodPreviewEventListeners();
             // Cancel any ongoing animations
@@ -5139,7 +5617,7 @@ class Dashboard {
                 let date;
                 if (capturedTimestamp?.toDate) {
                     date = capturedTimestamp.toDate();
-                } else if (typeof capturedTimestamp === 'object' && capturedTimestamp !== null && capturedTimestamp.hasOwnProperty('seconds')) {
+                } else if (typeof capturedTimestamp === 'object' && capturedTimestamp !== null && Object.prototype.hasOwnProperty.call(capturedTimestamp, 'seconds')) {
                     // Firestore Timestamp
                     date = new Date(capturedTimestamp.seconds * 1000 + (capturedTimestamp.nanoseconds / 1000000));
                 } else {
@@ -5158,7 +5636,7 @@ class Dashboard {
                 let date;
                 if (verifiedTimestamp?.toDate) {
                     date = verifiedTimestamp.toDate();
-                } else if (typeof verifiedTimestamp === 'object' && verifiedTimestamp !== null && verifiedTimestamp.hasOwnProperty('seconds')) {
+                } else if (typeof verifiedTimestamp === 'object' && verifiedTimestamp !== null && Object.prototype.hasOwnProperty.call(verifiedTimestamp, 'seconds')) {
                     // Firestore Timestamp
                     date = new Date(verifiedTimestamp.seconds * 1000 + (verifiedTimestamp.nanoseconds / 1000000));
                 } else {
@@ -5323,64 +5801,72 @@ class Dashboard {
         };
 
         // â"€â"€ 1. Queue drivers eligible for FIRST assignment (not yet assigned) â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // isAssigned = false → driver not yet assigned any shipment → QUEUE tab.
-        // isAssigned = true  → driver already has a shipment → goes to ASSIGNED tab.
-        // QUEUE-INVALIDATION rule (per customer demo, 2026-08-11):
-        //   A queue entry is invalid the moment the same driver has ANY
-        //   sap_assignment — regardless of tripStatus. The queue is for
-        //   drivers who have never been assigned. Once a driver has been
-        //   assigned, their queue entry is dead and they move to the
-        //   Assigned tab. The dispatcher can then give them more
-        //   shipments via the Assigned tab (multi-shipment flow).
-        //
-        //   This handles the visible demo bug: a driver with `isAssigned:
-        //   false` on their queue entry but who already has a (completed)
-        //   sap_assignment was showing up in BOTH tabs. The queue entry's
-        //   `isAssigned` flag is stale — the driver app never updated it
-        //   when the previous shipment finished. Trusting the assignment
-        //   doc as the source of truth eliminates the double-count.
-        //
+        // Eligibility is scoped to the current QR queue session. A prior
+        // completed session must not hide a newly scanned waiting driver.
         // queue entries carry BOTH a doc id (`d.id`) and an Auth UID
         // (`d.driverId`). The driverId is the canonical key the rest of the
         // system uses to refer to a driver (see commit 8472e4d).
         const assignments = this.state.sapAssignments;
-        const ACTIVE_TRIP_STATUSES = new Set(["loading", "loaded", "in_transit", "completed"]);
+        const PRE_TRANSIT_ASSIGNABLE_STATUSES = new Set(["assigned", "loading", "loaded", "fully_loaded"]);
+        const ACTIVE_TRIP_STATUSES = new Set(["in_transit", "returning_to_base"]);
+        const COMPLETED_TRIP_STATUSES = new Set(["completed", "complete"]);
+        const assignmentsByDriver = new Map();
         const activeDriverIds = new Set();
-        // Set of driverIds that have ANY sap_assignment (any status).
-        // Queue entries for these drivers are invalid.
-        const assignedDriverIds = new Set();
         for (const asgn of Object.values(assignments)) {
             if (!asgn || !asgn.driverId) continue;
-            assignedDriverIds.add(asgn.driverId);
             const status = ((asgn.tripStatus || "").toLowerCase()).trim();
-            if (ACTIVE_TRIP_STATUSES.has(status)) {
-                activeDriverIds.add(asgn.driverId);
-            }
+            const driverAssignments = assignmentsByDriver.get(asgn.driverId) || [];
+            driverAssignments.push({...asgn, _status: status});
+            assignmentsByDriver.set(asgn.driverId, driverAssignments);
+            if (ACTIVE_TRIP_STATUSES.has(status)) activeDriverIds.add(asgn.driverId);
         }
-        const queueDrivers = this.state.queue.filter(
-            (d) => !d.isAssigned && d.status !== "completed" && d.status !== "complete" && truckMatch(d)
-        ).filter(
-            // Drop queue entries whose driver has any sap_assignment at all.
-            // The dispatcher must use the Assigned tab to give that driver
-            // another shipment.
-            (d) => !assignedDriverIds.has(d.driverId || d.id)
-        );
+        const queueStatus = (d) => ((d.status || "").toLowerCase()).trim();
+        const queueHasDispatch = (queueEntry, dispatchKey) =>
+            queueEntry.assignedShipment === dispatchKey
+            || (Array.isArray(queueEntry.assignedShipments)
+                && queueEntry.assignedShipments.some((item) =>
+                    (typeof item === "string" ? item : item?.dispatchKey) === dispatchKey
+                ));
+        const queueDrivers = this.state.queue.filter((d) => {
+            const status = queueStatus(d);
+            const driverId = d.driverId || d.id;
+            const driverHistory = assignmentsByDriver.get(driverId) || [];
+            const currentSession = driverHistory.filter((asgn) => asgn.queueId === d.id);
+            const anotherOpenSession = driverHistory.some((asgn) =>
+                asgn.queueId !== d.id
+                && (PRE_TRANSIT_ASSIGNABLE_STATUSES.has(asgn._status) || ACTIVE_TRIP_STATUSES.has(asgn._status))
+            );
+
+            return !d.isAssigned
+                && d.registrationComplete !== false
+                && ["waiting", "available"].includes(status)
+                && currentSession.length === 0
+                && !activeDriverIds.has(driverId)
+                && !anotherOpenSession
+                && truckMatch(d);
+        });
 
         // â"€â"€ 2. Build assigned-driver records from sap_assignments —"â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        // One record per driverId —" merges multiple assignments for the same driver.
-        // FIFO rule:
-        //   —¢ Prefers queueEntry.entryTime (exact check-in time) whenever available.
-        //   —¢ For drivers no longer in queue (e.g. queue status = complete): uses the
-        //     EARLIEST assignedAt across ALL their dispatches as proxy for check-in order.
+        // One record per driverId, tied to its eligible QR queue session.
+        // Completed history cannot create an Assigned row by itself.
+        // FIFO uses the current queue entry's check-in time.
         // Fullness: a driver with driverDeclaredFull: true in ANY assignment is flagged full.
         // (Reuses `assignments` declared above for the queue-invalidation set.)
         const driverAssignments = {}; // driverId → merged driver record
 
         for (const [dispatchKey, asgn] of Object.entries(assignments)) {
-            const dId = asgn.driverId;
+            const dId = asgn?.driverId;
             if (!dId) continue;
+            const assignmentStatus = ((asgn.tripStatus || "").toLowerCase()).trim();
+            if (!PRE_TRANSIT_ASSIGNABLE_STATUSES.has(assignmentStatus)) continue;
+            const queueEntry = this.state.queue.find((q) =>
+                (q.driverId || q.id) === dId
+                && q.registrationComplete !== false
+                && ["waiting", "available", "assigned", "loading", "loaded", "fully_loaded"].includes(queueStatus(q))
+                && (asgn.queueId === q.id || (!asgn.queueId && q.isAssigned === true && queueHasDispatch(q, dispatchKey)))
+            );
+            if (!queueEntry) continue;
             const driver = this.state.drivers.find((drv) => drv.id === dId) || {};
-            const queueEntry = this.state.queue.find((q) => q.id === dId);
             // Truck type can live on the queue entry, the drivers doc,
             // OR the most recent sap_assignments doc (which the server
             // writes when a driver is assigned — see controller line
@@ -5410,11 +5896,16 @@ class Dashboard {
                     truckType: driverTruckType,
                     truckCompany: asgn.truckCompany || queueEntry?.truckCompany || driver?.truckingCompany || driver?.company || "—",
                     entryTime: queueEntry?.entryTime || asgn.assignedAt || null,
+                    driverId: dId,
+                    isFull: queueEntry.isFull === true,
+                    _queueId: queueEntry.id,
+                    _queueIds: new Set([queueEntry.id]),
                     _fromAssignment: true,
                     _latestAssignment: dispatchKey,
                     _driverDeclaredFull: !!asgn.driverDeclaredFull,
                 };
             } else {
+                driverAssignments[dId]._queueIds.add(queueEntry.id);
                 // Already seen —" update FIFO key to whichever is earlier
                 if (!queueEntry?.entryTime && asgn.assignedAt) {
                     const existingTime = driverAssignments[dId].entryTime;
@@ -5432,29 +5923,22 @@ class Dashboard {
                 if (asgn.driverDeclaredFull === true) {
                     driverAssignments[dId]._driverDeclaredFull = true;
                 }
+                if (queueEntry.isFull === true) driverAssignments[dId].isFull = true;
             }
         }
 
-        // Active tripStatuses block a driver from taking another dispatch.
-        // "assigned" → driver has not started loading yet — STILL ELIGIBLE for multi-shipment
-        // "loading"  → driver is at the warehouse
-        // "loaded"   → ready to depart (this is the actual stored value in
-        //              Firestore; the spec called it "fully_loaded" but the
-        //              field has historically been set as "loaded" when
-        //              guard verification completes and PODs are uploaded)
-        // "in_transit" → en route
-        // Only "completed" frees the driver up again.
+        // A driver may take multiple dispatches in the same queue session until
+        // the first shipment starts in_transit. Returning to base remains busy.
+        // A new QR scan creates a new queue session; completed history from an
+        // older session must not turn that new queue entry into an Assigned row.
         //
-        // IMPORTANT: "assigned" must NOT be in this set. Multi-shipment requires
-        // that a driver with an existing assignment in "assigned" state (not
-        // yet loading) can still receive a new dispatch. Once the assignment
-        // transitions to loading/loaded/in_transit, the driver is BUSY and
-        // cannot take another dispatch.
+        // Pre-transit states stay eligible for more dispatches in this session.
+        // The active set contains only in_transit and returning_to_base.
         //
         // We reuse the precomputed `activeDriverIds` Set (built above for the
         // queue-invalidation filter). O(1) lookup per assigned driver.
         const assignedDrivers = Object.values(driverAssignments)
-            .filter((d) => truckMatch(d))
+            .filter((d) => d._queueIds.size === 1 && truckMatch(d))
             .map((d) => {
                 // Collect every tripStatus this driver currently has across
                 // their assignments.
@@ -5462,9 +5946,23 @@ class Dashboard {
                     (asgn) => asgn.driverId === d.id
                 );
                 const tripStatuses = driverAssignmentsList.map(
-                    (asgn) => ((asgn.tripStatus || "<none>").toLowerCase()).trim()
+                    (asgn) => ((asgn.tripStatus || "").toLowerCase()).trim()
                 );
-                const hasActiveLoad = activeDriverIds.has(d.id);
+                const queueEntry = this.state.queue.find((q) => q.id === d._queueId);
+                const queueTripStatus = queueStatus(queueEntry || {});
+                const hasActiveLoad = activeDriverIds.has(d.id) || ACTIVE_TRIP_STATUSES.has(queueTripStatus);
+                const currentSessionAssignments = Object.entries(assignments)
+                    .filter(([dispatchKey, asgn]) => asgn?.driverId === d.id
+                        && (asgn.queueId === queueEntry.id
+                            || (!asgn.queueId && queueEntry.isAssigned === true && queueHasDispatch(queueEntry, dispatchKey))))
+                    .map(([, asgn]) => asgn);
+                const hasSelectableAssignment = currentSessionAssignments.some((asgn) =>
+                    PRE_TRANSIT_ASSIGNABLE_STATUSES.has(((asgn.tripStatus || "").toLowerCase()).trim())
+                );
+                const sessionCompleted = currentSessionAssignments.length > 0
+                    && currentSessionAssignments.every((asgn) =>
+                        COMPLETED_TRIP_STATUSES.has(((asgn.tripStatus || "").toLowerCase()).trim())
+                    );
                 if (window.__SYSU_DEBUG_MULTISHIP__) {
                     console.log(
                         "[multiShip] driver:", d.id, d.driverName,
@@ -5472,30 +5970,25 @@ class Dashboard {
                         "hasActiveLoad:", hasActiveLoad,
                     );
                 }
-                return { ...d, _hasActiveLoad: hasActiveLoad };
+                return { ...d, _hasActiveLoad: hasActiveLoad, _sessionCompleted: sessionCompleted, _hasSelectableAssignment: hasSelectableAssignment };
             });
 
-        // Drivers on an active load cannot take another dispatch — they
-        // still appear in the modal (under the Assigned tab) so the
-        // dispatcher can see WHY they're not selectable, but they are
-        // marked busy and the row is non-clickable.
-        const busyDrivers = assignedDrivers.filter((d) => d._hasActiveLoad);
-        const availableAssigned = assignedDrivers.filter((d) => !d._hasActiveLoad)
-            .filter((d) => {
-                const queueEntry = this.state.queue.find((q) => q.id === d.id);
-                if (queueEntry) return queueEntry.status !== "completed";
-                // Driver not in queue — if they have no active load (already
-                // filtered above), they ARE eligible.
-                return true;
-            });
+        // Pre-transit assignments in the current queue session remain selectable.
+        const availableAssigned = assignedDrivers.filter((d) => {
+            const queueEntry = this.state.queue.find((q) => q.id === d._queueId);
+            const queueEntryIsUnassigned = queueEntry
+                && !queueEntry.isAssigned
+                && ["waiting", "available"].includes(queueStatus(queueEntry));
+            return !d._hasActiveLoad
+                && !d._sessionCompleted
+                && d._hasSelectableAssignment
+                && !queueEntryIsUnassigned;
+        });
 
         // â"€â"€ 3. Merge —" queue first, then assigned-only drivers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         // ── 3. Merge — queue first, then assigned drivers (busy drivers DROPPED) ──
-        // Per updated product rule: a driver with ANY active load
-        // (loading / loaded / in_transit) is removed from the modal
-        // entirely. Their queue role has been fulfilled — they cannot take
-        // another dispatch until the active load completes. The server
-        // (sapAssignmentController) enforces the same DRIVER_ON_ACTIVE_LOAD
+        // Once a driver is in transit or returning to base, they are removed
+        // from the modal. The server enforces the same DRIVER_ON_ACTIVE_LOAD
         // gate, so the modal must mirror that to keep UI and server in sync.
         const queuedIds = new Set(queueDrivers.map((d) => d.id));
         const extraAssigned = availableAssigned.filter((d) => !queuedIds.has(d.id));
@@ -5518,15 +6011,17 @@ class Dashboard {
                 if (match) phone = match.phone || "";
             }
             // Look up isFull from driver doc —" queue entries don't have it directly
-            const drv = this.state.drivers.find((x) =>
+            const drv = this.state.drivers.find((x) => x.id === (d.driverId || d.id)) || this.state.drivers.find((x) =>
                 (x.name || "").toLowerCase().trim() === (d.driverName || "").toLowerCase().trim()
             );
-            const isFull = drv?.isFull === true || d.isFull === true;
+            const isFull = drv?.isFull === true || d.isFull === true || d._driverDeclaredFull === true;
             return {
                 ...d,
+                id: d._queueId || d.id,
+                driverName: queueDriverDisplayName(d, this.state.drivers),
                 _lookupPhone: phone,
                 _isFull: isFull,
-                _fromAssignment: assignedDriverIds.has(d.driverId || d.id)
+                _fromAssignment: !!d._queueId
             };
         });
     }
@@ -5655,10 +6150,7 @@ class Dashboard {
                     </div>
                 </div>
             `}).join("") + assignedRows.map((d) => {
-                    // Drivers on an active load (loading/loaded/in_transit) cannot
-                    // take another dispatch — they appear in the Assigned tab so
-                    // the dispatcher can see why they're unavailable, but the row
-                    // is locked and shows a BUSY badge.
+                    // Active-route drivers are filtered out before this list is rendered.
                     const isAssignedEarliest = d.id === assignedEarliestId;
                     return `
                 <div class="driver-row p-4 border-b border-db-border cursor-pointer hover:bg-db-item-hover transition-colors flex items-center justify-between"
@@ -5681,7 +6173,7 @@ class Dashboard {
                         <div class="text-[10px] text-db-text3 font-mono text-right">
                             ${d.entryTime ? new Date(d.entryTime.toDate()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
                         </div>
-                        <span class="text-[9px] text-db-accent opacity-60 font-mono">âœ" assigned</span>
+                        <span class="text-[9px] text-db-accent opacity-60 font-mono">Assigned</span>
                     </div>
                 </div>
                 `;
@@ -6024,8 +6516,8 @@ class Dashboard {
                         obdNumber: r.OBDNumber,
                         quantity: qtyStr,
                         quantityNumeric: parseFloat(qtyStr) || 0,
-                        volume: parseFloat(r.Volume) || 0,
                         customerName: r.ShipToPartyName || r.ShipToParty || "",
+                        ...driverAssignmentFields(r),
                         actualDelDate: this._normalizeDelDate(r.ActualDelDate),
                     };
                 });
@@ -6094,7 +6586,10 @@ class Dashboard {
                     this._showAssignBanner("Driver is no longer in the queue. Refresh and try again.");
                 },
                 DRIVER_ON_ACTIVE_LOAD: () => {
-                    this._showAssignBanner("Driver is already on an active load. They cannot take another dispatch until it completes.");
+                    this._showAssignBanner("Driver is in transit or returning to base and cannot take another dispatch.");
+                },
+                DRIVER_SESSION_AMBIGUOUS: () => {
+                    this._showAssignBanner("This driver has multiple active QR sessions. Refresh the queue and select the correct entry.");
                 },
                 DISPATCH_TAKEN: () => {
                     this._showAssignBanner("Another dispatcher assigned this dispatch. The list will refresh.");
@@ -6249,15 +6744,15 @@ class Dashboard {
         // bundler re-binds module instances per import. A dynamic require()
         // here would resolve to a different onSnapshot reference and the
         // snapshot would never deliver updates to this dashboard instance.
-        const ovrQ = query(collection(db, "overrideRequests"), orderBy("requestedAt", "desc"), limit(50));
-        const canQ = query(collection(db, "cancelRequests"), orderBy("requestedAt", "desc"), limit(50));
         this._adminQueueSubs = {};
-        this._adminQueueSubs.override = onSnapshot(ovrQ, (snap) => {
+        this._adminQueueSubs.override = subscribeRealtime("overrideRequests", {}, (rows) => {
+            const snap = asCollectionSnapshot(rows);
             console.log("[adminQueue] overrideRequests snapshot, size:", snap.size);
             this._mergeAdminRequests("override", snap);
             this._syncOverrideApprovalFromSnapshot(snap);
         }, (err) => console.error("[adminQueue] overrideRequests:", err));
-        this._adminQueueSubs.cancel = onSnapshot(canQ, (snap) => {
+        this._adminQueueSubs.cancel = subscribeRealtime("cancelRequests", {}, (rows) => {
+            const snap = asCollectionSnapshot(rows);
             console.log("[adminQueue] cancelRequests snapshot, size:", snap.size);
             this._mergeAdminRequests("cancel", snap);
         }, (err) => console.error("[adminQueue] cancelRequests:", err));
@@ -6846,6 +7341,14 @@ class Dashboard {
     renderOrders() {
         const body = document.getElementById("ordersBody");
         if (!body) return;
+        if (this.state.assignmentsLoading) {
+            body.innerHTML = this._loadingCards("Loading assignments");
+            return;
+        }
+        if (this.state.assignmentsLoadError) {
+            body.innerHTML = '<p class="text-sm text-sysu-red">Assignments unavailable.</p>';
+            return;
+        }
 
         const assignments = this.state.sapAssignments;
         const grouped = this.state.sapGroupedByDispatch;
@@ -7233,6 +7736,8 @@ class Dashboard {
             const ROW_STRIPE = "EBF5FB"; // light blue (zebra)
             const ROW_PLAIN = "FFFFFF";
             const BORDER_COLOR = "A9CCE3";
+            const STATUS_OK = "117A65";
+            const STATUS_ERR = "C0392B";
 
             const COL_WIDTHS = [24, 14, 22, 14, 14, 20];
             ws["!cols"] = COL_KEYS.map((_, i) => ({ wch: COL_WIDTHS[i] || 12 }));
@@ -7371,6 +7876,11 @@ class Dashboard {
     }
 
     _formatElapsed(date) {
+        if (!date) return "just now";
+        if (typeof date.toDate === 'function') date = date.toDate();
+        else if (typeof date.seconds === 'number') date = new Date(date.seconds * 1000);
+        else if (!(date instanceof Date)) date = new Date(date);
+        if (!Number.isFinite(date.getTime())) return "just now";
         const mins = Math.floor((Date.now() - date.getTime()) / 60000);
         if (mins < 1) return "just now";
         if (mins < 60) return `${mins}m ago`;
@@ -7387,3 +7897,4 @@ document.addEventListener("DOMContentLoaded", () => {
     window.dashboard = new Dashboard();
     window.dashboard.init();
 });
+

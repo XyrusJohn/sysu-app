@@ -8,23 +8,8 @@ const rateLimit = require("express-rate-limit");
 require("node-cron");
 
 dotenv.config();
-
-// ── Strict env var parsing — reject malformed values instead of auto-repair ──
-const rawPort = process.env.PORT;
-if (!rawPort || !/^\d+$/.test(rawPort)) {
-    if (rawPort) console.error(`[server] Invalid PORT env: "${rawPort}". Defaulting to 8080.`);
-    process.env.PORT = "8080";
-}
-const port = parseInt(process.env.PORT, 10);
-
-// TRUST_PROXY: must be "0", "1", or a valid IP address — no silent override
-const rawTrustProxy = process.env.TRUST_PROXY;
-const validProxyValues = ["0", "1"];
-const IP_RE = /^\d+\.\d+\.\d+\.\d+$/;
-if (!validProxyValues.includes(rawTrustProxy) && !IP_RE.test(rawTrustProxy || "")) {
-    if (rawTrustProxy) console.error(`[server] Invalid TRUST_PROXY env: "${rawTrustProxy}". Defaulting to 0.`);
-    process.env.TRUST_PROXY = "0"; // safe default — no IP spoofing
-}
+const runtimeConfig = require("./config/runtime").loadRuntimeConfig(process.env);
+const port = runtimeConfig.port;
 
 initializeFirebase();
 
@@ -41,69 +26,56 @@ const { startCleanupScheduler: startIncidentCleanup } = require("./utils/inciden
 
 const app = express();
 app.use(helmet({contentSecurityPolicy: false}));
+// Health probes bypass office/API traffic quotas and never disclose credentials.
+app.use('/health', require('./routes/healthRoute')({
+    probe: () => admin.firestore().doc('_health/readiness').get(),
+    version: (process.env.RELEASE_VERSION || require('../package.json').version).slice(0, 128),
+    timeoutMs: runtimeConfig.readinessTimeoutMs,
+}));
 
 // ── Global Middleware ──
 const { errorHandler } = require("./middleware/errorHandler");
 
 // ── Rate limiting ──
-app.set("trust proxy", parseInt(process.env.TRUST_PROXY, 10));
+app.set("trust proxy", runtimeConfig.trustProxy);
 
+const allowedOrigins = runtimeConfig.allowedOrigins;
+app.use(require("./middleware/corsPolicy")(allowedOrigins));
 
 const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 200,
+    windowMs: runtimeConfig.rateWindowMs,
+    max: runtimeConfig.globalLimit,
     standardHeaders: true,
     legacyHeaders: false,
 });
 const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 20,
+    windowMs: runtimeConfig.rateWindowMs,
+    max: runtimeConfig.authLimit,
     standardHeaders: true,
     legacyHeaders: false,
 });
 
 const adminLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 300,
+    windowMs: runtimeConfig.rateWindowMs,
+    max: runtimeConfig.adminLimit,
     standardHeaders: true,
     legacyHeaders: false,
 });
 
-app.use(globalLimiter);
+// Frequent kiosk reads share a bounded quota without exhausting other API requests.
+const queueReadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use((req, res, next) => {
+    const isQueueRead = req.method === "GET" &&
+        ["/api/qr/queue-display", "/api/qr/queue-cards"].includes(req.path);
+    return (isQueueRead ? queueReadLimiter : globalLimiter)(req, res, next);
+});
 app.use("/api/auth", authLimiter);
 app.use("/api/users", adminLimiter);
-
-const allowedOrigins = [
-    "https://sysu-web-5a25d.web.app",
-    "https://sysu-web-5a25d.firebaseapp.com",
-    "https://sysu-app-production.up.railway.app",
-    "http://localhost:5173",
-    "http://localhost:5174",
-];
-
-app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    const isAllowed = origin && allowedOrigins.includes(origin);
-
-    // OPTIONS requests must also pass origin check
-    if (req.method === "OPTIONS") {
-        if (isAllowed) {
-            res.setHeader("Access-Control-Allow-Origin", origin);
-            res.setHeader("Access-Control-Allow-Credentials", "true");
-            res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE, PATCH");
-            res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-        }
-        return res.status(204).end();
-    }
-
-    if (isAllowed) {
-        res.setHeader("Access-Control-Allow-Origin", origin);
-        res.setHeader("Access-Control-Allow-Credentials", "true");
-    }
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE, PATCH");
-    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-    next();
-});
 
 app.use(express.json({limit: "10kb"}));
 app.use("/api/auth", authRoutes);
@@ -131,6 +103,27 @@ const io = new Server(server, {
 const qrNs = io.of("/qr");
 qrNs.on("connection", () => {
     // Public — no auth needed. qr-generator.html listens here for qr_token_used events.
+});
+
+// Profiles use a separate namespace so pending users can read only their own
+// profile without weakening the active-role checks on the application socket.
+const profileNs = io.of("/profile");
+if (typeof profileNs.use === "function") profileNs.use(async (socket, next) => {
+    try {
+        const token = socket.handshake.auth?.token;
+        if (typeof token !== "string") return next(new Error("Unauthorized"));
+        const decoded = await admin.auth().verifyIdToken(token, true);
+        socket.data.uid = decoded.uid;
+        next();
+    } catch {
+        next(new Error("Unauthorized"));
+    }
+});
+if (typeof profileNs.on === "function") profileNs.on("connection", (socket) => {
+    require("./services/realtimeSubscriptions")
+        .createProfileRealtimeSubscriptions({db: admin.firestore()})(socket);
+    require("./services/socketSession").watchSocketSession(socket, socket.handshake.auth.token,
+        token => admin.auth().verifyIdToken(token, true), {setTimeout, clearTimeout});
 });
 
 /* ── io exported so controllers can emit events ── */
@@ -166,15 +159,45 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-io.on("connection", async (socket) => {
+io.use(async (socket, next) => {
     try {
         const token = socket.handshake.auth?.token;
-        if (!token) return socket.disconnect("No token");
-        const decoded = await require("firebase-admin").auth().verifyIdToken(token);
+        if (!token || typeof token !== 'string') return next(new Error('Unauthorized'));
+        const decoded = await require("firebase-admin").auth().verifyIdToken(token, true);
         socket.data.uid = decoded.uid;
+        const profile = await admin.firestore().collection('users').doc(decoded.uid).get();
+        const userData = profile.data();
+        if (!profile.exists || !userData || userData.status !== 'active'
+            || !['driver', 'fleet_manager', 'admin', 'super_admin', 'viewer', 'qr_generator'].includes(userData.role)) {
+            return next(new Error('Unauthorized'));
+        }
+        socket.data.role = userData.role;
+        socket.data.expiresAt = decoded.exp * 1000;
+        next();
     } catch {
-        return socket.disconnect("Invalid token");
+        next(new Error('Unauthorized'));
     }
+});
+
+io.on("connection", async (socket) => {
+    require('./services/realtimeSubscriptions')
+        .createRealtimeSubscriptions({db: admin.firestore()})(socket);
+    require('./services/socketSession').watchSocketSession(socket, socket.handshake.auth.token,
+        token => admin.auth().verifyIdToken(token, true), {setTimeout, clearTimeout});
+    socket.join(`user:${socket.data.uid}`);
+    if (['fleet_manager', 'admin', 'super_admin'].includes(socket.data.role)) socket.join('dispatchers');
+    if (['admin', 'super_admin'].includes(socket.data.role)) socket.join('role-reviewers');
+    const expiryTimer = setTimeout(() => socket.disconnect(true), Math.max(0, socket.data.expiresAt - Date.now()));
+    expiryTimer.unref?.();
+    const stopProfile = admin.firestore().collection('users').doc(socket.data.uid).onSnapshot(snapshot => {
+        const data = snapshot.data();
+        if (!snapshot.exists || !data || data.status !== 'active'
+            || data.role !== socket.data.role) socket.disconnect(true);
+    }, () => socket.disconnect(true));
+    socket.once('disconnect', () => {
+        clearTimeout(expiryTimer);
+        stopProfile();
+    });
 
     // ── Get current warehouse base setting ──
     socket.on("get_warehouse_base", async (ack) => {
@@ -226,7 +249,7 @@ io.on("connection", async (socket) => {
     socket.on("get_role_requests", async (params, ack) => {
         try {
             const status = (typeof params === "string" ? params : params?.status) || "all";
-            const requests = await getRoleRequests(status);
+            const requests = await getRoleRequests(status, socket.data.uid);
             if (typeof ack === "function") ack({success: true, data: requests});
             else socket.emit("role_requests_data", requests);
         } catch (err) {
@@ -293,39 +316,30 @@ io.on("connection", async (socket) => {
     // ── Driver Full Capacity Toggle via Socket.IO ──
     socket.on("driver_is_full", async (data) => {
         try {
+            if (socket.data.role !== 'driver' || !data || typeof data.isFull !== 'boolean'
+                || (data.driverId && data.driverId !== socket.data.uid)) return;
             const driverId = data?.driverId || socket.data.uid;
             const isFull = Boolean(data?.isFull);
-            console.log(`[driver_is_full] Driver ${driverId} capacity updated: isFull=${isFull}`);
-
-            // Update active queue doc for this driver
-            const queueSnap = await admin.firestore().collection("queue")
-                .where("driverId", "==", driverId)
-                .where("status", "in", ["waiting", "called", "assigned", "loading"])
-                .limit(1)
-                .get();
-
-            if (!queueSnap.empty) {
-                await queueSnap.docs[0].ref.update({
-                    isFull,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-            }
+            const {updateDriverCapacity} = require('./services/driverCapacity');
+            await updateDriverCapacity(driverId, isFull);
 
             // Broadcast to dispatchers
-            io.emit("driver_capacity_updated", {driverId, isFull});
+            io.to('dispatchers').emit("driver_capacity_updated", {driverId, isFull});
         } catch (err) {
-            console.error("[driver_is_full] error:", err.message);
+            console.error(JSON.stringify({event:'capacity_update_failed', statusCode:err.statusCode || 500}));
         }
     });
 
     socket.on("driver_moving", (data) => {
-        console.log("[driver_moving] ★ RECEIVED from socket:", JSON.stringify(data));
+        if (socket.data.role !== 'driver' || !data || data.driverId !== socket.data.uid
+            || !Number.isFinite(data.lat) || !Number.isFinite(data.lng)
+            || Math.abs(data.lat) > 90 || Math.abs(data.lng) > 180) return;
         if (data.driverId !== socket.data.uid) {
             console.warn("[driver_moving] ✗ REJECTED — driverId mismatch:", data.driverId, "!=", socket.data.uid);
             return;
         }
-        console.log("[driver_moving] ✓ broadcasting update_admin_map to all clients");
-        io.emit("update_admin_map", data);
+        io.to('dispatchers').emit("update_admin_map", {driverId: socket.data.uid, lat: data.lat, lng: data.lng,
+            timestamp: Number.isFinite(data.timestamp) ? data.timestamp : Date.now()});
 
         // ── Persist lastLocation to sap_assignments so the dispatcher can
         //    render the marker even when the driver app has just reconnected
@@ -333,7 +347,7 @@ io.on("connection", async (socket) => {
         //    this driver (in_transit / loaded / loading) and write
         //    {lat, lng, at}.
         const {lat, lng} = data;
-        if (typeof lat !== "number" || typeof lng !== "number" || lat === 0 || lng === 0) {
+        if (typeof lat !== "number" || typeof lng !== "number") {
             console.log("[driver_moving] (skip persist: invalid coords)");
             return;
         }
@@ -341,7 +355,8 @@ io.on("connection", async (socket) => {
         // Smart Movement Check: Throttle Firestore write to once every 10 mins AND >=100m moved
         const now = Date.now();
         const lastRecord = lastDriverLocationPersist.get(data.driverId);
-        if (lastRecord) {
+        if (lastRecord?.inFlight || (lastRecord?.attemptAt != null && now - lastRecord.attemptAt < 30000)) return;
+        if (lastRecord?.time != null) {
             // Must be at least 10 minutes since last Firestore write
             if (now - lastRecord.time < LOCATION_PERSIST_THROTTLE_MS) {
                 return;
@@ -352,21 +367,22 @@ io.on("connection", async (socket) => {
                 return;
             }
         }
-        lastDriverLocationPersist.set(data.driverId, { time: now, lat, lng });
 
+        // Reserve before querying so concurrent events and failed attempts stay bounded.
+        const attempt = {...lastRecord, attemptAt: now, inFlight: true};
+        lastDriverLocationPersist.set(data.driverId, attempt);
         const db = admin.firestore();
         db.collection("sap_assignments")
             .where("driverId", "==", data.driverId)
             .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit"])
-            .limit(1)
+            .limit(100)
             .get()
             .then((snap) => {
                 if (snap.empty) {
                     console.log("[driver_moving] (skip persist: no active dispatch for driver)");
                     return null;
                 }
-                const doc = snap.docs[0];
-                return doc.ref
+                return Promise.all(snap.docs.map(doc => doc.ref
                     .set(
                         {
                             lastLocation: {
@@ -377,31 +393,34 @@ io.on("connection", async (socket) => {
                         },
                         {merge: true},
                     )
-                    .then(() => doc.id);
+                    .then(() => doc.id)));
             })
             .then((updatedId) => {
                 if (updatedId) {
+                    Object.assign(attempt, {time: now, lat, lng});
                     console.log("[driver_moving] ✓ persisted lastLocation to", updatedId);
                 }
             })
             .catch((err) => {
                 console.error("[driver_moving] ✗ persist error:", err?.message ?? err);
-            });
+            })
+            .finally(() => { attempt.inFlight = false; });
     });
 
     // ── Driver Status Updates (completed / stopped / offline / online) ──
     socket.on("update_status", (data) => {
         try {
-            console.log("[update_status] ★ RECEIVED:", JSON.stringify(data));
+            if (socket.data.role !== 'driver' || !data || (data.driverId && data.driverId !== socket.data.uid)
+                || !['stopped', 'offline', 'online'].includes(data.status)) return;
             const driverId = data?.driverId || socket.data.uid;
             const status = data?.status;
             if (!driverId || !status) return;
 
             // Broadcast to dispatchers / admin map for immediate UI reaction
-            io.emit("update_status", {...data, driverId});
+            io.to('dispatchers').emit("update_status", {driverId, status, timestamp: Date.now()});
 
             if (status === "stopped") {
-                io.emit("driver_stopped", {...data, driverId});
+                io.to('dispatchers').emit("driver_stopped", {driverId});
             }
         } catch (err) {
             console.error("[update_status] error:", err.message);
@@ -411,20 +430,25 @@ io.on("connection", async (socket) => {
     // ── Driver Stopped (traffic signal / idle) ──
     socket.on("driver_stopped", (data) => {
         try {
-            console.log("[driver_stopped] ★ RECEIVED:", JSON.stringify(data));
+            if (socket.data.role !== 'driver' || !data || (data.driverId && data.driverId !== socket.data.uid)) return;
             const driverId = data?.driverId || socket.data.uid;
-            io.emit("driver_stopped", {...data, driverId});
-            io.emit("update_status", {...data, driverId, status: "stopped"});
+            io.to('dispatchers').emit("driver_stopped", {driverId});
+            io.to('dispatchers').emit("update_status", {driverId, status: "stopped"});
         } catch (err) {
             console.error("[driver_stopped] error:", err.message);
         }
     });
 
     // ── Driver POD Updated (photo / signature uploaded) ──
-    socket.on("pod_updated", (data) => {
+    socket.on("pod_updated", async (data) => {
         try {
-            console.log("[pod_updated] ★ RECEIVED:", JSON.stringify(data));
-            io.emit("pod_updated", data);
+            if (socket.data.role !== 'driver' || !data || typeof data.shipmentDocId !== 'string'
+                || !data.shipmentDocId.length || data.shipmentDocId.length > 128 || data.shipmentDocId.includes('/')) return;
+            const assignment = await admin.firestore().collection('sap_assignments').doc(data.shipmentDocId).get();
+            if (!assignment.exists || assignment.data().driverId !== socket.data.uid) return;
+            io.to('dispatchers').to(`user:${socket.data.uid}`).emit('pod_updated', {
+                shipmentDocId: data.shipmentDocId, driverId: socket.data.uid, source: 'driver_app',
+            });
         } catch (err) {
             console.error("[pod_updated] error:", err.message);
         }

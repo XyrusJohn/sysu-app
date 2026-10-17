@@ -6,6 +6,9 @@
 const {admin} = require("../config/firebase.js");
 const {resolveEarliest, validateEarliest} = require("../services/queueOrdering.js");
 const tokenService = require("../services/tokenService.js");
+const decisions = require("../services/dispatchDecisions.js");
+const sapSource = require('../services/sapSource');
+const {validateAssignment} = require('../services/sapAssignmentPolicy');
 const {asyncWrapper} = require("../middleware/asyncWrapper.js");
 const { z } = require("zod");
 
@@ -17,47 +20,60 @@ const CANCEL_REQUESTS = "cancelRequests";
 
 // ── Validation Schemas ─────────────────────────────────────────────────────────────
 
+const documentIdSchema = z.string().min(1).max(128).refine(value => value === value.trim()
+    && !value.includes('/') && value !== '.' && value !== '..' && !/^__.*__$/.test(value)
+    && [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 'Invalid document identifier');
+const reasonSchema = z.string().trim().min(1).max(2000);
+const quantitySchema = z.number().finite().positive().max(Number.MAX_SAFE_INTEGER);
+const nonnegativeSapNumberSchema = z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER).optional();
+
 const lineItemSchema = z.object({
-    obdNumber: z.string().min(1),
-    quantity: z.union([z.number(), z.string().regex(/^\\d+(\\.\\d+)?$/)]),
-    customerName: z.string().min(1),
+    obdNumber: documentIdSchema,
+    quantity: z.union([quantitySchema, z.string().max(32).regex(/^\d+(\.\d+)?$/).transform(Number).pipe(quantitySchema)]),
+    customerName: z.string().trim().min(1).max(500),
+    shipTo: z.string().trim().max(128).optional(),
+    deliveryAddress: z.string().trim().max(1000).optional(),
+    volume: nonnegativeSapNumberSchema,
+    weight: nonnegativeSapNumberSchema,
+    latitude: z.number().finite().min(-90).max(90).optional(),
+    longitude: z.number().finite().min(-180).max(180).optional(),
     amount: z.undefined().optional(), // Explicitly forbid amount
 });
 
 const assignDriverSchema = z.object({
-    dispatchKey: z.string().min(1),
-    requestedDriverId: z.string().min(1),
-    truckType: z.string().min(1),
-    overrideTokenId: z.string().optional(),
+    dispatchKey: documentIdSchema,
+    requestedDriverId: documentIdSchema,
+    truckType: z.string().trim().min(1).max(64),
+    overrideTokenId: documentIdSchema.nullish(),
     driverSnapshot: z.any().optional(),
-    lineItems: z.array(lineItemSchema).min(1),
+    lineItems: z.array(lineItemSchema).min(1).max(500),
 });
 
 const overrideRequestSchema = z.object({
-    dispatchKey: z.string().min(1),
-    requestedDriverId: z.string().min(1),
-    reason: z.string().min(1),
+    dispatchKey: documentIdSchema,
+    requestedDriverId: documentIdSchema,
+    reason: reasonSchema,
 });
 
 const overrideDecisionSchema = z.object({
-    requestId: z.string().min(1),
+    requestId: documentIdSchema,
     decision: z.enum(["approved", "denied"]),
-    reason: z.string().optional(),
+    reason: reasonSchema.optional(),
 });
 
 const cancelRequestSchema = z.object({
-    dispatchKey: z.string().min(1),
-    reason: z.string().min(1),
+    dispatchKey: documentIdSchema,
+    reason: reasonSchema,
 });
 
 const cancelDecisionSchema = z.object({
-    requestId: z.string().min(1),
+    requestId: documentIdSchema,
     decision: z.enum(["approved", "denied"]),
-    reason: z.string().optional(),
+    reason: reasonSchema.optional(),
 });
 
 const revokeSchema = z.object({
-    requestId: z.string().min(1),
+    requestId: documentIdSchema,
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────
@@ -72,8 +88,9 @@ function toMillis(value) {
     return null;
 }
 
-async function loadQueueForType(truckType) {
-    const snap = await DB().collection(QUEUE_COLLECTION).get();
+async function loadQueueForType(truckType, transaction) {
+    const ref = DB().collection(QUEUE_COLLECTION);
+    const snap = transaction ? await transaction.get(ref) : await ref.get();
     const wanted = (truckType || "").trim().toLowerCase();
     const all = [];
     snap.forEach((doc) => {
@@ -126,9 +143,12 @@ exports.peekEarliest = asyncWrapper(async (req, res) => {
 
 exports.assignDriver = asyncWrapper(async (req, res) => {
     const body = assignDriverSchema.parse(req.body);
-    const {dispatchKey, requestedDriverId, truckType, overrideTokenId, lineItems} = body;
-    const driverSnapshot = req.body?.driverSnapshot || null;
+    const {dispatchKey, requestedDriverId, truckType, overrideTokenId} = body;
     const assignedBy = req.user && req.user.uid;
+
+    const sapSnapshot = await sapSource.read({maxAge:5000});
+    const sapCheck = validateAssignment(sapSnapshot.rows,body);
+    if (sapCheck.status !== 200) return res.status(sapCheck.status).json({success:false,code:sapCheck.code,message:sapCheck.message});
 
     const result = await DB().runTransaction(async (tx) => {
         const assignRef = DB().collection(SAP_COLLECTION).doc(dispatchKey);
@@ -137,24 +157,30 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             return {status: 409, code: "DISPATCH_TAKEN", message: "This dispatch is already assigned."};
         }
 
-        const queue = await loadQueueForType(truckType);
+        const queue = await loadQueueForType(truckType, tx);
 
+        const assignableQueueStatuses = ['waiting', 'available', 'assigned', 'loading', 'loaded', 'fully_loaded'];
         let requested = queue.find((d) => d.id === requestedDriverId);
-        if (!requested) {
-            requested = queue.find((d) => (d.driverId || "") === requestedDriverId);
-        }
         if (!requested) {
             const directQueueDoc = await tx.get(DB().collection(QUEUE_COLLECTION).doc(requestedDriverId));
             if (directQueueDoc.exists) {
                 requested = { id: directQueueDoc.id, ...directQueueDoc.data() };
-            } else {
-                const uidQueueSnap = await tx.get(
-                    DB().collection(QUEUE_COLLECTION).where("driverId", "==", requestedDriverId).limit(1)
-                );
-                if (!uidQueueSnap.empty) {
-                    requested = { id: uidQueueSnap.docs[0].id, ...uidQueueSnap.docs[0].data() };
-                }
             }
+        }
+        if (!requested) {
+            // Older clients send the Auth UID instead of the QR queue document ID.
+            // Resolve that UID only when exactly one eligible session exists.
+            const candidates = queue.filter((d) => d.driverId === requestedDriverId
+                && assignableQueueStatuses.includes(d.status)
+                && d.registrationComplete !== false);
+            if (candidates.length > 1) {
+                return {
+                    status: 409,
+                    code: 'DRIVER_SESSION_AMBIGUOUS',
+                    message: 'Multiple active queue sessions exist for this driver. Select a specific QR queue entry.',
+                };
+            }
+            requested = candidates[0];
         }
         if (!requested) {
             return {
@@ -165,22 +191,33 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             };
         }
 
+        if (!assignableQueueStatuses.includes(requested.status)
+            || requested.registrationComplete === false
+            || String(requested.truckType || '').trim().toLowerCase() !== truckType.trim().toLowerCase()) {
+            return {status: 409, code: 'DRIVER_INELIGIBLE', message: 'Queue entry is inactive or truck type does not match.'};
+        }
         const driverIdForLookup = requested.driverId || requestedDriverId;
         const existingAssignmentsSnap = await tx.get(
             DB().collection(SAP_COLLECTION).where("driverId", "==", driverIdForLookup),
         );
-        const inTransitLoads = existingAssignmentsSnap.docs
-            .map((d) => d.data())
-            .filter((a) => (a.tripStatus || "").toLowerCase() === "in_transit");
+        const driverAssignments = existingAssignmentsSnap.docs.map((d) => ({id: d.id, ...d.data()}));
+        const isCurrentSession = (a) =>
+            a.queueId === requested.id || (!a.queueId && requested.isAssigned === true);
+        const preTransitStatuses = new Set(["assigned", "loading", "loaded", "fully_loaded"]);
+        const activeLoads = driverAssignments.filter((a) => {
+            const status = (a.tripStatus || "").toLowerCase().trim();
+            return ["in_transit", "returning_to_base"].includes(status)
+                || (!isCurrentSession(a) && preTransitStatuses.has(status));
+        });
 
-        if (inTransitLoads.length > 0 || requested.isFull === true) {
-            const activeDispatchKeys = inTransitLoads.map((a) => a.dispatchKey || a.id || null);
+        if (activeLoads.length > 0 || requested.isFull === true) {
+            const activeDispatchKeys = activeLoads.map((a) => a.dispatchKey || a.id || null);
             return {
                 status: 409,
                 code: "DRIVER_ON_ACTIVE_LOAD",
                 message: requested.isFull === true
                     ? "Requested truck is already fully loaded."
-                    : "Requested driver is already in transit (on the road). They cannot take another dispatch until the trip completes.",
+                    : "Requested driver is already in transit or returning to base and cannot take another dispatch.",
                 meta: {
                     requestedDriverId,
                     activeDispatchKeys,
@@ -188,11 +225,39 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             };
         }
 
-        const hasExistingPreTransit = existingAssignmentsSnap.docs
-            .map((d) => d.data())
-            .some((a) => ["assigned", "loading", "loaded", "fully_loaded"].includes((a.tripStatus || "").toLowerCase()));
+        // Assignment eligibility belongs to a QR queue session, not the
+        // driver's lifetime history. This lets a newly scanned queue entry
+        // use FIFO after an older trip completed without reopening that old
+        // completed session for another assignment.
+        const currentSessionAssignments = driverAssignments.filter(isCurrentSession);
+        const hasAssignableAssignment = currentSessionAssignments.some((a) =>
+            preTransitStatuses.has((a.tripStatus || "").toLowerCase().trim())
+        );
+        const completedStatuses = currentSessionAssignments.map((a) => (a.tripStatus || "").toLowerCase().trim());
+        const sessionIsCompleted = completedStatuses.length > 0
+            && completedStatuses.every((status) => ["completed", "complete"].includes(status));
 
-        if (!hasExistingPreTransit) {
+        if (sessionIsCompleted) {
+            return {
+                status: 409,
+                code: "DRIVER_SESSION_COMPLETED",
+                message: "This driver's queue session is complete and cannot receive another dispatch.",
+                meta: {requestedDriverId, queueId: requested.id},
+            };
+        }
+
+        if (currentSessionAssignments.length > 0 && !hasAssignableAssignment) {
+            return {
+                status: 409,
+                code: "DRIVER_SESSION_NOT_ASSIGNABLE",
+                message: "This driver's queue session already has a shipment that is no longer awaiting dispatch.",
+                meta: {requestedDriverId, queueId: requested.id},
+            };
+        }
+
+        const hasExistingAssignment = hasAssignableAssignment;
+
+        if (!hasExistingAssignment) {
             const earliestCheck = validateEarliest(queue, truckType, requestedDriverId);
             if (earliestCheck && !overrideTokenId) {
                 return {
@@ -208,12 +273,12 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
         }
 
         if (overrideTokenId) {
-            const tokenResult = await tokenService.consumeTokenInTransaction(tx, overrideTokenId, {
-                dispatchKey,
-                driverId: requestedDriverId,
-                usedBy: assignedBy,
+            const tokenResult = await tokenService.consumeInTransaction(tx, DB().collection("overrideTokens").doc(overrideTokenId), {
+                consumedForAssignment: dispatchKey,
+                requestedDriverId,
+                consumedBy: assignedBy,
             });
-            if (!tokenResult.valid) {
+            if (!tokenResult.ok) {
                 return {
                     status: 403,
                     code: tokenResult.code,
@@ -223,20 +288,23 @@ exports.assignDriver = asyncWrapper(async (req, res) => {
             }
         }
 
-        const normalizedLineItems = lineItems.map((li) => {
+        const normalizedLineItems = sapCheck.lineItems.map((li) => {
             const q = typeof li.quantity === "string" ? parseFloat(li.quantity) : li.quantity;
             return {...li, quantity: Number.isFinite(q) ? q : null};
         });
         const driverAuthUid = requested.driverId || requestedDriverId;
         tx.set(assignRef, {
             driverId: driverAuthUid,
-            driverName: driverSnapshot?.driverName || requested.driverName || null,
-            truckPlate: driverSnapshot?.truckPlate || requested.plateNumber || null,
-            truckCompany: driverSnapshot?.truckCompany || requested.truckCompany || null,
+            queueId: requested.id,
+            driverName: requested.driverName || null,
+            truckPlate: requested.plateNumber || null,
+            truckCompany: requested.truckCompany || null,
             truckType,
             lineItems: normalizedLineItems,
             assignedAt: admin.firestore.FieldValue.serverTimestamp(),
             assignedBy: assignedBy || null,
+            sapSourceFetchedAt: admin.firestore.Timestamp.fromMillis(sapSnapshot.fetchedAt),
+            sapContractVersion: 'unassigned-v1',
             overrideTokenId: overrideTokenId || null,
             tripStatus: "assigned",
         });
@@ -304,194 +372,34 @@ exports.requestOverride = asyncWrapper(async (req, res) => {
     return res.json({success: true, data: {requestId: ref.id}});
 });
 
+function sendDecision(res, result) {
+    return res.status(result.status).json(result.status === 200
+        ? {success: true, data: result.data} : {success: false, message: result.message});
+}
 exports.decideOverride = asyncWrapper(async (req, res) => {
-    const {requestId, decision, reason} = overrideDecisionSchema.parse(req.body);
-    const decidedBy = req.user && req.user.uid;
-
-    const ref = DB().collection(OVERRIDE_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) {
-        return res.status(404).json({success: false, message: "Override request not found."});
-    }
-    const reqDoc = snap.data();
-    if (reqDoc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${reqDoc.status}.`});
-    }
-
-    let tokenId = null;
-    let expiresAt = null;
-
-    if (decision === "approved") {
-        const issued = await tokenService.issue({
-            dispatchKey: reqDoc.dispatchKey,
-            requestedDriverId: reqDoc.requestedDriverId,
-            reason: reqDoc.reason,
-            requestId,
-            issuedBy: decidedBy,
-        });
-        tokenId = issued.tokenId;
-        expiresAt = issued.expiresAt.toISOString();
-    }
-
-    await ref.update({
-        status: decision,
-        decision,
-        decidedBy,
-        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        denyReason: decision === "denied" ? reason || null : null,
-        tokenId: tokenId || null,
-        tokenExpiresAt: expiresAt,
-    });
-
-    return res.json({success: true, data: {requestId, status: decision, tokenId, tokenExpiresAt: expiresAt}});
+    const input = overrideDecisionSchema.parse(req.body);
+    return sendDecision(res, await decisions.decideOverride({...input, decidedBy: req.user.uid}));
 });
-
 exports.revokeOverride = asyncWrapper(async (req, res) => {
-    const {requestId} = revokeSchema.parse(req.body);
-    const uid = req.user && req.user.uid;
-
-    const ref = DB().collection(OVERRIDE_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({success: false, message: "Override request not found."});
-    const doc = snap.data();
-    if (doc.requestedBy !== uid) {
-        return res.status(403).json({success: false, message: "Cannot revoke another user's request."});
-    }
-    if (doc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${doc.status}.`});
-    }
-    await ref.update({
-        status: "revoked",
-        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    return res.json({success: true, data: {requestId, status: "revoked"}});
+    const input = revokeSchema.parse(req.body);
+    return sendDecision(res, await decisions.revoke(OVERRIDE_REQUESTS, {...input, uid: req.user.uid}));
 });
-
 exports.requestCancelAssignment = asyncWrapper(async (req, res) => {
-    const {dispatchKey, reason} = cancelRequestSchema.parse(req.body);
-    const requestedBy = req.user && req.user.uid;
-
-    const ref = DB().collection(CANCEL_REQUESTS).doc();
-    await ref.set({
-        dispatchKey,
-        reason,
-        requestedBy,
-        requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-        status: "pending",
-        action: "cancel",
-        decidedBy: null,
-        decidedAt: null,
-        decision: null,
-        cancelAudit: null,
-    });
-    return res.json({success: true, data: {requestId: ref.id}});
+    const input = cancelRequestSchema.parse(req.body);
+    return sendDecision(res, await decisions.requestCancellation({...input, requestedBy: req.user.uid}));
 });
-
 exports.decideCancelAssignment = asyncWrapper(async (req, res) => {
-    const {requestId, decision, reason} = cancelDecisionSchema.parse(req.body);
-    const decidedBy = req.user && req.user.uid;
-
-    const ref = DB().collection(CANCEL_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) {
-        return res.status(404).json({success: false, message: "Cancel request not found."});
-    }
-    const reqDoc = snap.data();
-    if (reqDoc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${reqDoc.status}.`});
-    }
-
-    if (decision === "denied") {
-        await ref.update({
-            status: "denied",
-            decision,
-            denyReason: reason || null,
-            decidedBy,
-            decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return res.json({success: true, data: {requestId, status: "denied"}});
-    }
-
-    const cancelAudit = await DB().runTransaction(async (tx) => {
-        const assignRef = DB().collection(SAP_COLLECTION).doc(reqDoc.dispatchKey);
-        const existing = await tx.get(assignRef);
-        if (!existing.exists) {
-            return null;
-        }
-        const asgn = existing.data();
-        const queueSnap = await tx.get(
-            DB().collection(QUEUE_COLLECTION).where("driverId", "==", asgn.driverId).limit(1),
-        );
-        const queueDoc = queueSnap.docs[0];
-
-        tx.delete(assignRef);
-
-        const audit = {
-            reason: reqDoc.reason,
-            cancelledBy: decidedBy,
-            cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
-            dispatchKey: reqDoc.dispatchKey,
-        };
-
-        if (queueDoc) {
-            const qData = queueDoc.data() || {};
-            const currentList = Array.isArray(qData.assignedShipments) ? qData.assignedShipments : [];
-            const remainingShipments = currentList.filter(
-                (s) => (s.dispatchKey || s.id || s.obdNumber) !== reqDoc.dispatchKey
-            );
-            const hasRemaining = remainingShipments.length > 0;
-
-            tx.update(queueDoc.ref, {
-                assignedShipments: remainingHShipments,
-                activeShipmentsCount: remainingShipments.length,
-                isAssigned: hasRemaining,
-                status: hasRemaining ? (qData.status || "loading") : "available",
-                overallTripStatus: hasRemaining ? (qData.overallTripStatus || "loading") : "available",
-                assignedShipment: hasRemaining ? remainingShipments[0].dispatchKey : null,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                cancelAudit: audit,
-            });
-        }
-
-        return audit;
-    });
-
-    await ref.update({
-        status: "approved",
-        decision,
-        decidedBy,
-        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        cancelAudit: cancelAudit || null,
-    });
-
-    return res.json({success: true, data: {requestId, status: "approved"}});
+    const input = cancelDecisionSchema.parse(req.body);
+    return sendDecision(res, await decisions.decideCancellation({...input, decidedBy: req.user.uid}));
 });
-
 exports.revokeCancelAssignment = asyncWrapper(async (req, res) => {
-    const {requestId} = revokeSchema.parse(req.body);
-    const uid = req.user && req.user.uid;
-
-    const ref = DB().collection(CANCEL_REQUESTS).doc(requestId);
-    const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({success: false, message: "Override request not found."});
-    const doc = snap.data();
-    if (doc.requestedBy !== uid) {
-        return res.status(403).json({success: false, message: "Cannot revoke another user's request."});
-    }
-    if (doc.status !== "pending") {
-        return res.status(409).json({success: false, message: `Request is already ${doc.status}.`});
-    }
-    await ref.update({
-    status: "revoked",
-    decidedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    return res.json({success: true, data: {requestId, status: "revoked"}});
+    const input = revokeSchema.parse(req.body);
+    return sendDecision(res, await decisions.revoke(CANCEL_REQUESTS, {...input, uid: req.user.uid}));
 });
-
 exports.getActiveDriverLocations = asyncWrapper(async (req, res) => {
     const snap = await DB()
         .collection(SAP_COLLECTION)
-        .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit"])
+        .where("tripStatus", "in", ["assigned", "loading", "loaded", "fully_loaded", "in_transit", "returning_to_base"])
         .get();
 
     const results = [];
