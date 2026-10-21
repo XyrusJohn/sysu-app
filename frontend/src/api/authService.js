@@ -92,9 +92,18 @@ export const AuthService = {
                         }
                         callback(null, new Error("NOT_REGISTERED"));
                     }
-                }, (err) => {
+                }, async (err) => {
                     if (closed || generation !== activeGeneration) return;
                     console.error("[startup] profile subscription failed", {message: err.message});
+                    if (err.message === "Profile authorization ended") {
+                        currentUserProfile = null;
+                        try { await signOut(auth); } catch {
+                            // Continue denying access when local sign-out fails.
+                        }
+                        localStorage.removeItem("userData");
+                        if (!closed && generation === activeGeneration) callback(null, new Error("ACCOUNT_DISABLED"));
+                        return;
+                    }
                     callback(null, new Error("NOT_REGISTERED"));
                 });
         });

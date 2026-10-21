@@ -1,5 +1,5 @@
 import { defineConfig, loadEnv } from "vite";
-import {resolveReleaseConfig} from "./src/api/releaseConfig.js";
+import {assertProductionBuildTarget, resolveReleaseConfig} from "./src/api/releaseConfig.js";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
@@ -8,7 +8,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export default defineConfig(({mode,command}) => {
-  const endpoints = resolveReleaseConfig({...loadEnv(mode, __dirname, "VITE_"), DEV: command === 'serve'});
+  const env = {...loadEnv(mode, __dirname, "VITE_"), DEV: command === 'serve'};
+  assertProductionBuildTarget(command, mode, env);
+  const endpoints = resolveReleaseConfig(env);
   return {
   // Only non-HTML assets are copied. Legacy public HTML is excluded from releases.
   publicDir: 'static',

@@ -11,6 +11,21 @@ const PUBLIC_TRUCK_TYPES = ['AUV', '4W', '6W', '10W', '20F', '40F'];
 let publicQueueCache;
 let publicQueuePending;
 
+async function runQrAdmissionTransaction(callback) {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await DB().runTransaction(callback);
+        } catch (error) {
+            const emulatorContention = Number(error?.code) === 3
+                && /Transaction is invalid or closed/i.test(String(error?.message || ''));
+            if (!emulatorContention || attempt >= 1) throw error;
+
+            // The Firestore emulator can surface a concurrent commit lock timeout as INVALID_ARGUMENT.
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
+    }
+}
+
 async function getRegisteredQueue() {
     if (!publicQueueCache || publicQueueCache.expiresAt <= Date.now()) {
         if (!publicQueuePending) {
@@ -126,7 +141,7 @@ module.exports = {
 
         const SANITIZE = (str, max) => (str || "").replace(/[<>]/g, "").substring(0, max);
 
-        const result = await DB().runTransaction(async (tx) => {
+        const result = await runQrAdmissionTransaction(async (tx) => {
             const tokenRef = DB().collection(QR_TOKENS_COLLECTION).doc(token);
             const tokenDoc = await tx.get(tokenRef);
 

@@ -51,6 +51,13 @@ describe('Real Leaflet tracking markers', () => {
         expect(element.querySelector('img,script')).toBeNull();
         expect(element.textContent).toContain('<script>x</script>');
     });
+    it('uses theme tokens and light-theme-safe status colors in map popups', () => {
+        updateMarker({...fix, status: 'online', shipmentId: 'SHIPMENT-1'});
+        const popup = markers[fix.driverId].getPopup().getContent();
+        expect(popup).toContain('var(--map-popup-surface');
+        expect(popup).toContain('class="flm-status-chip"');
+        expect(popup).toContain('--status-color-light:#166534');
+    });
     it('shows a generic map icon label only while the trip is in transit', () => {
         updateMarker({...fix, tripStatus: 'loading'});
         const marker = markers[fix.driverId];

@@ -49,6 +49,34 @@ test("driver subscriptions are scoped to their own profile and location", () => 
     assert.equal(usersAck.success, false);
 });
 
+test("guard and truck company streams are admin-only, expose safe fields, and retain inactive admin records", () => {
+    for (const role of ["driver", "fleet_manager", "qr_generator"]) {
+        const f = fixture(role);
+        for (const topic of ["securityGuards", "truckCompanies"]) {
+            let ack;
+            f.handlers.get("realtime:subscribe")({id: `${role}-${topic}`, topic}, value => {ack = value;});
+            assert.equal(ack.success, false, `${role} must not subscribe to ${topic}`);
+        }
+    }
+
+    for (const role of ["admin", "super_admin"]) {
+        const f = fixture(role);
+        for (const [topic, source, expected] of [
+            ["securityGuards", {guardId: "G-1", firstName: "Sam", middleInitial: "A", lastName: "Lee", fullName: "Sam A Lee", active: true, signature: "private"},
+                {id: "guard-1", guardId: "G-1", firstName: "Sam", middleInitial: "A", lastName: "Lee", fullName: "Sam A Lee", active: true}],
+            ["truckCompanies", {companyCode: "TC-1", forwarderCode: "FWD", name: "Example Trucking", active: true, bankDetails: "private"},
+                {id: "company-1", companyCode: "TC-1", forwarderCode: "FWD", name: "Example Trucking", active: true}],
+        ]) {
+            let ack;
+            f.handlers.get("realtime:subscribe")({id: `${role}-${topic}`, topic}, value => {ack = value;});
+            assert.equal(ack.success, true);
+            const inactive = {...source, active: false};
+            f.ref.next({docs: [{id: expected.id, data: () => source}, {id: `inactive-${expected.id}`, data: () => inactive}]});
+            assert.deepEqual(f.emitted.at(-1).payload.data, [expected, {...expected, id: `inactive-${expected.id}`, active: false}]);
+        }
+    }
+});
+
 test("profile namespace binds correlated, own-profile subscriptions only", () => {
     const handlers = new Map();
     const emitted = [];

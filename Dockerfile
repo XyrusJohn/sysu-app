@@ -15,7 +15,7 @@ USER node
 ENV PORT=8080
 ENV NODE_ENV=production
 
-# Railway usually injects its own PORT
+# Container hosts may inject their assigned PORT.
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health/live',{signal:AbortSignal.timeout(4000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 

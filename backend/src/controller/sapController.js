@@ -1,6 +1,15 @@
 const sapSource = require('../services/sapSource');
 const {admin} = require('../config/firebase');
+const {createSystemDiagnostics} = require('../services/systemDiagnostics');
 const {z} = require('zod');
+
+function compareDispatchObds(expectedObds, rows) {
+    const returned = new Set((Array.isArray(rows) ? rows : [])
+        .map(row => String(row?.OBDNumber || '')).filter(Boolean));
+    const missingCount = [...expectedObds].filter(obd => !returned.has(obd)).length;
+    return {expectedCount: expectedObds.size, receivedCount: expectedObds.size - missingCount, missingCount};
+}
+exports.compareDispatchObds = compareDispatchObds;
 
 const dispatchDetailsRequest = z.object({
     dispatchKeys: z.array(z.string().min(1).max(64).refine(value => value === value.trim()
@@ -9,14 +18,31 @@ const dispatchDetailsRequest = z.object({
         .min(1).max(100),
 });
 
-exports.getSapData = async (_req,res) => {
+function recordSapFailure(req, operation, error) {
+    req._systemErrorLogged = true;
+    const requestId = req.requestId || 'request-id-unavailable';
+    const errorName = typeof error?.name === 'string' && /^[A-Za-z][A-Za-z0-9_.]{0,79}$/.test(error.name)
+        ? error.name : 'Error';
+    const errorCode = typeof error?.code === 'string' && /^[A-Z0-9_-]{1,48}$/i.test(error.code)
+        ? error.code : undefined;
+    console.error(JSON.stringify({event: 'sap_unavailable', operation, requestId, errorName, errorCode}));
+    try {
+        void createSystemDiagnostics({db: admin.firestore(), io: global._io}).record({
+            eventCode: 'sap_unavailable', operation, requestId, errorName, actorId: req.user?.uid,
+        }).catch(() => console.error(JSON.stringify({event: 'sap_error_log_persist_failed', requestId})));
+    } catch {
+        console.error(JSON.stringify({event: 'sap_error_logging_unavailable', requestId}));
+    }
+}
+
+exports.getSapData = async (req,res) => {
     try {
         const snapshot = await sapSource.read();
         return res.json({success:true,data:{d:{results:snapshot.rows}},cached:snapshot.cached,
             fetchedAt:new Date(snapshot.fetchedAt).toISOString()});
-    } catch {
-        console.error(JSON.stringify({event:'sap_unavailable'}));
-        return res.status(503).json({success:false,error:'SAP temporarily unavailable'});
+    } catch (error) {
+        recordSapFailure(req, 'sap-shipments', error);
+        return res.status(503).json({success:false,requestId:req.requestId,error:'SAP temporarily unavailable'});
     }
 };
 
@@ -41,12 +67,38 @@ exports.getAssignedDispatchDetails = async (req,res) => {
 
         const sapDetails = await sapSource.readDispatchDetails([...allowedObds.keys()]);
         const data = Object.create(null);
+        const warnings = [];
+        let expectedCount = 0;
+        let receivedCount = 0;
+        let missingCount = 0;
         for (const [key,obds] of allowedObds) {
-            data[key] = (sapDetails[key] || []).filter(row => obds.has(String(row.OBDNumber || '')));
+            const rows = sapDetails[key] || [];
+            const mismatch = compareDispatchObds(obds, rows);
+            expectedCount += mismatch.expectedCount;
+            receivedCount += mismatch.receivedCount;
+            missingCount += mismatch.missingCount;
+            if (mismatch.missingCount) warnings.push({
+                dispatchKey: key,
+                code: 'SAP_DETAIL_MISMATCH',
+                ...mismatch,
+            });
+            data[key] = rows.filter(row => obds.has(String(row.OBDNumber || '')));
         }
-        return res.json({success:true,data});
-    } catch {
-        console.error(JSON.stringify({event:'sap_dispatch_details_unavailable'}));
-        return res.status(503).json({success:false,error:'SAP temporarily unavailable'});
+        if (missingCount) {
+            console.warn(JSON.stringify({event: 'sap_dispatch_details_mismatch', requestId:req.requestId,
+                affectedDispatchCount:warnings.length, expectedCount, receivedCount, missingCount}));
+            try {
+                void createSystemDiagnostics({db: admin.firestore(), io: global._io}).record({
+                    eventCode:'sap_detail_mismatch', requestId:req.requestId, actorId:req.user?.uid,
+                    details:{expectedCount, receivedCount, missingCount},
+                }).catch(() => console.error(JSON.stringify({event:'sap_error_log_persist_failed',requestId:req.requestId})));
+            } catch {
+                console.error(JSON.stringify({event:'sap_error_logging_unavailable',requestId:req.requestId}));
+            }
+        }
+        return res.json({success:true,requestId:req.requestId,data,warnings});
+    } catch (error) {
+        recordSapFailure(req, 'sap-dispatch-details', error);
+        return res.status(503).json({success:false,requestId:req.requestId,error:'SAP temporarily unavailable'});
     }
 };

@@ -185,10 +185,10 @@ const _injectCSS = () => {
     .flm-tip {
       position: absolute; bottom: calc(100% + 10px); left: 50%;
       transform: translateX(-50%) translateY(3px);
-      background: rgba(7,9,13,0.96);
-      border: 1px solid rgba(255,255,255,0.07);
+      background: var(--map-popup-surface, rgba(7,9,13,0.96));
+      border: 1px solid var(--map-popup-border, rgba(255,255,255,0.07));
       border-top: 2px solid var(--rc, #64748B);
-      color: #E5E7EB; font-size: 10.5px; font-weight: 600;
+      color: var(--map-popup-text, #E5E7EB); font-size: 10.5px; font-weight: 600;
       font-family: 'DM Mono', 'Fira Code', monospace;
       padding: 5px 11px; border-radius: 8px;
       white-space: nowrap; opacity: 0;
@@ -203,6 +203,8 @@ const _injectCSS = () => {
       border: 5px solid transparent;
       border-top-color: var(--rc, #64748B);
     }
+    .flm-status-chip { color: var(--status-color); }
+    [data-theme="light"] .flm-status-chip { color: var(--status-color-light, var(--status-color)); }
     .flm-wrap:hover .flm-tip { opacity: 1; transform: translateX(-50%) translateY(0); }
 
     /* ── Hover: glow lift ──────────────────────────────────────────────────────── */
@@ -228,27 +230,27 @@ const _injectCSS = () => {
     .leaflet-popup-content-wrapper.flm-pop .leaflet-popup-content { margin: 0; }
     .leaflet-popup-tip-container { display: none; }
     .leaflet-popup-close-button {
-      color: rgba(255,255,255,0.3) !important;
+      color: var(--map-popup-muted, rgba(255,255,255,0.3)) !important;
       font-size: 16px !important; top: 7px !important; right: 8px !important;
     }
-    .leaflet-popup-close-button:hover { color: #fff !important; }`;
+    .leaflet-popup-close-button:hover { color: var(--map-popup-text, #fff) !important; }`;
     document.head.appendChild(s);
 };
 
 // ── Status config ─────────────────────────────────────────────────────────────
 
 const ST = {
-    returning_to_base: {rc: '#3B82F6', rg: 'rgba(59,130,246,0.25)', lbl: 'Returning to base'},
-    stale:   {rc: '#64748B', rg: 'rgba(100,116,139,0.25)', lbl: 'GPS stale'},
-    online:  { rc: "#10B981", rg: "rgba(16,185,129,0.32)",  lbl: "Moving"  },
-    idle:    { rc: "#F59E0B", rg: "rgba(245,158,11,0.26)",  lbl: "Idle"    },
-    delayed: { rc: "#F97316", rg: "rgba(249,115,22,0.26)",  lbl: "Delayed" },
-    stopped: { rc: "#EF4444", rg: "rgba(239,68,68,0.26)",   lbl: "Stopped" },
-    offline: { rc: "#EF4444", rg: "rgba(239,68,68,0.25)",    lbl: "Offline"  },
+    returning_to_base: {rc: '#3B82F6', lightRc: '#1E40AF', rg: 'rgba(59,130,246,0.25)', lbl: 'Returning to base'},
+    stale:   {rc: '#64748B', lightRc: '#475569', rg: 'rgba(100,116,139,0.25)', lbl: 'GPS stale'},
+    online:  { rc: "#10B981", lightRc: "#166534", rg: "rgba(16,185,129,0.32)",  lbl: "Moving"  },
+    idle:    { rc: "#F59E0B", lightRc: "#92400E", rg: "rgba(245,158,11,0.26)",  lbl: "Idle"    },
+    delayed: { rc: "#F97316", lightRc: "#9A3412", rg: "rgba(249,115,22,0.26)",  lbl: "Delayed" },
+    stopped: { rc: "#EF4444", lightRc: "#991B1B", rg: "rgba(239,68,68,0.26)",   lbl: "Stopped" },
+    offline: { rc: "#EF4444", lightRc: "#991B1B", rg: "rgba(239,68,68,0.25)",    lbl: "Offline"  },
     // Marker seeded from persisted lastLocation, but real-time GPS hasn't
     // arrived yet (or driver app is paused / stationary). Amber color so it's
     // visually distinct from "real" online markers.
-    pending: { rc: "#A78BFA", rg: "rgba(167,139,250,0.30)", lbl: "Awaiting GPS" },
+    pending: { rc: "#A78BFA", lightRc: "#6B21A8", rg: "rgba(167,139,250,0.30)", lbl: "Awaiting GPS" },
 };
 const _st = (s) => ST[s] ?? ST.offline;
 
@@ -262,22 +264,22 @@ const FALLBACK_LNG = 120.9842;
 
 const _popup = ({ name, driverId, shipmentId, lat, lng }, cfg) => `
 <div style="
-  background: linear-gradient(168deg, rgba(17,20,28,0.98) 0%, rgba(10,12,18,0.99) 100%);
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--map-popup-surface, linear-gradient(168deg, rgba(17,20,28,0.98) 0%, rgba(10,12,18,0.99) 100%));
+  border: 1px solid var(--map-popup-border, rgba(255,255,255,0.07));
   border-top: 2.5px solid ${cfg.rc};
   border-radius: 14px; min-width: 224px;
   font-family: 'DM Mono', 'Fira Code', monospace; overflow: hidden;">
-  <div style="padding:12px 15px 10px;border-bottom:1px solid rgba(255,255,255,0.05);">
+  <div style="padding:12px 15px 10px;border-bottom:1px solid var(--map-popup-divider, rgba(255,255,255,0.05));">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
-      <div style="font-size:13px;font-weight:700;color:#F1F5F9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      <div style="font-size:13px;font-weight:700;color:var(--map-popup-text, #F1F5F9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
         ${name || "Unknown Driver"}
       </div>
-      <div style="flex-shrink:0;background:${cfg.rc}18;color:${cfg.rc};border:1px solid ${cfg.rc}30;
+      <div class="flm-status-chip" style="--status-color:${cfg.rc};--status-color-light:${cfg.lightRc || cfg.rc};flex-shrink:0;background:${cfg.rc}18;border:1px solid ${cfg.rc}30;
            font-size:9.5px;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:0.08em;text-transform:uppercase;">
         ${cfg.lbl}
       </div>
     </div>
-    <div style="font-size:10px;color:#334155;font-family:monospace;letter-spacing:0.04em;">
+    <div style="font-size:10px;color:var(--map-popup-muted, #94A3B8);font-family:monospace;letter-spacing:0.04em;">
       ${(driverId || "").slice(0, 20)}…
     </div>
   </div>
@@ -290,30 +292,30 @@ const _popup = ({ name, driverId, shipmentId, lat, lng }, cfg) => `
         </svg>
       </div>
       <div>
-        <div style="font-size:9px;color:#475569;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:2px;">Shipment</div>
-        <div style="font-size:11.5px;color:#CACFD8;font-weight:600;font-family:monospace;">${shipmentId}</div>
+      <div style="font-size:9px;color:var(--map-popup-muted, #475569);font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:2px;">Shipment</div>
+        <div style="font-size:11.5px;color:var(--map-popup-secondary, #CACFD8);font-weight:600;font-family:monospace;">${shipmentId}</div>
       </div>
     </div>` : ""}
     <div style="display:flex;align-items:center;gap:10px;">
-      <div style="width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2">
+      <div style="width:24px;height:24px;border-radius:6px;background:var(--map-popup-icon-bg, rgba(255,255,255,0.04));border:1px solid var(--map-popup-icon-border, rgba(255,255,255,0.07));display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--map-popup-icon-color, rgba(255,255,255,0.3))" stroke-width="2">
           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
         </svg>
       </div>
       <div>
-        <div style="font-size:9px;color:#475569;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:2px;">Status</div>
-        <div style="font-size:11.5px;color:#CACFD8;font-weight:600;">${cfg.lbl}</div>
+        <div style="font-size:9px;color:var(--map-popup-muted, #475569);font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:2px;">Status</div>
+        <div style="font-size:11.5px;color:var(--map-popup-secondary, #CACFD8);font-weight:600;">${cfg.lbl}</div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
-      <div style="width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2">
+      <div style="width:24px;height:24px;border-radius:6px;background:var(--map-popup-icon-bg, rgba(255,255,255,0.04));border:1px solid var(--map-popup-icon-border, rgba(255,255,255,0.07));display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--map-popup-icon-color, rgba(255,255,255,0.3))" stroke-width="2">
           <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
         </svg>
       </div>
       <div>
-        <div style="font-size:9px;color:#475569;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:2px;">Coordinates</div>
-        <div style="font-size:10.5px;color:#94A3B8;font-family:monospace;letter-spacing:0.02em;">
+        <div style="font-size:9px;color:var(--map-popup-muted, #475569);font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:2px;">Coordinates</div>
+        <div style="font-size:10.5px;color:var(--map-popup-secondary, #94A3B8);font-family:monospace;letter-spacing:0.02em;">
           ${lat != null && lng != null ? `${Number(lat).toFixed(5)}&nbsp;${Number(lng).toFixed(5)}` : "No GPS"}
         </div>
       </div>

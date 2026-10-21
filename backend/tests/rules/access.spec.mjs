@@ -44,6 +44,15 @@ test('R01: account creation cannot set an initial privileged role', async () => 
   await assertFails(setDoc(doc(own('new-user'), 'users', 'new-user'), { role: 'super_admin', status: 'active', name: 'Attack' }));
   await assertSucceeds(setDoc(doc(own('new-user'), 'users', 'new-user'), { role: 'pending', status: 'inactive', name: 'New user' }));
 });
+test('R01: pending signup can save bounded trucking company without changing approval', async () => {
+  const profile = doc(own('new-driver'), 'users', 'new-driver');
+  await assertSucceeds(setDoc(profile, { uid: 'new-driver', role: 'pending', status: 'inactive', truckingCompany: 'Synthetic Transport' }));
+  await assertSucceeds(updateDoc(profile, { truckingCompany: 'Updated Transport' }));
+  await assert.equal((await getDoc(profile)).data().truckingCompany, 'Updated Transport');
+  await assertFails(updateDoc(profile, { truckingCompany: 'x'.repeat(101) }));
+  await assertFails(updateDoc(doc(own('driver-b'), 'users', 'new-driver'), { truckingCompany: 'Foreign' }));
+  await assertFails(updateDoc(profile, { role: 'driver', status: 'active' }));
+});
 test('R02: anonymous cannot read operational documents or enumerate tokens', async () => {
   const db = env.unauthenticatedContext().firestore();
   for (const [coll, id] of [['queue','q-a'], ['drivers','driver-a'], ['sap_assignments','dispatch-a'], ['qr_tokens','secret-token']]) {
@@ -89,6 +98,11 @@ test('R13 direct SDK override writes cannot bypass backend decision transactions
     dispatchKey: 'dispatch-a', requestedDriverId: 'driver-a', reason: 'Synthetic', requestedBy: 'staff',
     requestedAt: Timestamp.now(), status: 'pending', decidedBy: null, decision: null,
   }));
+});
+test('system error diagnostics are server-only, not readable or writable through client Firestore SDKs', async () => {
+  await assertFails(getDocs(collection(own('admin'), 'system_error_logs')));
+  await assertFails(setDoc(doc(own('admin'), 'system_error_logs', 'client-forged'), {eventCode: 'api_request_failure'}));
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'system_error_logs', 'any')));
 });
 test('R13 archived POD history remains readable only to staff and its original driver', async () => {
   for (const uid of ['staff', 'driver-a']) {
