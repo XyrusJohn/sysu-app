@@ -180,6 +180,61 @@ describe('Orders availability by build environment', () => {
   });
 });
 
+describe('Settings and theme preferences', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <button id="themeToggle" aria-label="Toggle dark/light mode"></button>
+      <svg id="iconLight"></svg><svg id="iconDark" class="hidden"></svg>
+      <button data-theme-choice="dark" aria-pressed="true"></button>
+      <button data-theme-choice="light" aria-pressed="false"></button>
+      <div id="mainContent"></div><div id="usersContent"></div><div id="sapContent"></div>
+      <div id="fleetContent"></div><div id="ordersContent"></div><div id="trackingContent"></div>
+      <div id="docsContent"></div><section id="settingsContent" class="hidden"></section>
+      <aside id="sidePanel" class="open"></aside><h2 id="viewTitle"></h2>
+    `;
+    localStorage.clear();
+  });
+
+  test('Settings opens as a real view instead of falling back to Overview', async () => {
+    const {Dashboard} = await import('./dashboard.js');
+    const dashboard = Object.create(Dashboard.prototype);
+    dashboard.state = {activeView: 'overview', theme: 'dark'};
+
+    await dashboard.handleNavClick('Settings');
+
+    expect(document.getElementById('settingsContent').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('mainContent').classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('viewTitle').textContent).toBe('Settings');
+    expect(document.getElementById('sidePanel').classList.contains('open')).toBe(false);
+  });
+
+  test('theme choices and the rail toggle stay in sync and persist across reloads', async () => {
+    const {Dashboard} = await import('./dashboard.js');
+    const dashboard = Object.create(Dashboard.prototype);
+    dashboard.state = {theme: 'dark'};
+    localStorage.setItem('sysu-theme', 'light');
+
+    dashboard._setupThemeControls();
+
+    const darkChoice = document.querySelector('[data-theme-choice="dark"]');
+    const lightChoice = document.querySelector('[data-theme-choice="light"]');
+    const toggle = document.getElementById('themeToggle');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(lightChoice.getAttribute('aria-pressed')).toBe('true');
+    expect(toggle.getAttribute('aria-label')).toBe('Switch to dark theme');
+
+    darkChoice.click();
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+    expect(localStorage.getItem('sysu-theme')).toBe('dark');
+    expect(darkChoice.getAttribute('aria-pressed')).toBe('true');
+
+    toggle.click();
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(localStorage.getItem('sysu-theme')).toBe('light');
+    expect(darkChoice.getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
 describe('Warehouse Base map tiles', () => {
   test('uses the existing OpenStreetMap provider and displays attribution', async () => {
     document.body.innerHTML = '<div id="warehouseBaseMap"></div>';
@@ -433,5 +488,271 @@ describe('filterSap', () => {
     expect(deliveredTab.classList.contains('active')).toBe(true);
   });
 
+});
+
+describe('SAP navigation default', () => {
+  test('opens SAP on For Assignment and leaves other filters selectable', async () => {
+    document.body.innerHTML = `
+      <div id="sapContent"></div>
+      <div id="underDevOverlay" aria-hidden="true"></div>
+      <div id="sapFilterSpinner" class="hidden"></div>
+      <button id="sapTabAll"></button><button id="sapTabDelivered"></button>
+      <button id="sapTabTransit"></button><button id="sapTabFullyLoaded"></button>
+      <button id="sapTabLoading"></button><button id="sapTabAssigned"></button>
+      <button id="sapTabForAssignment"></button>
+    `;
+    const {Dashboard} = await import('./dashboard.js');
+    const dashboard = Object.create(Dashboard.prototype);
+    dashboard.state = {activeView: 'overview'};
+    dashboard._syncSAP = vi.fn().mockResolvedValue(undefined);
+    dashboard._renderSapTable = vi.fn();
+
+    await dashboard.handleNavClick('SAP');
+
+    expect(dashboard.state.sapFilter).toBe('forAssignment');
+    expect(document.getElementById('sapTabForAssignment').classList.contains('active')).toBe(true);
+    expect(document.getElementById('sapTabDelivered').classList.contains('active')).toBe(false);
+    expect(dashboard._renderSapTable).toHaveBeenCalledOnce();
+
+    dashboard.filterSap('delivered');
+    expect(dashboard.state.sapFilter).toBe('delivered');
+    expect(document.getElementById('sapTabDelivered').classList.contains('active')).toBe(true);
+  });
+});
+
+describe('SAP shipment feedback', () => {
+  let Dashboard;
+  let SAPService;
+  let dashboard;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    document.body.innerHTML = `
+      <table><tbody id="sapBody"></tbody></table>
+      <span id="sapStatAll"></span><span id="sapStatDel"></span>
+      <span id="sapStatTransit"></span><span id="sapResultCount"></span>
+      <span id="sapLastUpdate"></span><input id="sapSearch" />
+    `;
+    ({ Dashboard } = await import('./dashboard.js'));
+    ({ SAPService } = await import('../api/sapService.js'));
+    dashboard = Object.create(Dashboard.prototype);
+    SAPService.state = { lastError: null };
+  });
+
+  const shipmentGroups = () => ({
+    'DISP-001': [{
+      SAPDispatchNumber: 'DISP-001',
+      OBDNumber: 'OBD-001',
+      TruckType: 'AUV',
+      Driver: '',
+      PlateNumber: '',
+      ShipmentStart: '',
+      Delivery: '',
+    }],
+  });
+
+  test('shows a useful assigned-filter empty state instead of a blank table', () => {
+    dashboard.state = {
+      sapLoading: false,
+      sapLoadError: false,
+      sapGroupedByDispatch: shipmentGroups(),
+      sapAssignments: {},
+      sapFilter: 'assigned',
+      sapSortKey: 'SAPDispatchNumber',
+      sapSortDir: 1,
+    };
+    dashboard._loadSapDispatchDetails = vi.fn();
+
+    dashboard._renderSapTable();
+
+    expect(document.querySelector('#sapBody [role="status"]')?.textContent).toBe('No assigned shipments yet.');
+    expect(document.getElementById('sapResultCount').textContent).toBe('0 dispatches');
+    expect(document.getElementById('sapStatAll').textContent).toBe('1');
+  });
+
+  test('keeps the SAP outage warning and retry available when the current filter has no rows', () => {
+    dashboard.state = {
+      sapLoading: false,
+      sapLoadError: true,
+      sapGroupedByDispatch: shipmentGroups(),
+      sapAssignments: {},
+      sapFilter: 'assigned',
+      sapSortKey: 'SAPDispatchNumber',
+      sapSortDir: 1,
+    };
+    dashboard._loadSapDispatchDetails = vi.fn();
+    dashboard._syncSAP = vi.fn();
+
+    dashboard._renderSapTable();
+
+    expect(document.querySelector('#sapBody [role="alert"]')?.textContent).toContain('Results reflect the last successful sync.');
+    expect(document.querySelector('#sapBody [role="status"]')?.textContent).toBe('No assigned shipments yet.');
+    document.querySelector('#sapBody [data-action="sap-retry"]').click();
+    expect(dashboard._syncSAP).toHaveBeenCalledOnce();
+  });
+
+  test('shows a retryable outage message instead of claiming there are no shipments', () => {
+    dashboard.state = {
+      sapLoading: false,
+      sapLoadError: true,
+      sapGroupedByDispatch: {},
+      sapAssignments: {},
+      sapFilter: 'all',
+    };
+    dashboard._syncSAP = vi.fn();
+
+    dashboard._renderSapTable();
+
+    expect(document.querySelector('#sapBody [role="alert"]')?.textContent).toContain('SAP shipment data is temporarily unavailable.');
+    expect(document.querySelector('#sapBody')?.textContent).not.toContain('No shipments available.');
+    document.querySelector('[data-action="sap-retry"]').click();
+    expect(dashboard._syncSAP).toHaveBeenCalledOnce();
+  });
+
+  test('keeps the last successful shipment snapshot after an SAP refresh failure', async () => {
+    const lastSuccessfulShipments = [{ SAPDispatchNumber: 'DISP-001' }];
+    SAPService.fetchShipments = vi.fn().mockResolvedValue([]);
+    SAPService.state.lastError = 'Network unavailable';
+    dashboard.state = {
+      sapShipments: lastSuccessfulShipments,
+      sapLoading: false,
+      sapLoadError: false,
+    };
+    dashboard._rebuildShipmentGroups = vi.fn();
+    dashboard._renderAll = vi.fn();
+    dashboard._renderSapTable = vi.fn();
+    dashboard._updateConnectionBadge = vi.fn();
+
+    await dashboard._syncSAP();
+
+    expect(dashboard.state.sapShipments).toBe(lastSuccessfulShipments);
+    expect(dashboard.state.sapLoadError).toBe(true);
+    expect(dashboard._renderAll).toHaveBeenCalledOnce();
+    expect(dashboard._rebuildShipmentGroups).not.toHaveBeenCalled();
+  });
+
+  test('clears the SAP outage state after a successful retry', async () => {
+    const shipments = [{ SAPDispatchNumber: 'DISP-002' }];
+    SAPService.fetchShipments = vi.fn().mockResolvedValue(shipments);
+    SAPService.state.lastError = null;
+    dashboard.state = { sapShipments: [], sapLoading: false, sapLoadError: true };
+    dashboard._rebuildShipmentGroups = vi.fn();
+    dashboard._renderAll = vi.fn();
+    dashboard._updateConnectionBadge = vi.fn();
+
+    await dashboard._syncSAP();
+
+    expect(dashboard.state.sapShipments).toBe(shipments);
+    expect(dashboard.state.sapLoadError).toBe(false);
+    expect(dashboard._renderAll).toHaveBeenCalledOnce();
+  });
+});
+
+describe('SAP connection help', () => {
+  let Dashboard;
+  let SAPService;
+  let dashboard;
+
+  beforeEach(async () => {
+    document.body.innerHTML = `
+      <div id="sapConnBadge"><div class="rounded-full"></div><span id="sapConnStatus"></span>
+        <button id="sapConnHelpButton" class="hidden" aria-expanded="false"></button>
+        <div id="sapConnHelpText" class="hidden">Error connecting to SAP, please check your internet connection.</div>
+      </div>`;
+    ({Dashboard} = await import('./dashboard.js'));
+    ({SAPService} = await import('../api/sapService.js'));
+    dashboard = Object.create(Dashboard.prototype);
+  });
+
+  test('shows an actionable, toggleable help message only while SAP is disconnected', () => {
+    SAPService.state.lastError = 'Network unavailable';
+    dashboard._updateConnectionBadge();
+
+    const button = document.getElementById('sapConnHelpButton');
+    const helpText = document.getElementById('sapConnHelpText');
+    expect(document.getElementById('sapConnStatus').textContent).toBe('Disconnected');
+    expect(button.classList.contains('hidden')).toBe(false);
+    expect(helpText.classList.contains('hidden')).toBe(true);
+
+    button.addEventListener('click', () => dashboard._toggleSapConnectionHelp());
+    button.click();
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(helpText.classList.contains('hidden')).toBe(false);
+    expect(helpText.textContent).toBe('Error connecting to SAP, please check your internet connection.');
+
+    button.click();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(helpText.classList.contains('hidden')).toBe(true);
+
+    SAPService.state.lastError = null;
+    dashboard._updateConnectionBadge();
+    expect(document.getElementById('sapConnStatus').textContent).toBe('Connected');
+    expect(button.classList.contains('hidden')).toBe(true);
+    expect(helpText.classList.contains('hidden')).toBe(true);
+  });
+});
+
+describe('assignment empty states', () => {
+  let Dashboard;
+  let dashboard;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    document.body.innerHTML = `
+      <div id="assignDriverModal" class="hidden">
+        <span id="assignModalDispatchNum"></span><span id="assignModalTruckType"></span>
+        <div id="assignModalDriverList"></div><button id="assignConfirmBtn"></button>
+        <div id="requestOverridePanel" class="hidden"></div>
+        <select id="requestOverrideReason"></select>
+      </div>
+    `;
+    ({ Dashboard } = await import('./dashboard.js'));
+    dashboard = Object.create(Dashboard.prototype);
+  });
+
+  test('explains when no queued driver can be assigned to a shipment', () => {
+    dashboard.state = {
+      queue: [], drivers: [], sapAssignments: {}, queueLoading: false,
+      queueLoadError: false, assignmentsLoading: false, assignmentsLoadError: false,
+    };
+    dashboard._getAvailableDrivers = vi.fn(() => []);
+    dashboard._resumeApprovedOverride = vi.fn().mockResolvedValue(undefined);
+    dashboard._ensureAdminQueueSubscriptions = vi.fn();
+
+    dashboard.openAssignModal('DISP-001', 'AUV');
+
+    expect(document.querySelector('#assignModalDriverList [role="status"]')?.textContent).toContain('No queued or eligible assigned drivers match the AUV truck type.');
+  });
+
+  test('distinguishes a driver availability failure from a genuine no-match result', () => {
+    dashboard.state = {
+      queue: [], drivers: [], sapAssignments: {}, queueLoading: false,
+      queueLoadError: true, assignmentsLoading: false, assignmentsLoadError: false,
+    };
+    dashboard._getAvailableDrivers = vi.fn(() => []);
+    dashboard._resumeApprovedOverride = vi.fn().mockResolvedValue(undefined);
+    dashboard._ensureAdminQueueSubscriptions = vi.fn();
+
+    dashboard.openAssignModal('DISP-001', 'AUV');
+
+    expect(document.querySelector('#assignModalDriverList [role="alert"]')?.textContent).toContain('Driver availability could not be loaded.');
+    expect(document.querySelector('#assignModalDriverList [role="status"]')).toBeNull();
+  });
+
+  test('explains when a fleet driver has no matching unassigned shipment', () => {
+    dashboard.state = {
+      queue: [{ id: 'driver-1', driverName: 'Test Driver', truckType: 'AUV' }],
+      sapGroupedByDispatch: {},
+      sapAssignments: {},
+      sapLoadError: false,
+    };
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    dashboard.openAssignModalForDriver('driver-1', 'AUV');
+
+    expect(document.querySelector('#assignModalDriverList [role="status"]')?.textContent).toContain('No unassigned shipments available.');
+    expect(alert).not.toHaveBeenCalled();
+    alert.mockRestore();
+  });
 });
 

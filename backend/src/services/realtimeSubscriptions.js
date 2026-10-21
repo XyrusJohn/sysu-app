@@ -1,4 +1,5 @@
 const STAFF = new Set(["fleet_manager", "admin", "super_admin"]);
+const ADMIN_ROLES = new Set(["admin", "super_admin"]);
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 
 function serialize(value) {
@@ -8,6 +9,16 @@ function serialize(value) {
         return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, serialize(item)]));
     }
     return value;
+}
+
+function projectMasterData(topic, item) {
+    const source = item.data();
+    const fields = topic === "securityGuards"
+        ? ["guardId", "firstName", "middleInitial", "lastName", "fullName", "active"]
+        : ["companyCode", "forwarderCode", "name", "active"];
+    return Object.fromEntries([["id", item.id], ...fields
+        .filter(field => source[field] !== undefined)
+        .map(field => [field, serialize(source[field])])]);
 }
 
 function createRealtimeSubscriptions({db}) {
@@ -77,10 +88,10 @@ function createRealtimeSubscriptions({db}) {
                 const statuses = new Set(["pending", "approved", "rejected", "expired", "completed"]);
                 ref = db.collection(collectionName);
                 if (statuses.has(params.status)) ref = ref.where("status", "==", params.status);
-            } else if (topic === "truckCompanies") {
+            } else if (topic === "truckCompanies" && ADMIN_ROLES.has(role)) {
                 collectionName = "truck_company";
                 ref = db.collection(collectionName);
-            } else if (topic === "securityGuards") {
+            } else if (topic === "securityGuards" && ADMIN_ROLES.has(role)) {
                 collectionName = "security_guard";
                 ref = db.collection(collectionName);
             } else {
@@ -92,6 +103,9 @@ function createRealtimeSubscriptions({db}) {
                 let data = document
                     ? (snapshot.exists ? {id: snapshot.id, ...serialize(snapshot.data())} : null)
                     : snapshot.docs.map(item => ({id: item.id, ...serialize(item.data())}));
+                if (topic === "truckCompanies" || topic === "securityGuards") {
+                    data = snapshot.docs.map(item => projectMasterData(topic, item));
+                }
                 if (role === "qr_generator" && topic === "queue" && Array.isArray(data)) {
                     data = data.map(({id: docId, driverId, driverName, plateNumber, truckType, status, entryTime}) =>
                         ({id: docId, driverId, driverName, plateNumber, truckType, status, entryTime}));

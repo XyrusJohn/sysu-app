@@ -1,5 +1,15 @@
 import "./style/main.css";
 
+try {
+    if (localStorage.getItem("sysu-theme") === "light") {
+        document.documentElement.setAttribute("data-theme", "light");
+    } else {
+        document.documentElement.removeAttribute("data-theme");
+    }
+} catch {
+    // The app keeps its dark default when browser storage is unavailable.
+}
+
 // ── DevTools deterrent banner ───────────────────────────────────────
 console.log(
     "%c⚠ SECURE SYSTEM",

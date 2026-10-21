@@ -26,6 +26,7 @@ import { API_CONFIG } from "../api/config.js";
 import { SecurityGuardService } from "../api/securityGuardService.js";
 import { TruckCompanyService } from "../api/truckCompanyService.js";
 import { StaffDriverService } from "../api/staffDriverService.js";
+import { SystemErrorService } from "../api/systemErrorService.js";
 import { subscribeRealtime, asCollectionSnapshot } from "../api/realtimeService.js";
 import { db, auth } from "../api/firebase.js";
 import { updateProfile } from "firebase/auth";
@@ -72,8 +73,15 @@ export class Dashboard {
             activeView: "overview",
             sapShipments: [],
             sapLoading: true,
+            sapLoadError: false,
             sapAssignments: {},
             sapDispatchDetails: {},
+            sapDispatchDetailsErrors: {},
+            sapDispatchDetailsMismatches: {},
+            systemErrorLogs: [],
+            systemErrorLogsLoading: false,
+            systemErrorLogsError: null,
+            systemErrorFilter: 'open',
             sapSortKey: "SAPDispatchNumber",
             sapSortDir: 1,
             user: null,
@@ -86,6 +94,7 @@ export class Dashboard {
             liveScansLoading: true,
             sapDocCache: {},    // sapDocId → {shipmentNumber, truckPlate, tripStatus}
             sapFilter: "all",
+            theme: "dark",
             sapGroupedByDispatch: {},
             queue: [],
             queueLoading: true,
@@ -138,8 +147,66 @@ export class Dashboard {
         this._updateGuardFullNamePreview = this._updateGuardFullNamePreview.bind(this);
     }
 
+    _getSavedTheme() {
+        try {
+            const savedTheme = localStorage.getItem("sysu-theme");
+            return savedTheme === "light" || savedTheme === "dark" ? savedTheme : "dark";
+        } catch {
+            return "dark";
+        }
+    }
+
+    _applyTheme(theme) {
+        const selectedTheme = theme === "light" ? "light" : "dark";
+        const iconLight = document.getElementById("iconLight");
+        const iconDark = document.getElementById("iconDark");
+        const themeToggle = document.getElementById("themeToggle");
+        const isLight = selectedTheme === "light";
+
+        this.state.theme = selectedTheme;
+        if (isLight) {
+            document.documentElement.setAttribute("data-theme", "light");
+            iconLight?.classList.add("hidden");
+            iconDark?.classList.remove("hidden");
+        } else {
+            document.documentElement.removeAttribute("data-theme");
+            iconLight?.classList.remove("hidden");
+            iconDark?.classList.add("hidden");
+        }
+        themeToggle?.setAttribute("aria-label", `Switch to ${isLight ? "dark" : "light"} theme`);
+        if (themeToggle) themeToggle.title = `Switch to ${isLight ? "dark" : "light"} theme`;
+
+        try {
+            localStorage.setItem("sysu-theme", selectedTheme);
+        } catch {
+            // The theme remains active for this session if storage is unavailable.
+        }
+        document.querySelectorAll("[data-theme-choice]").forEach((button) => {
+            const isSelected = button.dataset.themeChoice === selectedTheme;
+            button.setAttribute("aria-pressed", String(isSelected));
+            button.classList.toggle("border-sysu-red", isSelected);
+            button.classList.toggle("bg-sysu-red/5", isSelected);
+            button.classList.toggle("ring-1", isSelected);
+            button.classList.toggle("ring-sysu-red/30", isSelected);
+        });
+        switchMapTheme(selectedTheme);
+    }
+
+    _setupThemeControls() {
+        const themeToggle = document.getElementById("themeToggle");
+        this._applyTheme(this._getSavedTheme());
+
+        themeToggle?.addEventListener("click", () => {
+            this._applyTheme(this.state.theme === "light" ? "dark" : "light");
+        });
+        document.querySelectorAll("[data-theme-choice]").forEach((button) => {
+            button.addEventListener("click", () => this._applyTheme(button.dataset.themeChoice));
+        });
+    }
+
     async init() {
         console.log("[startup] dashboard initialization started");
+        SystemErrorService.installGlobalHandlers((message) => this._showErrorToast(message));
         this._startupStage = "authentication and profile verification";
         this._startupRecoveryTimer = setTimeout(() => this._showStartupRecovery(), 15000);
         AuthService.subscribe((user, error) => {
@@ -161,6 +228,7 @@ export class Dashboard {
                     console.log("[startup] profile accepted; starting dashboard data engines");
                     this._startupStage = "initial dashboard data loading";
                     this.state.user = user;
+                    void SystemErrorService.flushReports();
                     this._updateUserUI(user);
                     this.applyRBAC(user);
                     this._startDataEngines();
@@ -207,11 +275,13 @@ export class Dashboard {
         const tcTab = document.getElementById("docsTruckCompaniesTabBtn");
         const warehouseTab = document.getElementById("docsWarehouseTabBtn");
         const roleReqTab = document.getElementById("docsRoleRequestsTabBtn");
+        const systemErrorsTab = document.getElementById("docsSystemErrorsTabBtn");
         const isSuperAdmin = role === "super_admin";
         if (guardsTab) guardsTab.classList.toggle("hidden", !isAdmin);
         if (tcTab) tcTab.classList.toggle("hidden", !isAdmin);
         if (warehouseTab) warehouseTab.classList.toggle("hidden", !isSuperAdmin);
         if (roleReqTab) roleReqTab.classList.toggle("hidden", !isAdmin);
+        if (systemErrorsTab) systemErrorsTab.classList.toggle("hidden", !isAdmin);
     }
 
     async _startDataEngines() {
@@ -238,6 +308,7 @@ export class Dashboard {
                 this._refreshOpenDispatchDetail();
             }, (err) => {
                 console.warn("Assignments subscription failed:", err);
+                this._notifyFailure("assignment-subscription", err, "Live shipment data is temporarily unavailable. Check your connection and retry.");
                 this.state.assignmentsLoading = false;
                 this.state.assignmentsLoadError = true;
                 assignmentReady();
@@ -248,6 +319,7 @@ export class Dashboard {
             this.state.assignmentsLoadError = true;
             assignmentReady(); // unblock even on failure
             console.warn(err.message);
+            this._notifyFailure("assignment-subscription", err, "Live shipment data could not be started. Refresh and try again.");
         }
 
         this._subscribeGuards();
@@ -278,6 +350,7 @@ export class Dashboard {
             this._unlockDashboard();
         } catch (err) {
             console.error("Initial sync error:", err);
+            this._notifyFailure("dashboard-startup", err, "Some dashboard data could not be loaded. Check your connection and retry.");
             this._unlockDashboard();
         }
 
@@ -293,6 +366,7 @@ export class Dashboard {
             this._renderAll();
         }, (err) => {
             console.warn("Drivers subscription failed:", err);
+            this._notifyFailure("driver-subscription", err, "Driver data is temporarily unavailable. Check your connection and retry.");
             this.state.driversLoading = false;
             this.state.driversLoadError = true;
             this._renderAll();
@@ -309,6 +383,7 @@ export class Dashboard {
                     this._renderAll();
                 }, (err) => {
                     console.warn(err.message);
+                    this._notifyFailure("incident-subscription", err, "Incidents could not be refreshed. Check your connection and retry.");
                 });
         }
 
@@ -331,6 +406,7 @@ export class Dashboard {
             this._renderAll();
         }, (err) => {
             console.warn("Queue subscription failed:", err);
+            this._notifyFailure("queue-subscription", err, "Queue data is temporarily unavailable. Check your connection and retry.");
             this.state.queueLoading = false;
             this.state.queueLoadError = true;
             this._renderAll();
@@ -373,7 +449,10 @@ export class Dashboard {
                     shipmentNumber: loc.dispatchKey, tripStatus: loc.tripStatus, timestamp: loc.at || 0,
                     status: savedLocationStatus(loc.tripStatus)}, 'location', 'firestore');
             }
-        } catch (_) { console.warn('Saved driver locations unavailable'); }
+        } catch (error) {
+            console.warn('Saved driver locations unavailable');
+            this._notifyFailure("saved-locations", error, "Saved driver locations could not be loaded. Live updates may be delayed.");
+        }
         finally {
             this.state.liveScansLoading = false;
             this._scheduleLiveScansRender();
@@ -382,18 +461,25 @@ export class Dashboard {
 
     async _syncSAP(skipRender = false) {
         try {
-            this.state.sapShipments = await SAPService.fetchShipments();
+            const shipments = await SAPService.fetchShipments();
+            if (SAPService.state?.lastError) throw new Error(SAPService.state.lastError);
+            this.state.sapShipments = shipments;
+            this.state.sapLoadError = false;
+            this._sapErrorNotified = false;
             this._rebuildShipmentGroups();
             this.state.sapLoading = false;
             if (!skipRender) this._renderAll();
         } catch (err) {
             this.state.sapLoading = false;
+            this.state.sapLoadError = true;
             console.error("SAP sync error:", err);
-            if (!skipRender) {
-                const body = document.getElementById("sapBody");
-                if (body)
-                    body.innerHTML = `<tr><td colspan="9" class="text-center py-10 text-sysu-red">Failed to sync with SAP. Check CORS/Backend connection.</td></tr>`;
+            if (!this._sapErrorNotified) {
+                this._sapErrorNotified = true;
+                this._notifyFailure("sap-sync", err, "Unable to connect to SAP. Check your internet connection and retry.");
             }
+            // Keep the last successful shipment snapshot visible if SAP is temporarily unavailable.
+            if (!skipRender) this._renderAll();
+            else this._renderSapTable();
         } finally {
             this._updateConnectionBadge();
         }
@@ -404,17 +490,62 @@ export class Dashboard {
         if (!badge) return;
 
         const dot = badge.querySelector(".rounded-full");
-        const text = badge.querySelector("span");
-        const isConnected = !SAPService.state.lastError;
+        const text = document.getElementById("sapConnStatus");
+        const helpButton = document.getElementById("sapConnHelpButton");
+        const helpText = document.getElementById("sapConnHelpText");
+        const isConnected = !SAPService.state?.lastError;
 
         if (isConnected) {
-            dot.className = "w-1.5 h-1.5 rounded-full bg-green-500 pulse-dot";
-            text.className = "text-[11px] text-green-500";
-            text.textContent = "Connected";
+            if (dot) dot.className = "w-1.5 h-1.5 rounded-full bg-green-500 pulse-dot";
+            if (text) {
+                text.className = "text-[11px] text-green-500";
+                text.textContent = "Connected";
+            }
+            if (helpButton) {
+                helpButton.classList.add("hidden");
+                helpButton.setAttribute("aria-expanded", "false");
+            }
+            if (helpText) helpText.classList.add("hidden");
         } else {
-            dot.className = "w-1.5 h-1.5 rounded-full bg-red-500";
-            text.className = "text-[11px] text-red-500";
-            text.textContent = "Disconnected";
+            if (dot) dot.className = "w-1.5 h-1.5 rounded-full bg-red-500";
+            if (text) {
+                text.className = "text-[11px] text-red-500";
+                text.textContent = "Disconnected";
+            }
+            if (helpButton) helpButton.classList.remove("hidden");
+        }
+    }
+
+    _toggleSapConnectionHelp() {
+        const button = document.getElementById("sapConnHelpButton");
+        const helpText = document.getElementById("sapConnHelpText");
+        if (!button || !helpText || button.classList.contains("hidden")) return;
+        const isExpanded = button.getAttribute("aria-expanded") === "true";
+        button.setAttribute("aria-expanded", String(!isExpanded));
+        helpText.classList.toggle("hidden", isExpanded);
+    }
+
+    _setSapFilterTab(type) {
+        const tabIdMap = {
+            all: 'sapTabAll',
+            delivered: 'sapTabDelivered',
+            in_transit: 'sapTabTransit',
+            fully_loaded: 'sapTabFullyLoaded',
+            loading: 'sapTabLoading',
+            assigned: 'sapTabAssigned',
+            forAssignment: 'sapTabForAssignment',
+        };
+        this.state.sapFilter = type;
+
+        document.querySelectorAll('[id^="sapTab"]').forEach((tab) => {
+            tab.classList.remove("bg-db-item-active", "text-db-text", "active");
+            tab.classList.add("bg-db-panel/40", "text-db-text3");
+        });
+
+        const activeTab = document.getElementById(tabIdMap[type]);
+        if (activeTab) {
+            activeTab.classList.remove("bg-db-panel/40", "text-db-text3");
+            activeTab.classList.add("bg-db-item-active", "text-db-text", "active");
         }
     }
 
@@ -424,6 +555,7 @@ export class Dashboard {
             window.map = this.map;
         } catch (err) {
             console.error("Map init error:", err);
+            this._notifyFailure("map-initialization", err, "The map could not be loaded. Refresh the page or check your connection.");
         }
     }
 
@@ -479,11 +611,11 @@ export class Dashboard {
         console.error("[startup] dashboard startup timed out", {stage: this._startupStage});
         gatekeeper.innerHTML = `
             <div class="max-w-md px-6 text-center">
-                <h2 class="text-white text-lg font-black tracking-[0.12em] uppercase">Dashboard could not start</h2>
+                <h2 class="text-db-text text-lg font-black tracking-[0.12em] uppercase">Dashboard could not start</h2>
                 <p class="mt-3 text-sm text-db-text3">Secure sign-in or the live profile connection did not respond. The dashboard stays locked until your account is verified.</p>
                 <div class="mt-6 flex justify-center gap-3">
                     <button id="retryDashboardStartup" class="rounded-lg bg-sysu-red px-4 py-2 text-sm font-bold text-white">Retry</button>
-                    <button id="returnToDashboardSignIn" class="rounded-lg border border-white/15 px-4 py-2 text-sm font-bold text-white">Return to sign in</button>
+                    <button id="returnToDashboardSignIn" class="rounded-lg border border-db-border px-4 py-2 text-sm font-bold text-db-text">Return to sign in</button>
                 </div>
             </div>`;
         gatekeeper.setAttribute("role", "alert");
@@ -738,7 +870,7 @@ export class Dashboard {
 
         } catch (err) {
             console.error("Profile save error:", err);
-            alert("Failed to update profile: " + err.message);
+            this._notifyFailure("profile-save", err, "Profile changes could not be saved. Check your connection and try again.");
         } finally {
             saveBtn.textContent = originalText;
             saveBtn.disabled = false;
@@ -748,11 +880,51 @@ export class Dashboard {
     _showToast(message) {
         const toast = document.getElementById("toast");
         if (!toast) return;
+        clearTimeout(this._toastTimeout);
+        toast.classList.remove("toast-error");
+        toast.classList.remove("flex", "items-start");
+        toast.setAttribute("role", "status");
+        toast.setAttribute("aria-live", "polite");
         toast.textContent = message;
         toast.classList.add("show");
-        setTimeout(() => {
+        this._toastTimeout = setTimeout(() => {
             toast.classList.remove("show");
         }, 3000);
+    }
+
+    _showErrorToast(message = "Something went wrong. Check your connection and try again.") {
+        const toast = document.getElementById("toast");
+        if (!toast) return;
+        const now = Date.now();
+        if (this._lastErrorToast?.message === message && now - this._lastErrorToast.at < 8000) return;
+        this._lastErrorToast = {message, at: now};
+        clearTimeout(this._toastTimeout);
+        toast.classList.add("toast-error");
+        toast.setAttribute("role", "alert");
+        toast.setAttribute("aria-live", "assertive");
+        toast.setAttribute("aria-atomic", "true");
+        const icon = document.createElement("span");
+        icon.setAttribute("aria-hidden", "true");
+        icon.className = "mr-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current text-[11px] font-black";
+        icon.textContent = "!";
+        const label = document.createElement("span");
+        label.textContent = message;
+        toast.replaceChildren(icon, label);
+        toast.classList.add("flex", "items-start");
+        toast.classList.add("show");
+        this._toastTimeout = setTimeout(() => {
+            toast.classList.remove("show", "toast-error", "flex", "items-start");
+            toast.setAttribute("role", "status");
+            toast.setAttribute("aria-live", "polite");
+        }, 5000);
+    }
+
+    _notifyFailure(operation, error, message = "Something went wrong. Check your connection and try again.") {
+        SystemErrorService.report("frontend_operation_failure", {
+            operation,
+            errorName: error?.name || "Error",
+        });
+        this._showErrorToast(message);
     }
 
     _listenToRoleRequests() {
@@ -963,7 +1135,7 @@ export class Dashboard {
                 this._showToast("Role change request approved successfully.");
                 this._fetchRoleRequestsSocket();
             } else {
-                alert("Failed to approve request: " + (res?.message || "Unknown error"));
+                this._showErrorToast("The request could not be approved. Refresh the list and try again.");
             }
         });
     }
@@ -977,7 +1149,7 @@ export class Dashboard {
                 this._showToast("Role change request rejected.");
                 this._fetchRoleRequestsSocket();
             } else {
-                alert("Failed to reject request: " + (res?.message || "Unknown error"));
+                this._showErrorToast("The request could not be rejected. Refresh the list and try again.");
             }
         });
     }
@@ -1030,12 +1202,12 @@ export class Dashboard {
                     this._showToast("Role change request submitted for approval");
                     this._closeProfileModal();
                 } else {
-                    alert("Failed to submit request: " + (res?.message || "Unknown error"));
+                    this._showErrorToast("Your request could not be submitted. Check your connection and try again.");
                 }
             });
         } catch (err) {
             console.error("Submit role request error:", err);
-            alert("Failed to submit request: " + err.message);
+            this._notifyFailure("role-request", err, "Your request could not be submitted. Check your connection and try again.");
         } finally {
             saveBtn.textContent = originalText;
             saveBtn.disabled = false;
@@ -1128,9 +1300,14 @@ export class Dashboard {
 
         document.getElementById("underDevReturnBtn")?.addEventListener("click", () => this.handleNavClick("Overview"));
 
+        document.getElementById("sapConnHelpButton")?.addEventListener("click", () => this._toggleSapConnectionHelp());
+
         document.getElementById("tbarExportArea")?.addEventListener("click", () => {
-            this._syncSAP();
-            alert("SAP Shipment data synchronized.");
+            this._syncSAP().then(() => {
+                this._showToast(this.state.sapLoadError
+                    ? "SAP is unavailable. Shipment data was not refreshed."
+                    : "SAP shipment data synchronized.");
+            });
         });
 
         document.addEventListener("keydown", (e) => {
@@ -1141,37 +1318,8 @@ export class Dashboard {
         });
 
         // â"€â"€ Theme Toggle â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        const themeToggle = document.getElementById("themeToggle");
-        const iconLight = document.getElementById("iconLight");
-        const iconDark = document.getElementById("iconDark");
+        this._setupThemeControls();
 
-        const applyTheme = (theme) => {
-            if (theme === "light") {
-                document.documentElement.setAttribute("data-theme", "light");
-                iconLight?.classList.add("hidden");
-                iconDark?.classList.remove("hidden");
-            } else {
-                document.documentElement.removeAttribute("data-theme");
-                iconLight?.classList.remove("hidden");
-                iconDark?.classList.add("hidden");
-            }
-            localStorage.setItem("sysu-theme", theme);
-            switchMapTheme(theme);
-        };
-
-        // Restore saved theme (default: dark)
-        const savedTheme = localStorage.getItem("sysu-theme") || "dark";
-        applyTheme(savedTheme);
-
-        themeToggle?.addEventListener("click", () => {
-            const current =
-                document.documentElement.getAttribute("data-theme") === "light"
-                    ? "light"
-                    : "dark";
-            applyTheme(current === "light" ? "dark" : "light");
-        });
-
-        // ─── Documents tab sub-tab wiring ──────────────────────
         // Dispatch on btn.dataset.tab. Guards/Truck Companies sub-tabs are admin-only
         // (RBAC visibility handled in applyRBAC). Other tabs (pending/approved/rejected/
         // expired/completed) flow into _renderDocsView, which is the foundation owned by
@@ -1210,6 +1358,9 @@ export class Dashboard {
                     }
                 } else if (tab === "role-requests") {
                     this._renderRoleRequestsInDocs();
+                } else if (tab === "system-errors") {
+                    this.state.systemErrorFilter = 'open';
+                    this._renderDocsView();
                 } else if (typeof this._renderDocsView === "function") {
                     this._renderDocsView();
                 } else {
@@ -1995,7 +2146,7 @@ export class Dashboard {
             this._closeGuardModal();
         } catch (err) {
             console.error("Save guard error:", err);
-            this._showToast("Failed to save: " + err.message);
+            this._notifyFailure("guard-save", err, "The security guard could not be saved. Check your connection and try again.");
         } finally {
             if (saveBtn) {
                 saveBtn.disabled = false;
@@ -2014,7 +2165,7 @@ export class Dashboard {
             this._showToast(`Guard ${action.toLowerCase()}d`);
         } catch (err) {
             console.error("Toggle guard error:", err);
-            this._showToast("Failed: " + err.message);
+            this._notifyFailure("guard-status", err, "The guard status could not be updated. Check your connection and try again.");
         }
     }
 
@@ -2027,7 +2178,7 @@ export class Dashboard {
             this._showToast("Guard permanently deleted");
         } catch (err) {
             console.error("Delete guard error:", err);
-            this._showToast("Failed to delete guard: " + err.message);
+            this._notifyFailure("guard-delete", err, "The security guard could not be deleted. Check your permissions or try again.");
         }
     }
 
@@ -2109,7 +2260,7 @@ export class Dashboard {
             this._closeTruckCompanyModal();
         } catch (err) {
             console.error("Save truck company error:", err);
-            this._showToast("Failed to save: " + err.message);
+            this._notifyFailure("truck-company-save", err, "The truck company could not be saved. Check your connection and try again.");
         } finally {
             if (saveBtn) {
                 saveBtn.disabled = false;
@@ -2128,7 +2279,7 @@ export class Dashboard {
             this._showToast(`Truck company ${action.toLowerCase()}d`);
         } catch (err) {
             console.error("Toggle truck company error:", err);
-            this._showToast("Failed: " + err.message);
+            this._notifyFailure("truck-company-status", err, "The truck company status could not be updated. Check your connection and try again.");
         }
     }
 
@@ -2141,7 +2292,7 @@ export class Dashboard {
             this._showToast("Truck company permanently deleted");
         } catch (err) {
             console.error("Delete truck company error:", err);
-            this._showToast("Failed to delete truck company: " + err.message);
+            this._notifyFailure("truck-company-delete", err, "The truck company could not be deleted. Check your permissions or try again.");
         }
     }
 
@@ -2221,7 +2372,7 @@ export class Dashboard {
                             </div>
                         </div>
 
-                        <div id="warehouseBaseMap" class="w-full h-[460px] rounded-xl overflow-hidden border border-db-border bg-[#0B0F19] relative z-0 shadow-inner"></div>
+                        <div id="warehouseBaseMap" class="w-full h-[460px] rounded-xl overflow-hidden border border-db-border bg-db-bg relative z-0 shadow-inner"></div>
 
                         <div class="mt-3 flex items-center justify-between text-[11px] text-db-text3 px-1">
                             <span id="wbMapCoordsDisplay" class="font-mono text-db-text2 font-semibold">Coordinates: ${currentLat.toFixed(6)}, ${currentLng.toFixed(6)}</span>
@@ -2770,7 +2921,7 @@ export class Dashboard {
                 },
                 (err) => {
                     console.error("GPS error:", err);
-                    this._showToast("Failed to acquire GPS: " + err.message);
+                    this._showErrorToast("Could not get your location. Check location permission and GPS, then try again.");
                 },
                 { enableHighAccuracy: true, timeout: 10000 }
             );
@@ -2802,6 +2953,13 @@ export class Dashboard {
             saveBtn.innerHTML = `<span class="inline-block animate-spin mr-1">⏳</span> SAVING...`;
         }
 
+        const restoreSaveButton = () => {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Save Base Location`;
+            }
+        };
+
         const payload = {
             name,
             address,
@@ -2811,30 +2969,34 @@ export class Dashboard {
         };
 
         try {
+            if (!socket?.connected) {
+                throw new Error("socket disconnected");
+            }
+            let acknowledgementExpired = false;
+            const acknowledgementTimeout = setTimeout(() => {
+                acknowledgementExpired = true;
+                restoreSaveButton();
+                this._notifyFailure("warehouse-save", new Error("acknowledgement timeout"), "The warehouse location could not be saved. Check your connection and try again.");
+            }, 10000);
             // Emit via authenticated Socket.IO
             socket.emit(EVENTS.SAVE_WAREHOUSE_BASE, payload, (res) => {
-                if (saveBtn) {
-                    saveBtn.disabled = false;
-                    saveBtn.innerHTML = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Save Base Location`;
-                }
+                clearTimeout(acknowledgementTimeout);
+                if (acknowledgementExpired) return;
+                restoreSaveButton();
 
                 if (res && res.success) {
                     this.state._warehouseBase = res.data;
                     this._showToast("Warehouse Base & Geofence saved successfully!");
                     this._renderWarehouseBaseView();
                 } else {
-                    const msg = res?.message || "Failed to save warehouse base.";
-                    console.error("Socket save_warehouse_base failed:", msg);
-                    this._showToast("Error: " + msg);
+                    console.error("Socket save_warehouse_base failed");
+                    this._showErrorToast("The warehouse location could not be saved. Check your connection and try again.");
                 }
             });
         } catch (err) {
             console.error("Save base error:", err);
-            this._showToast("Failed: " + err.message);
-            if (saveBtn) {
-                saveBtn.disabled = false;
-                saveBtn.innerHTML = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Save Base Location`;
-            }
+            this._notifyFailure("warehouse-save", err, "The warehouse location could not be saved. Check your connection and try again.");
+            restoreSaveButton();
         }
     }
 
@@ -2856,6 +3018,7 @@ export class Dashboard {
             }
         }, (err) => {
             console.warn("Security guards unavailable:", err);
+            this._notifyFailure("guard-subscription", err, "Security guard data is temporarily unavailable. Check your connection and retry.");
             this.state.guardsLoading = false;
             this.state.guardsLoadError = true;
             if (this.state._activeDocsTab === "guards") this._refreshGuardList();
@@ -2863,6 +3026,7 @@ export class Dashboard {
             .then((unsub) => { this._guardsUnsub = unsub; })
             .catch((err) => {
                 console.warn("Guards listener failed:", err.message);
+                this._notifyFailure("guard-subscription", err, "Security guard data could not be loaded. Check your connection and retry.");
                 this.state.guardsLoading = false;
                 this.state.guardsLoadError = true;
                 if (this.state._activeDocsTab === "guards") this._refreshGuardList();
@@ -2885,6 +3049,7 @@ export class Dashboard {
             }
         }, (err) => {
             console.warn("Truck companies unavailable:", err);
+            this._notifyFailure("truck-company-subscription", err, "Truck company data is temporarily unavailable. Check your connection and retry.");
             this.state.truckCompaniesLoading = false;
             this.state.truckCompaniesLoadError = true;
             if (this.state._activeDocsTab === "truck-companies") this._refreshTcList();
@@ -2892,6 +3057,7 @@ export class Dashboard {
             .then((unsub) => { this._truckCompaniesUnsub = unsub; })
             .catch((err) => {
                 console.warn("Truck companies listener failed:", err.message);
+                this._notifyFailure("truck-company-subscription", err, "Truck company data could not be loaded. Check your connection and retry.");
                 this.state.truckCompaniesLoading = false;
                 this.state.truckCompaniesLoadError = true;
                 if (this.state._activeDocsTab === "truck-companies") this._refreshTcList();
@@ -3057,6 +3223,17 @@ export class Dashboard {
         const body = document.getElementById("sapBody");
         if (!body) return;
 
+        if (!body.dataset.sapRetryWired) {
+            body.dataset.sapRetryWired = "1";
+            body.addEventListener("click", (event) => {
+                const button = event.target.closest('[data-action="sap-retry"]');
+                if (!button) return;
+                button.disabled = true;
+                button.textContent = "Retrying…";
+                this._syncSAP();
+            });
+        }
+
         if (this.state.sapLoading) {
             body.innerHTML = this._loadingTableRows(9, 4, "Loading shipments");
             return;
@@ -3072,7 +3249,15 @@ export class Dashboard {
             }
             const resultCount = document.getElementById('sapResultCount');
             if (resultCount) resultCount.textContent = '0 dispatches';
-            body.innerHTML = `<tr>
+            body.innerHTML = this.state.sapLoadError ? `<tr>
+          <td colspan="9" class="px-4 py-0">
+            <div role="alert" class="flex flex-col items-center justify-center gap-3 min-h-[240px] text-center w-full">
+              <span class="text-db-text2 font-semibold">SAP shipment data is temporarily unavailable.</span>
+              <span class="text-db-text3 text-sm">Check the SAP connection and try again.</span>
+              <button type="button" data-action="sap-retry" class="rounded-lg border border-db-border px-3 py-2 text-xs font-bold text-db-text2 hover:bg-db-item-hover">Retry</button>
+            </div>
+        </td>
+        </tr>` : `<tr>
           <td colspan="9" class="px-4 py-0">
             <div class="flex flex-col items-center justify-center min-h-[240px] text-center w-full">
               <span class="text-db-text3 italic tracking-wide">No shipments available.</span>
@@ -3185,6 +3370,33 @@ export class Dashboard {
             return true;
         });
 
+        const filterEmptyMessages = {
+            delivered: "No completed shipments yet.",
+            in_transit: "No shipments are currently in transit.",
+            fully_loaded: "No fully loaded shipments yet.",
+            loading: "No shipments are currently loading.",
+            assigned: "No assigned shipments yet.",
+            forAssignment: "No shipments are ready for assignment right now.",
+        };
+        if (filtered.length === 0) {
+            const message = q.trim()
+                ? "No shipments match your search."
+                : filterEmptyMessages[this.state.sapFilter] || "No shipments available.";
+            const e = (id, value) => {
+                const element = document.getElementById(id);
+                if (element) element.textContent = value;
+            };
+            e("sapStatAll", String(total));
+            e("sapStatDel", String(validKeys.filter((key) => isDeliveredAssignment(this.state.sapAssignments[key])).length));
+            e("sapStatTransit", String(validKeys.filter((key) => this.state.sapAssignments[key]?.tripStatus?.toLowerCase() === "in_transit").length));
+            e("sapResultCount", "0 dispatches");
+            const errorNotice = this.state.sapLoadError
+                ? `<div role="alert" class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-db-text2"><span>SAP is unavailable. Results reflect the last successful sync.</span><button type="button" data-action="sap-retry" class="font-bold text-sysu-red hover:underline">Retry</button></div>`
+                : "";
+            body.innerHTML = `<tr><td colspan="9" class="px-4 py-0"><div class="py-3">${errorNotice}<div role="status" class="flex items-center justify-center min-h-[200px] text-center text-db-text3">${message}</div></div></td></tr>`;
+            return;
+        }
+
         // Sort —" "planned" filter overrides to sort by PlanningDate ascending
         let key = this.state.sapSortKey;
         let dir = this.state.sapSortDir;
@@ -3242,7 +3454,7 @@ export class Dashboard {
             e("sapResultCount", `${filtered.length} dispatch${filtered.length !== 1 ? "es" : ""}`);
         }
 
-        body.innerHTML = finalRenderList
+        body.innerHTML = (this.state.sapLoadError ? `<tr><td colspan="9" class="px-4 py-3"><div role="alert" class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-db-text2"><span>SAP is unavailable. Showing the last successfully loaded shipment data.</span><button type="button" data-action="sap-retry" class="font-bold text-sysu-red hover:underline">Retry</button></div></td></tr>` : "") + finalRenderList
             .map((g, index) => {
                 const { key, rec, count } = g;
                 const shipmentDisplay = stripZeros(key);
@@ -3651,7 +3863,7 @@ export class Dashboard {
                             return { badge: 'Naghihintay', dot: 'text-db-text3' };
                         })();
                         return `
-                        <div class="order-card rounded-xl border cursor-pointer overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-lg" style="background:#13161b;border-color:rgba(255,255,255,0.08);" onclick="window.dashboard.openDrvModal('${d.id}')">
+                        <div class="order-card rounded-xl border border-db-border bg-db-panel cursor-pointer overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-lg" onclick="window.dashboard.openDrvModal('${d.id}')">
                             <div class="flex items-start gap-4 px-5 pt-4 pb-3">
                                 <div class="flex flex-col gap-1 min-w-0">
                                     <span class="text-[9px] font-mono uppercase tracking-widest text-db-text3 opacity-50">Queue</span>
@@ -3663,17 +3875,17 @@ export class Dashboard {
                                 </div>
                                 <div class="flex flex-col items-end gap-0.5 shrink-0">
                                     <span class="text-[8px] font-bold uppercase tracking-widest text-db-text3 opacity-40">${statusDisplay.dot === 'text-sysu-red' ? 'Assigned' : 'Queued'}</span>
-                                    <span class="text-[10px] font-mono font-semibold" style="color:#60a5fa;">${assignedLabel}</span>
+                                    <span class="text-[10px] font-mono font-semibold text-blue-400">${assignedLabel}</span>
                                     <span class="text-[9px] text-db-text3 opacity-50">${elapsedLabel}</span>
                                 </div>
                             </div>
-                            <div class="flex items-center gap-3 px-5 pb-4" style="border-top:1px solid rgba(255,255,255,0.04);padding-top:10px;margin-top:2px;">
-                                <div class="flex items-center gap-2.5 rounded-lg px-3 py-2 flex-1 min-w-0" style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);">
-                                    <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0" style="background:rgba(200,16,46,0.15);color:#f87171;">${escapeHtml((d.driverName || "?").charAt(0).toUpperCase())}</div>
+                            <div class="flex items-center gap-3 px-5 pb-4 border-t border-db-border pt-2.5 mt-0.5">
+                                <div class="flex items-center gap-2.5 rounded-lg px-3 py-2 flex-1 min-w-0 bg-db-bg border border-db-border">
+                                    <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 bg-sysu-red/10 text-sysu-red">${escapeHtml((d.driverName || "?").charAt(0).toUpperCase())}</div>
                                     <div class="min-w-0">
                                         <div class="text-[12px] font-bold text-db-text truncate">${escapeHtml(d.driverName || "—")}</div>
                                         <div class="text-[9px] font-mono text-db-text3 opacity-60">${escapeHtml(d.plateNumber || "—")}</div>
-                                        ${d.truckCompany ? `<div class="text-[9px] font-medium mt-0.5 truncate" style="color:#d4a017cc;">${escapeHtml(d.truckCompany)}</div>` : ""}
+                                        ${d.truckCompany ? `<div class="text-[9px] font-medium mt-0.5 truncate text-sysu-gold">${escapeHtml(d.truckCompany)}</div>` : ""}
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-1.5 text-[9px] text-db-text3 shrink-0 opacity-50">
@@ -3684,7 +3896,7 @@ export class Dashboard {
                                         href="${viberHref}"
                                         target="_blank"
                                         class="flex items-center justify-center gap-1.5 ${hasPhone ? 'bg-green-600 hover:bg-green-700' : 'bg-db-item-hover opacity-50 cursor-not-allowed'} text-white rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition-all shrink-0"
-                                        ${hasPhone ? '' : `onclick="event.preventDefault(); alert('No phone number on file.');"`}
+                                        ${hasPhone ? '' : `onclick="event.preventDefault(); window.dashboard._showToast('No phone number is on file for this driver.');"`}
                                 >
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                                     ${hasPhone ? 'Viber' : 'No Phone'}
@@ -3707,7 +3919,7 @@ export class Dashboard {
                             <div class="flex-1 h-px ${cc(label).border.replace('border-', 'bg-')} opacity-30"></div>
                             <span class="font-mono text-[11px] font-semibold text-db-text3 opacity-40">0 queued</span>
                         </div>
-                        <div class="flex flex-col items-center justify-center py-12 rounded-xl border" style="background:rgba(13,15,18,0.6);border-color:rgba(255,255,255,0.05);">
+                        <div class="flex flex-col items-center justify-center py-12 rounded-xl border border-db-border bg-db-panel">
                             <div class="text-db-text3 opacity-30 mb-2"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>
                             <span class="text-[11px] text-db-text3 opacity-40">No orders</span>
                         </div>
@@ -3746,7 +3958,7 @@ export class Dashboard {
         // Find driver from queue by id
         const driver = this.state.queue.find((q) => q.id === driverId);
         if (!driver) {
-            alert("Driver not found in queue.");
+            this._showToast("This driver is no longer in the queue. Refresh the fleet list and try again.");
             return;
         }
 
@@ -3778,7 +3990,23 @@ export class Dashboard {
         });
 
         if (unassignedKeys.length === 0) {
-            alert(`No unassigned SAP dispatches available.\nDriver: ${driverName}\nTruck type: ${truckType || "any"}\n\nTry assigning from the SAP Shipments tab instead.`);
+            const listEl = document.getElementById("assignModalDriverList");
+            if (!listEl) return;
+            const modal = document.getElementById("assignDriverModal");
+            const dispatchNum = document.getElementById("assignModalDispatchNum");
+            const truckTypeEl = document.getElementById("assignModalTruckType");
+            const confirmBtn = document.getElementById("assignConfirmBtn");
+            if (dispatchNum) dispatchNum.textContent = `${driverName} — Select Dispatch`;
+            if (truckTypeEl) truckTypeEl.textContent = truckType || "ANY";
+            listEl.innerHTML = this.state.sapLoadError
+                ? `<div role="alert" class="p-8 text-center"><p class="text-sm font-semibold text-db-text2">SAP shipment data is temporarily unavailable.</p><p class="mt-2 text-xs text-db-text3">Assignment availability could not be confirmed. Please retry after SAP reconnects.</p></div>`
+                : `<div role="status" class="p-8 text-center"><p class="text-sm font-semibold text-db-text2">No unassigned shipments available.</p><p class="mt-2 text-xs text-db-text3">No unassigned SAP shipments match ${escapeHtml(truckType || "this driver's")} truck type. Check SAP Shipments or try again later.</p></div>`;
+            if (confirmBtn) {
+                confirmBtn.disabled = true;
+                confirmBtn.textContent = "No shipment available";
+            }
+            modal?.classList.remove("hidden");
+            modal?.classList.add("flex");
             return;
         }
 
@@ -3876,7 +4104,7 @@ export class Dashboard {
         const driverId = this.state.selectedQueueDriverId;
 
         if (!dispatchKey || !driverId) {
-            alert("No dispatch or driver selected. Please try again.");
+            this._showErrorToast("Select a shipment and a driver before assigning.");
             return;
         }
 
@@ -3889,7 +4117,7 @@ export class Dashboard {
 
         const driver = this.state.queue.find((q) => q.id === driverId);
         if (!driver) {
-            alert("Driver not found in queue. The driver may have already been assigned.");
+            this._showErrorToast("This driver is no longer available in the queue. Refresh and try again.");
             this.closeAssignModal();
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = originalText; }
             return;
@@ -3901,7 +4129,7 @@ export class Dashboard {
         // Read the Auth UID from the queue entry (unifies with sysu-go mobile app's driverId assumption)
         const driverUid = driver.driverId;
         if (!driverUid) {
-            alert("Cannot assign: queue entry is missing driverId (Auth UID). Contact admin.");
+            this._showErrorToast("This queue entry is incomplete. Contact an administrator before assigning.");
             this.closeAssignModal();
             if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = originalText; }
             return;
@@ -3943,14 +4171,14 @@ export class Dashboard {
             overrideTokenId: this.state.overrideTokenId || null,
         })
             .then(() => {
-                alert(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
+                this._showToast(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
                 this.state.overrideTokenId = null;
                 this.closeAssignModal();
                 this._renderAll();
             })
             .catch((err) => {
                 console.error("Fleet assign error:", err.code, err.message);
-                alert("Failed to assign driver: " + (err.message || err.code || "unknown"));
+                this._showErrorToast("The driver could not be assigned. Check your connection and try again.");
             })
             .finally(() => {
                 if (confirmBtn) {
@@ -3973,31 +4201,7 @@ export class Dashboard {
     }
 
     filterSap(type) {
-        this.state.sapFilter = type;
-
-        // Map type to tab ID
-        const tabIdMap = {
-            delivered: 'sapTabDelivered',
-            in_transit: 'sapTabTransit',
-            fully_loaded: 'sapTabFullyLoaded',
-            loading: 'sapTabLoading',
-            assigned: 'sapTabAssigned',
-            forAssignment: 'sapTabForAssignment',
-        };
-
-        // Remove active classes from all tabs
-        document.querySelectorAll('[id^="sapTab"]').forEach((tab) => {
-            tab.classList.remove("bg-db-item-active", "text-db-text", "active");
-            tab.classList.add("bg-db-panel/40", "text-db-text3");
-        });
-
-        // Add active class to the selected tab
-        const activeTabId = tabIdMap[type];
-        const activeTab = document.getElementById(activeTabId);
-        if (activeTab) {
-            activeTab.classList.remove("bg-db-panel/40", "text-db-text3");
-            activeTab.classList.add("bg-db-item-active", "text-db-text", "active");
-        }
+        this._setSapFilterTab(type);
 
         // Show loading spinner and refresh data
         const spinner = document.getElementById('sapFilterSpinner');
@@ -4043,8 +4247,9 @@ export class Dashboard {
         const ordersContent = document.getElementById("ordersContent");
         const trackingContent = document.getElementById("trackingContent");
         const docsContent = document.getElementById("docsContent");
+        const settingsContent = document.getElementById("settingsContent");
 
-        const views = [mainContent, usersContent, sapContent, fleetContent, ordersContent, trackingContent, docsContent];
+        const views = [mainContent, usersContent, sapContent, fleetContent, ordersContent, trackingContent, docsContent, settingsContent];
         views.forEach((v) => {
             if (v) v.style.setProperty("display", "none", "important");
         });
@@ -4062,7 +4267,7 @@ export class Dashboard {
         };
 
         // Hide ALL content views first —" then caller shows what it needs
-        document.querySelectorAll("#mainContent, #fleetContent, #ordersContent, #usersContent, #sapContent, #trackingContent, #docsContent")
+        document.querySelectorAll("#mainContent, #fleetContent, #ordersContent, #usersContent, #sapContent, #trackingContent, #docsContent, #settingsContent")
             .forEach((el) => el?.classList.add("hidden"));
 
         if (viewId === "users") {
@@ -4072,6 +4277,8 @@ export class Dashboard {
         } else if (viewId === "sap") {
             showView(sapContent);
             if (sidePanel) sidePanel.classList.remove("open");
+            // Open SAP on the next actionable workflow state, not historical deliveries.
+            this._setSapFilterTab('forAssignment');
             // Show loading spinner while fetching fresh SAP data
             const spinner = document.getElementById('sapFilterSpinner');
             if (spinner) spinner.classList.remove('hidden');
@@ -4081,26 +4288,6 @@ export class Dashboard {
                 console.error('Error syncing SAP data on navigation:', e);
             }
             if (spinner) spinner.classList.add('hidden');
-            // Set default filter to 'delivered' (completed trips)
-            this.state.sapFilter = 'delivered';
-            // Update tab UI to reflect delivered filter
-            const tabIdMap = {
-                delivered: 'sapTabDelivered',
-                in_transit: 'sapTabTransit',
-                fully_loaded: 'sapTabFullyLoaded',
-                loading: 'sapTabLoading',
-                assigned: 'sapTabAssigned',
-                forAssignment: 'sapTabForAssignment',
-            };
-            document.querySelectorAll('[id^="sapTab"]').forEach((tab) => {
-                tab.classList.remove("bg-db-item-active", "text-db-text", "active");
-                tab.classList.add("bg-db-panel/40", "text-db-text3");
-            });
-            const activeTab = document.getElementById(tabIdMap['delivered']);
-            if (activeTab) {
-                activeTab.classList.remove("bg-db-panel/40", "text-db-text3");
-                activeTab.classList.add("bg-db-item-active", "text-db-text", "active");
-            }
             this._renderSapTable();
         } else if (viewId === "drivers") {
             showView(fleetContent);
@@ -4146,6 +4333,10 @@ export class Dashboard {
                 usersContent.style.flex = "";
                 usersContent.style.maxWidth = "";
             }
+        } else if (viewId === "settings") {
+            showView(settingsContent);
+            if (sidePanel) sidePanel.classList.remove("open");
+            this._applyTheme(this.state.theme || this._getSavedTheme());
         } else {
             showView(mainContent);
             if (sidePanel && !sidePanel.classList.contains("open")) {
@@ -4216,6 +4407,7 @@ export class Dashboard {
             window.location.href = "index.html";
         } catch (err) {
             console.error("Logout error:", err);
+            this._notifyFailure("logout", err, "You could not be signed out. Check your connection and try again.");
         }
     }
 
@@ -4289,7 +4481,7 @@ export class Dashboard {
         const saveBtn = document.getElementById("drvSaveBtn");
 
         if (!nm || !phone) {
-            alert("Name and Phone are required.");
+            this._showErrorToast("Driver name and phone number are required.");
             return;
         }
 
@@ -4314,11 +4506,11 @@ export class Dashboard {
             await StaffDriverService.save(id, data);
 
             this.closeDrvModal();
-            alert("Driver saved. Fleet Manager updated.");
+            this._showToast("Driver saved. Fleet Manager updated.");
             this._renderAll();
         } catch (err) {
             console.error("Save Driver Error:", err);
-            alert("Error saving driver: " + err.message);
+            this._notifyFailure("driver-save", err, "The driver could not be saved. Check your connection and try again.");
         } finally {
             if (saveBtn) {
                 saveBtn.disabled = false;
@@ -4345,7 +4537,7 @@ export class Dashboard {
             }
         } catch (err) {
             console.error("Delete Driver Error:", err);
-            alert("Error deleting driver: " + err.message);
+            this._notifyFailure("driver-delete", err, "The driver could not be deleted. Check your permissions or try again.");
         }
     }
 
@@ -4439,7 +4631,8 @@ export class Dashboard {
             this._renderUsersTable(users);
         }, (err) => {
             console.error("Users subscription error:", err);
-            tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-sysu-red">Error loading users: ${escapeHtml(err.message)}</td></tr>`;
+            this._notifyFailure("user-list-subscription", err, "User accounts could not be loaded. Check your connection and retry.");
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-sysu-red">User accounts are temporarily unavailable. Refresh to try again.</td></tr>';
         });
     }
 
@@ -4494,11 +4687,12 @@ export class Dashboard {
             const userLabel = name || email || `Unnamed account · …${accountSuffix}`;
             const isPending = u.role === "pending" || u.status === "inactive";
             const deletionPending = u.deletionState === "pending";
+            const isLightTheme = document.documentElement.dataset.theme === "light";
 
             let roleSelectHtml;
             if (isSuperAdmin && u.role !== "super_admin" && !u.deletionState) {
                 roleSelectHtml = `
-                <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-[#1f2937] border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-[#60a5fa] transition-colors focus:ring-1 focus:ring-[#60a5fa]">
+                <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-db-panel border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-blue-400 transition-colors focus:ring-1 focus:ring-blue-400">
                   <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
                   <option value="fleet_manager" ${u.role === "fleet_manager" ? "selected" : ""}>Fleet Manager</option>
                   <option value="qr_generator" ${u.role === "qr_generator" ? "selected" : ""}>QR Generator</option>
@@ -4513,23 +4707,16 @@ export class Dashboard {
                 !u.deletionState
             ) {
                 roleSelectHtml = `
-                <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-[#1f2937] border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-[#60a5fa] transition-colors focus:ring-1 focus:ring-[#60a5fa]">
+                <select data-action="change-role" data-uid="${escapeHtml(docId)}" class="bg-db-panel border border-db-border text-db-text px-3 py-1.5 rounded-lg text-xs font-semibold outline-none cursor-pointer hover:border-blue-400 transition-colors focus:ring-1 focus:ring-blue-400">
                   <option value="fleet_manager" ${u.role === "fleet_manager" ? "selected" : ""}>Fleet Manager</option>
                   <option value="qr_generator" ${u.role === "qr_generator" ? "selected" : ""}>QR Generator</option>
                   <option value="driver" ${u.role === "driver" ? "selected" : ""}>Driver</option>
                   <option value="pending" ${isPending ? "selected" : ""}>Pending (Suspended)</option>
                 </select>`;
             } else {
-                const roleColor =
-                    u.role === "super_admin"
-                        ? "#f04444"
-                        : u.role === "admin"
-                            ? "#4ade80"
-                            : u.role === "qr_generator"
-                                ? "#a78bfa"
-                                : u.role === "fleet_manager"
-                                    ? "#38bdf8"
-                                    : "#60a5fa";
+                const roleColor = isLightTheme
+                    ? ({ super_admin: "#b91c1c", admin: "#166534", qr_generator: "#6b21a8", fleet_manager: "#155e75" }[u.role] || "#1e40af")
+                    : ({ super_admin: "#f04444", admin: "#4ade80", qr_generator: "#a78bfa", fleet_manager: "#38bdf8" }[u.role] || "#60a5fa");
                 const roleBg =
                     u.role === "super_admin"
                         ? "rgba(240,68,68,0.1)"
@@ -4543,7 +4730,9 @@ export class Dashboard {
                 roleSelectHtml = `<span style="padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;background:${roleBg};color:${roleColor};">${(u.role || "user").replace(/_/g, " ")}</span>`;
             }
 
-            const statusColor = isPending ? "#fbbf24" : "#4ade80";
+            const statusColor = isPending
+                ? (isLightTheme ? "#92400e" : "#fbbf24")
+                : (isLightTheme ? "#166534" : "#4ade80");
             const statusBg = isPending
                 ? "rgba(251,191,36,0.1)"
                 : "rgba(74,222,128,0.1)";
@@ -4620,7 +4809,7 @@ export class Dashboard {
             this._showToast("User account deleted successfully");
         } catch (e) {
             console.error("Error deleting user:", e);
-            alert("Error deleting user: " + e.message);
+            this._notifyFailure("user-delete", e, "The account could not be deleted. Check your permissions or try again.");
         }
     }
 
@@ -4726,7 +4915,7 @@ export class Dashboard {
             this._showToast("Role updated successfully.");
         } catch (e) {
             console.error("Error updating role", e);
-            alert("Error updating role: " + e.message);
+            this._notifyFailure("user-role-update", e, "The user role could not be updated. Check your permissions or try again.");
         }
     }
 
@@ -4754,17 +4943,40 @@ export class Dashboard {
         await Promise.all(batches.map(async batch => {
             batch.forEach(key => this._sapDispatchDetailsPending.add(key));
             try {
-                const details = await SAPService.fetchDispatchDetails(batch);
+                const response = await SAPService.fetchDispatchDetails(batch);
+                const details = response?.data || response;
+                const warnings = Array.isArray(response?.warnings) ? response.warnings : [];
+                const warningByDispatch = new Map(warnings.map(warning => [warning.dispatchKey, warning]));
                 for (const key of batch) {
                     this.state.sapDispatchDetails[key] = Array.isArray(details?.[key]) ? details[key] : [];
-                    this._sapDispatchDetailsFetchedAt.set(key, Date.now());
-                    this._sapDispatchDetailsRetryAfter.delete(key);
+                    const mismatch = warningByDispatch.get(key);
+                    if (mismatch && Number.isInteger(mismatch.missingCount) && mismatch.missingCount > 0) {
+                        this.state.sapDispatchDetailsMismatches[key] = {
+                            expectedCount: mismatch.expectedCount,
+                            receivedCount: mismatch.receivedCount,
+                            missingCount: mismatch.missingCount,
+                        };
+                        this._sapDispatchDetailsFetchedAt.delete(key);
+                        this._sapDispatchDetailsRetryAfter.set(key, Date.now() + 30_000);
+                    } else {
+                        delete this.state.sapDispatchDetailsMismatches[key];
+                        this._sapDispatchDetailsFetchedAt.set(key, Date.now());
+                        this._sapDispatchDetailsRetryAfter.delete(key);
+                    }
+                    delete this.state.sapDispatchDetailsErrors[key];
                 }
                 this._rebuildShipmentGroups();
                 this._renderSapTable();
+                this._refreshOpenDispatchDetail();
             } catch (error) {
                 for (const key of batch) this._sapDispatchDetailsRetryAfter.set(key, Date.now() + 30_000);
-                console.warn('Assigned shipment details unavailable');
+                for (const key of batch) this.state.sapDispatchDetailsErrors[key] = true;
+                for (const key of batch) this.state.sapDispatchDetailsErrors[key] = {requestId: error.requestId || null};
+                SystemErrorService.report('frontend_operation_failure', {
+                    operation: 'sap-detail-enrichment', errorName: error?.name || 'Error',
+                });
+                console.warn('[SAP] Assigned shipment details unavailable', {requestId: error.requestId || null});
+                if (batch.includes(this._currentDispatchKey)) this._refreshOpenDispatchDetail();
             } finally {
                 batch.forEach(key => this._sapDispatchDetailsPending.delete(key));
             }
@@ -4794,6 +5006,36 @@ export class Dashboard {
 
         const rec = group.find(row => row.Route || row.PlanningDate || row.Planning_Date || row.ActualDelDate) || group[0];
         const asgn = this.state.sapAssignments[dispatchNumber];
+        const detailsWarning = document.getElementById('sapDtlDataWarning');
+        if (detailsWarning) {
+            const loadError = this.state.sapDispatchDetailsErrors?.[dispatchNumber];
+            const mismatch = this.state.sapDispatchDetailsMismatches?.[dispatchNumber];
+            detailsWarning.hidden = !loadError && !mismatch;
+            const warningText = detailsWarning.querySelector('span');
+            if (warningText) {
+                const requestId = this.state.sapDispatchDetailsErrors[this._currentDispatchKey]?.requestId;
+                warningText.textContent = mismatch
+                    ? `SAP returned ${mismatch.receivedCount} of ${mismatch.expectedCount} expected detail rows (${mismatch.missingCount} missing). Verify SAP data; saved assignment and POD data remain available.`
+                    : `Some SAP shipment details could not be loaded. Saved assignment and POD data remain available.${requestId ? ` Reference: ${requestId}` : ''}`;
+            }
+            if (!detailsWarning.dataset.retryWired) {
+                detailsWarning.dataset.retryWired = '1';
+                detailsWarning.addEventListener('click', event => {
+                    const button = event.target.closest('[data-action="sap-detail-retry"]');
+                    if (!button) return;
+                    const key = this._currentDispatchKey;
+                    if (!key) return;
+                    button.disabled = true;
+                    button.textContent = 'Retrying…';
+                    this._sapDispatchDetailsRetryAfter.delete(key);
+                    this._loadSapDispatchDetails([key]).finally(() => {
+                        if (!button.isConnected) return;
+                        button.disabled = false;
+                        button.textContent = 'Retry details';
+                    });
+                });
+            }
+        }
 
         const set = (id, val) => {
             const el = document.getElementById(id);
@@ -4918,7 +5160,7 @@ export class Dashboard {
                 const detailsId = `sapObdGroupDetails-${groupIndex}`;
                 return `
                     <tr class="border-b border-db-border/50 bg-db-panel/40">
-                        <td data-label="OBD Number" class="py-2 px-1 text-center"><button type="button" data-obd-group-toggle aria-expanded="false" aria-controls="${detailsId}" class="text-sysu-gold hover:text-white text-[10px] font-bold" aria-label="Show ${rows.length} OBD records">${rows.length} OBDs <span aria-hidden="true">v</span></button></td>
+                        <td data-label="OBD Number" class="py-2 px-1 text-center"><button type="button" data-obd-group-toggle aria-expanded="false" aria-controls="${detailsId}" class="text-sysu-gold hover:text-db-text text-[10px] font-bold" aria-label="Show ${rows.length} OBD records">${rows.length} OBDs <span aria-hidden="true">v</span></button></td>
                         <td data-label="Amount" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatAmount(total.amount)}</td>
                         <td data-label="Volume (m³)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.volume)}</td>
                         <td data-label="Weight (kg)" class="py-2 px-1 text-center font-mono text-db-text text-[10px] break-words tabular-nums">${formatMeasure(total.weight)}</td>
@@ -4968,6 +5210,7 @@ export class Dashboard {
         const match = asgn?.lineItems?.find(li => li.obdNumber === obdNumber);
         let imageUrl = match?.podImageUrl;
         let podRecord = null;
+        let podLoadFailed = false;
         let groupPodId = match?.podGroupId || null;
         if (!imageUrl || imageUrl === 'saved_in_subcollection') {
             try {
@@ -4987,6 +5230,8 @@ export class Dashboard {
                 }
             } catch (err) {
                 console.warn('Failed to fetch pod image from subcollection:', err);
+                this._notifyFailure("pod-preview", err, "Proof of delivery could not be loaded. Check your connection and try again.");
+                podLoadFailed = true;
             }
         }
 
@@ -4994,6 +5239,7 @@ export class Dashboard {
             obdNumber,
             match,
             imageUrl,
+            podLoadFailed,
             groupPodId,
             capturedAt: match?.podCapturedAt || podRecord?.podCapturedAt || podRecord?.capturedAtMillis || null,
             guardSignatureBase64: match?.guardSignatureBase64 || asgn?.guardSignatureBase64 || '',
@@ -5007,7 +5253,8 @@ export class Dashboard {
         if (!key) return;
         const asgn = this.state.sapAssignments[key];
         const preview = await this._loadObdPodPreviewData(key, asgn, obdNumber);
-        const {match, imageUrl} = preview;
+        const {match, imageUrl, podLoadFailed} = preview;
+        if (podLoadFailed) return;
 
         const modal = document.getElementById('podPreviewModal');
         if (!modal) return;
@@ -5023,6 +5270,7 @@ export class Dashboard {
 
         if (!imageUrl && (!match?.guardSignatureBase64 && !asgn?.guardSignatureBase64)) {
             console.warn('No POD data or guard signature for OBD', obdNumber);
+            this._showToast("No proof of delivery has been submitted for this shipment yet.");
             return;
         }
 
@@ -5163,19 +5411,19 @@ export class Dashboard {
         gallery.hidden = false;
         gallery.replaceChildren();
         const summary = document.createElement('p');
-        summary.className = 'mb-3 text-sm text-gray-600 dark:text-gray-300';
+        summary.className = 'mb-3 text-sm text-db-text2';
         summary.textContent = `One delivery point · ${group.length} OBDs · ${selectedCapture ? '1 POD photo' : 'POD photo unavailable'}`;
         gallery.append(summary);
 
         const card = document.createElement('section');
-        card.className = 'rounded-lg border border-gray-200 dark:border-gray-700 p-3';
+        card.className = 'rounded-lg border border-db-border bg-db-panel p-3';
         const heading = document.createElement('h3');
-        heading.className = 'mb-2 text-sm font-bold text-gray-800 dark:text-gray-100';
+        heading.className = 'mb-2 text-sm font-bold text-db-text';
         heading.textContent = `POD for delivery point · ${group.length} OBDs`;
         card.append(heading);
 
         const obdList = document.createElement('p');
-        obdList.className = 'mb-3 text-xs text-gray-600 dark:text-gray-300 break-words';
+        obdList.className = 'mb-3 text-xs text-db-text2 break-words';
         obdList.textContent = previews.map(item => `${item.obdNumber} · ${item.deliveryStatus}`).join(' | ');
         card.append(obdList);
 
@@ -5191,7 +5439,7 @@ export class Dashboard {
                     : typeof selectedCapture.capturedAt?.seconds === 'number' ? new Date(selectedCapture.capturedAt.seconds * 1000)
                         : new Date(selectedCapture.capturedAt);
                 const timestampText = document.createElement('p');
-                timestampText.className = 'mt-2 text-xs text-gray-500 dark:text-gray-400';
+                timestampText.className = 'mt-2 text-xs text-db-text3';
                 timestampText.textContent = `Captured at: ${Number.isFinite(timestamp.getTime()) ? timestamp.toLocaleString() : '—'}`;
                 card.append(timestampText);
             }
@@ -5578,12 +5826,12 @@ export class Dashboard {
             modal.id = 'guardPreviewModal';
             modal.className = 'fixed inset-0 bg-black/80 flex items-center justify-center z-[99999] hidden';
             modal.innerHTML = `
-                <div class="bg-gray-900 rounded-xl shadow-2xl w-[95vw] sm:w-[90vw] max-w-2xl mx-4 p-4 relative">
-                    <button onclick="window.dashboard.closeGuardSigPreview()" class="absolute top-2 right-3 text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
-                    <h2 class="text-lg font-bold text-white mb-3">Guard Signature <span class="text-xs text-gray-400">(OBD: ${obdNumber})</span></h2>
-                    <div class="text-sm text-gray-400 mb-1">Security Guard: <span id="guardSignatureGuardName" class="text-white font-medium">&mdash;</span></div>
-                    <div class="text-sm text-gray-400 mb-1">Captured at: <span id="guardSignatureCapturedTimestamp">&mdash;</span></div>
-                    <div class="text-sm text-gray-400 mb-2">Verified at: <span id="guardSignatureTimestamp">&mdash;</span></div>
+                <div class="bg-db-panel text-db-text border border-db-border rounded-xl shadow-2xl w-[95vw] sm:w-[90vw] max-w-2xl mx-4 p-4 relative">
+                    <button onclick="window.dashboard.closeGuardSigPreview()" class="absolute top-2 right-3 text-db-text3 hover:text-db-text text-2xl font-bold">&times;</button>
+                    <h2 class="text-lg font-bold text-db-text mb-3">Guard Signature <span class="text-xs text-db-text3">(OBD: ${obdNumber})</span></h2>
+                    <div class="text-sm text-db-text2 mb-1">Security Guard: <span id="guardSignatureGuardName" class="text-db-text font-medium">&mdash;</span></div>
+                    <div class="text-sm text-db-text2 mb-1">Captured at: <span id="guardSignatureCapturedTimestamp">&mdash;</span></div>
+                    <div class="text-sm text-db-text2 mb-2">Verified at: <span id="guardSignatureTimestamp">&mdash;</span></div>
                     <div id="guardPreviewContainer" class="bg-white rounded-lg p-4 min-h-[300px] flex items-center justify-center"></div>
                 </div>
             `;
@@ -6041,7 +6289,6 @@ export class Dashboard {
         if (!modal) return;
 
         // ── Resume override state after page refresh ──────────────────────
-        console.log("[bypass] openAssignModal called with dispatchKey:", dispatchKey, "truckType:", truckType, "state.overrideRequestId:", this.state.overrideRequestId, "state.overrideTokenId:", this.state.overrideTokenId);
         // If the dispatcher submitted an override, refreshed, then came back,
         // the in-memory state is gone. We fall back to querying Firestore
         // for any approved override request from this dispatcher for this
@@ -6088,7 +6335,13 @@ export class Dashboard {
         this.state._modalAssignedEarliestId = assignedDrivers[0]?.id || null;
 
         if (availableDrivers.length === 0) {
-            listEl.innerHTML = `<div class="p-10 text-center text-db-text3 italic text-sm">No available drivers found matching ${truckType || "the required"} truck type.</div>`;
+            const unavailable = this.state.queueLoadError || this.state.assignmentsLoadError;
+            const stillLoading = this.state.queueLoading || this.state.assignmentsLoading;
+            listEl.innerHTML = unavailable
+                ? `<div role="alert" class="p-8 text-center"><p class="text-sm font-semibold text-db-text2">Driver availability could not be loaded.</p><p class="mt-2 text-xs text-db-text3">Check your connection, then close and reopen assignment.</p></div>`
+                : stillLoading
+                    ? `<div role="status" class="p-8 text-center text-sm text-db-text3">Driver availability is still loading. Please try again shortly.</div>`
+                    : `<div role="status" class="p-8 text-center"><p class="text-sm font-semibold text-db-text2">No available drivers for this shipment.</p><p class="mt-2 text-xs text-db-text3">No queued or eligible assigned drivers match the ${escapeHtml(truckType || "required")} truck type.</p></div>`;
         } else {
             // â"€â"€ Tab bar â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
             // Default to 'queue' tab; each tab filters rows by data-group
@@ -6346,7 +6599,7 @@ export class Dashboard {
                 selectEl.classList.remove("opacity-50", "cursor-not-allowed");
                 selectEl.value = "";
             }
-            window.alert("Failed to request cancel: " + (err.message || err.code || "unknown"));
+            this._notifyFailure("assignment-cancel", err, "The cancellation request could not be sent. Check your connection and try again.");
         }
     }
 
@@ -6355,6 +6608,7 @@ export class Dashboard {
             try {
                 const fb = await import("firebase/firestore");
                 const snap = await fb.getDoc(fb.doc(db, "cancelRequests", requestId));
+                this._cancelPollErrorNotified = false;
                 if (!snap.exists()) {
                     // The doc is gone — treat as terminal, re-render and stop.
                     this._clearPendingCancel(dispatchKey);
@@ -6391,6 +6645,10 @@ export class Dashboard {
                 setTimeout(fetchOnce, 3000);
             } catch (err) {
                 console.error("[cancelAssignment] poll error:", err);
+                if (!this._cancelPollErrorNotified) {
+                    this._cancelPollErrorNotified = true;
+                    this._notifyFailure("cancel-request-poll", err, "The approval status could not be refreshed. The system will keep retrying.");
+                }
                 setTimeout(fetchOnce, 5000);
             }
         };
@@ -6419,11 +6677,13 @@ export class Dashboard {
             this.renderOrders();
         } catch (err) {
             console.warn("[refresh] renderOrders failed:", err);
+            this._notifyFailure("orders-refresh", err, "Shipment assignments could not be refreshed. Try again.");
         }
         try {
             this._renderSapTable();
         } catch (err) {
             console.warn("[refresh] _renderSapTable failed:", err);
+            this._notifyFailure("sap-view-refresh", err, "SAP shipment details could not be refreshed. Try again.");
         }
     }
 
@@ -6449,13 +6709,6 @@ export class Dashboard {
     async confirmAssignment() {
         const driverId = this.state.selectedQueueDriverId;
         const dispatchKey = this.state.assignTarget;
-        console.log("[assignTrace] confirmAssignment START", {
-            driverId,
-            dispatchKey,
-            overrideTokenId: this.state.overrideTokenId,
-            overrideRequestId: this.state.overrideRequestId,
-            requiredTruckType: this.state.requiredTruckType,
-        });
         if (!driverId || !dispatchKey) {
             console.warn("[assignTrace] missing driverId or dispatchKey, aborting");
             return;
@@ -6551,7 +6804,7 @@ export class Dashboard {
                 this._overridePollTimer = null;
             }
 
-            alert(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
+            this._showToast(`Successfully assigned ${driverName} to dispatch #${dispatchKey}`);
             this.closeAssignModal();
             this._renderAll();
         } catch (err) {
@@ -6596,16 +6849,18 @@ export class Dashboard {
                     setTimeout(() => { this.closeAssignModal(); this._renderAll(); }, 1500);
                 },
                 VALIDATION: () => {
-                    this._showAssignBanner(err.message || "Invalid request.");
+                    this._showAssignBanner("Check that all required shipment and driver details are complete.");
                 },
                 HTTP_401: () => {
                     this._showAssignBanner("Session expired. Please sign in again.");
                 },
             };
 
-            const handler = map[err.code] || (() => this._showAssignBanner("Failed to assign: " + (err.message || err.code || "unknown")));
+            const handler = map[err.code] || (() => this._showAssignBanner("The driver could not be assigned. Check your connection and try again."));
             handler();
-            console.error("[confirmAssignment] server error:", err.code, err.message);
+            SystemErrorService.report('frontend_operation_failure', {operation: 'shipment-assignment', errorName: err.name});
+            console.error("[confirmAssignment] server error:", {code: err.code || null, requestId: err.requestId || null});
+            if (!map[err.code]) this._showErrorToast("The driver could not be assigned. Check your connection and try again.");
         } finally {
             // Re-apply the override-aware lock state so an error doesn't
             // accidentally re-enable Confirm while a bypass request is still
@@ -6750,12 +7005,18 @@ export class Dashboard {
             console.log("[adminQueue] overrideRequests snapshot, size:", snap.size);
             this._mergeAdminRequests("override", snap);
             this._syncOverrideApprovalFromSnapshot(snap);
-        }, (err) => console.error("[adminQueue] overrideRequests:", err));
+        }, (err) => {
+            console.error("[adminQueue] overrideRequests:", err);
+            this._notifyFailure("admin-queue-subscription", err, "Approval requests are temporarily unavailable. Check your connection and retry.");
+        });
         this._adminQueueSubs.cancel = subscribeRealtime("cancelRequests", {}, (rows) => {
             const snap = asCollectionSnapshot(rows);
             console.log("[adminQueue] cancelRequests snapshot, size:", snap.size);
             this._mergeAdminRequests("cancel", snap);
-        }, (err) => console.error("[adminQueue] cancelRequests:", err));
+        }, (err) => {
+            console.error("[adminQueue] cancelRequests:", err);
+            this._notifyFailure("admin-queue-subscription", err, "Approval requests are temporarily unavailable. Check your connection and retry.");
+        });
     }
 
     _mergeAdminRequests(kind, snap) {
@@ -6883,7 +7144,125 @@ export class Dashboard {
     _renderDocsView() {
         const container = document.getElementById("docsListContainer");
         if (container) {
+            if (this.state._activeDocsTab === 'system-errors') {
+                this._renderSystemErrorsView(container);
+                return;
+            }
             this._renderAdminPortalContent(container);
+        }
+    }
+
+    async _loadSystemErrors() {
+        this.state.systemErrorLogsLoading = true;
+        this.state.systemErrorLogsError = null;
+        this._renderDocsView();
+        try {
+            this.state.systemErrorLogs = await SystemErrorService.list();
+        } catch (error) {
+            this.state.systemErrorLogsError = error.requestId || 'System logs could not be loaded.';
+            console.error('[diagnostics] admin log list unavailable', {requestId: error.requestId || null});
+            this._showErrorToast(error.requestId
+                ? `System logs could not be loaded. Reference: ${error.requestId}`
+                : 'System logs could not be loaded. Check your connection and retry.');
+        } finally {
+            this.state.systemErrorLogsLoading = false;
+            this._renderDocsView();
+        }
+    }
+
+    _renderSystemErrorsView(container = document.getElementById('docsListContainer')) {
+        if (!container) return;
+        if (!container.dataset.systemErrorsWired) {
+            container.dataset.systemErrorsWired = '1';
+            container.addEventListener('click', async event => {
+                const target = event.target.closest('[data-system-error-action]');
+                if (!target) return;
+                if (target.dataset.systemErrorAction === 'refresh') {
+                    await this._loadSystemErrors();
+                    return;
+                }
+                if (target.dataset.systemErrorAction === 'filter') {
+                    this.state.systemErrorFilter = target.dataset.filter || 'open';
+                    this._renderDocsView();
+                    return;
+                }
+                if (target.dataset.systemErrorAction === 'resolve') {
+                    target.disabled = true;
+                    try {
+                        await SystemErrorService.resolve(target.dataset.id);
+                        const row = this.state.systemErrorLogs.find(item => item.id === target.dataset.id);
+                        if (row) row.resolvedAt = new Date();
+                        this._renderDocsView();
+                    } catch (error) {
+                        target.disabled = false;
+                        this._showToast(error.requestId
+                            ? `Could not update this log. Reference: ${error.requestId}`
+                            : 'Could not update this log. Please retry.');
+                    }
+                }
+            });
+        }
+        if (!this._systemErrorSocketWired) {
+            this._systemErrorSocketWired = true;
+            const refresh = () => {
+                if (this.state._activeDocsTab === 'system-errors') void this._loadSystemErrors();
+            };
+            socket.on('system_error_created', refresh);
+            socket.on('system_error_resolved', refresh);
+        }
+
+        const filter = this.state.systemErrorFilter || 'open';
+        const entries = this.state.systemErrorLogs.filter(entry => filter === 'all'
+            || (filter === 'open' ? !entry.resolvedAt : Boolean(entry.resolvedAt)));
+        const dateLabel = value => {
+            const date = value?.toDate?.() || (value?.seconds ? new Date(value.seconds * 1000) : new Date(value));
+            return Number.isNaN(date.getTime()) ? 'Time unavailable' : date.toLocaleString();
+        };
+        const filters = [['open', 'Open'], ['resolved', 'Resolved'], ['all', 'All']].map(([key, label]) =>
+            `<button type="button" data-system-error-action="filter" data-filter="${key}" aria-pressed="${filter === key}" class="rounded-md border px-3 py-1.5 text-xs font-semibold ${filter === key ? 'border-sysu-red/40 bg-sysu-red/10 text-sysu-red' : 'border-db-border bg-db-panel text-db-text2'}">${label}</button>`).join('');
+        const body = this.state.systemErrorLogsLoading
+            ? '<div role="status" class="animate-pulse space-y-3"><div class="h-24 rounded-lg bg-db-item-hover"></div><div class="h-24 rounded-lg bg-db-item-hover"></div></div>'
+            : this.state.systemErrorLogsError
+                ? `<div role="alert" class="rounded-lg border border-red-500/30 bg-red-500/5 p-4 text-sm text-db-text2">Could not load system logs.${this.state.systemErrorLogsError === 'System logs could not be loaded.' ? '' : ` Request reference: ${escapeHtml(this.state.systemErrorLogsError)}`}</div>`
+                : entries.length === 0
+                    ? '<div role="status" class="flex min-h-40 items-center justify-center text-sm text-db-text3">No system errors in this view.</div>'
+                    : entries.map(entry => {
+                        const resolved = Boolean(entry.resolvedAt);
+                        const details = entry.details || {};
+                        const counts = Number.isInteger(details.missingCount)
+                            ? `<div class="mt-2 text-xs text-db-text2">SAP rows: ${escapeHtml(String(details.receivedCount ?? '—'))} of ${escapeHtml(String(details.expectedCount ?? '—'))}; missing ${escapeHtml(String(details.missingCount))}.</div>` : '';
+                        const httpStatus = Number.isInteger(details.statusCode)
+                            ? `<span>HTTP ${escapeHtml(String(details.statusCode))}</span>` : '';
+                        return `<article class="mb-3 rounded-lg border border-db-border bg-db-panel p-4">
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="rounded border px-2 py-0.5 text-[10px] font-bold uppercase ${entry.severity === 'warning' ? 'border-amber-500/30 bg-amber-500/10 text-amber-700' : 'border-red-500/30 bg-red-500/10 text-red-700'}">${escapeHtml(entry.severity || 'error')}</span>
+                                        <span class="font-mono text-xs text-db-text">${escapeHtml(entry.eventCode || 'unknown_event')}</span>
+                                        <span class="rounded border border-db-border px-2 py-0.5 text-[10px] uppercase text-db-text3">${escapeHtml(entry.source || 'unknown')}</span>
+                                        <span class="rounded border border-db-border px-2 py-0.5 text-[10px] uppercase text-db-text3">${resolved ? 'Resolved' : 'Open'}</span>
+                                    </div>
+                                    <p class="mt-2 text-sm text-db-text">${escapeHtml(entry.message || 'System event reported.')}</p>
+                                    <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-db-text3">
+                                        <span>${escapeHtml(dateLabel(entry.createdAt))}</span>
+                                        ${entry.operation ? `<span>Operation: ${escapeHtml(entry.operation)}</span>` : ''}
+                                        ${entry.errorName ? `<span>Error type: ${escapeHtml(entry.errorName)}</span>` : ''}
+                                        ${httpStatus}${entry.route ? `<span>Route: ${escapeHtml(entry.route)}</span>` : ''}
+                                        ${entry.requestId ? `<span>Reference: ${escapeHtml(entry.requestId)}</span>` : ''}
+                                        ${entry.actorId ? `<span>Account: ${escapeHtml(entry.actorId)}</span>` : ''}
+                                    </div>${counts}
+                                </div>
+                                ${resolved ? '' : `<button type="button" data-system-error-action="resolve" data-id="${escapeHtml(entry.id)}" class="rounded-md border border-db-border px-3 py-1.5 text-xs font-semibold text-db-text2 hover:border-green-600 hover:text-green-700">Mark resolved</button>`}
+                            </div>
+                        </article>`;
+                    }).join('');
+
+        container.innerHTML = `<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div><h2 class="text-sm font-bold text-db-text">System diagnostics</h2><p class="mt-1 text-xs text-db-text3">Sanitized operational events from web, mobile, backend, and SAP. Full request bodies and stack traces are never stored here.</p></div>
+            <button type="button" data-system-error-action="refresh" class="rounded-md border border-db-border px-3 py-1.5 text-xs font-semibold text-db-text2 hover:text-db-text">Refresh</button>
+        </div><div class="mb-4 flex flex-wrap gap-2">${filters}</div>${body}`;
+        if (this.state.systemErrorLogs.length === 0 && !this.state.systemErrorLogsLoading && !this.state.systemErrorLogsError) {
+            void this._loadSystemErrors();
         }
     }
 
@@ -7024,7 +7403,7 @@ export class Dashboard {
             );
         } catch (err) {
             console.error("[adminDecide] error:", err);
-            window.alert("Failed to " + decision + ": " + (err.message || err.code || "unknown"));
+            this._notifyFailure("admin-decision", err, "The request could not be updated. Refresh the list and try again.");
         }
     }
 
@@ -7061,7 +7440,8 @@ export class Dashboard {
             this._showAssignBanner("Awaiting admin approval…", "info");
         } catch (err) {
             console.error("[bypass] request failed:", err.code, err.message, err);
-            this._showAssignBanner("Failed to submit bypass request: " + (err.message || err.code || "unknown"));
+            this._notifyFailure("bypass-request", err, "The bypass request could not be submitted. Check your connection and try again.");
+            this._showAssignBanner("The bypass request could not be submitted. Check your connection and try again.");
             if (panel) panel.classList.remove("hidden");
         }
     }
@@ -7508,7 +7888,7 @@ export class Dashboard {
             html += '</div>';
             // Cards
             if (num === 0) {
-                html += '<div class="flex flex-col items-center justify-center py-12 rounded-xl border" style="background:rgba(13,15,18,0.6);border-color:rgba(255,255,255,0.05);">';
+                html += '<div class="flex flex-col items-center justify-center py-12 rounded-xl border border-db-border bg-db-panel">';
                 html += '<div class="text-db-text3 opacity-30 mb-2"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>';
                 html += '<span class="text-[11px] text-db-text3 opacity-40">No orders</span>';
                 html += '</div>';
@@ -7516,8 +7896,8 @@ export class Dashboard {
                 cards.forEach((o) => {
                     const assignedLabel = o.assignedAt ? o.assignedAt.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }) : "—";
                     const elapsedLabel = o.assignedAt ? this._formatElapsed(o.assignedAt) : "—";
-                    const badge = o.obdCount > 1 ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full" style="background:rgba(59,130,246,0.15);color:#60a5fa;">' + o.obdCount + ' OBDs</span>' : '';
-                    html += '<div class="order-card rounded-xl border cursor-pointer overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-lg" style="background:#13161b;border-color:rgba(255,255,255,0.08);" onclick="window.dashboard._openOrderDetail(\'' + encodeURIComponent(o.dispatchKey) + '\')">';
+                    const badge = o.obdCount > 1 ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">' + o.obdCount + ' OBDs</span>' : '';
+                    html += '<div class="order-card rounded-xl border border-db-border bg-db-panel cursor-pointer overflow-hidden transition-all hover:border-blue-500/50 hover:shadow-lg" onclick="window.dashboard._openOrderDetail(\'' + encodeURIComponent(o.dispatchKey) + '\')">';
                     html += '<div class="flex items-start gap-4 px-5 pt-4 pb-3">';
                     html += '<div class="flex flex-col gap-1 min-w-0">';
                     html += '<span class="text-[9px] font-mono uppercase tracking-widest text-db-text3 opacity-50">Dispatch</span>';
@@ -7529,13 +7909,13 @@ export class Dashboard {
                     html += '</div>';
                     html += '<div class="flex flex-col items-end gap-0.5 shrink-0">';
                     html += '<span class="text-[8px] font-bold uppercase tracking-widest text-db-text3 opacity-40">Assigned</span>';
-                    html += '<span class="text-[10px] font-mono font-semibold" style="color:#60a5fa;">' + assignedLabel + '</span>';
+                    html += '<span class="text-[10px] font-mono font-semibold text-blue-400">' + assignedLabel + '</span>';
                     html += '<span class="text-[9px] text-db-text3 opacity-50">' + elapsedLabel + '</span>';
                     html += '</div>';
                     html += '</div>';
-                    html += '<div class="flex items-center gap-3 px-5 pb-4" style="border-top:1px solid rgba(255,255,255,0.04);padding-top:10px;margin-top:2px;">';
-                    html += '<div class="flex items-center gap-2.5 rounded-lg px-3 py-2 flex-1 min-w-0" style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);">';
-                    html += '<div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0" style="background:rgba(59,130,246,0.15);color:#60a5fa;">' + escapeHtml((o.driverName || "?").charAt(0).toUpperCase()) + '</div>';
+                    html += '<div class="flex items-center gap-3 px-5 pb-4 border-t border-db-border pt-2.5 mt-0.5">';
+                    html += '<div class="flex items-center gap-2.5 rounded-lg px-3 py-2 flex-1 min-w-0 bg-db-bg border border-db-border">';
+                    html += '<div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 bg-blue-500/10 text-blue-400">' + escapeHtml((o.driverName || "?").charAt(0).toUpperCase()) + '</div>';
                     html += '<div class="min-w-0">';
                     html += '<div class="text-[12px] font-bold text-db-text truncate">' + escapeHtml(o.driverName) + '</div>';
                     html += '<div class="text-[9px] font-mono text-db-text3 opacity-60">' + escapeHtml(o.truckPlate) + '</div>';
@@ -7553,9 +7933,9 @@ export class Dashboard {
                         document.getElementById("ordersBody") &&
                         document.getElementById("ordersBody").dataset["pendingCancel" + o.dispatchKey]
                     );
-                    html += '<div class="flex items-center gap-2 px-5 pb-3" style="border-top:1px solid rgba(255,255,255,0.04);padding-top:8px;margin-top:2px;">';
+                    html += '<div class="flex items-center gap-2 px-5 pb-3 border-t border-db-border pt-2 mt-0.5">';
                     if (isCancelPending) {
-                        html += '<div class="flex-1 h-7 flex items-center justify-center rounded-md text-[10px] font-bold uppercase tracking-wider" style="background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.4);color:#eab308;">';
+                    html += '<div class="flex-1 h-7 flex items-center justify-center rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-400 text-[10px] font-bold uppercase tracking-wider">';
                         html += '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="mr-1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
                         html += 'Cancel pending admin approval</div>';
                     } else {
@@ -7701,7 +8081,7 @@ export class Dashboard {
         });
 
         if (rows.length === 0) {
-            alert("No assignments to export. Assign drivers to dispatches first.");
+            this._showToast("There are no assignments to export yet.");
             return;
         }
 
@@ -7864,7 +8244,7 @@ export class Dashboard {
             XLSX.writeFile(wb, `SYSU_Assignments_${today}.xlsx`);
         } catch (e) {
             console.error("Excel export error:", e);
-            alert("Failed to export Excel. Please try again.");
+            this._notifyFailure("assignment-export", e, "The spreadsheet could not be exported. Please try again.");
         }
     }
 

@@ -20,6 +20,7 @@ This index maps the maintained project documentation. Source code, tests, and ru
 
 - [Frontend guide](frontend-guide.md)
 - [Backend API guide](backend-api-guide.md); route source and tests remain authoritative
+- [Container deployment](container-deployment.md); API image, Compose setup, and hosting boundaries
 - [Migration v2 runbook](MIGRATION_RUNBOOK.md); revalidate before any execution
 - [Live-location review and implementation record](live-location-optimization-plan.md) (dated)
 

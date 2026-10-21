@@ -4,8 +4,8 @@ vi.mock('firebase/auth',()=>({
   onAuthStateChanged:vi.fn((_auth,callback)=>{mocks.authCallback=callback; return mocks.stopAuth;}),
   signInWithEmailAndPassword:vi.fn(),signInWithPopup:vi.fn(),signOut:vi.fn(),setPersistence:vi.fn(),browserLocalPersistence:{},
 }));
-vi.mock('./realtimeService.js',()=>({subscribeRealtime:vi.fn((_topic,_params,next)=>{
-  const subscription={next,stop:vi.fn()}; mocks.profiles.push(subscription); return subscription.stop;
+vi.mock('./realtimeService.js',()=>({subscribeRealtime:vi.fn((_topic,_params,next,error)=>{
+  const subscription={next,error,stop:vi.fn()}; mocks.profiles.push(subscription); return subscription.stop;
 }),asDocumentSnapshot:(data,id)=>({id,exists:()=>data!==null,data:()=>data})}));
 vi.mock('./firebase',()=>({auth:{},db:{},googleProvider:{}}));
 import {AuthService} from './authService';
@@ -21,6 +21,17 @@ test('R22 disabled and inactive approved profiles sign out and never publish a u
     expect(AuthService.getUserProfile()).toBeNull();stop();
   }
   expect(signOut).toHaveBeenCalledTimes(2);
+});
+test('server-revoked profile socket signs out instead of leaving a cached dashboard profile',async()=>{
+  const {signOut}=await import('firebase/auth');
+  const callback=vi.fn();const stop=AuthService.subscribe(callback);
+  await mocks.authCallback({uid:'a'});
+  mocks.profiles.at(-1).next({role:'admin',status:'active'});
+  await mocks.profiles.at(-1).error(new Error('Profile authorization ended'));
+  expect(AuthService.getUserProfile()).toBeNull();
+  expect(signOut).toHaveBeenCalledOnce();
+  expect(callback.mock.calls.at(-1)[1].message).toBe('ACCOUNT_DISABLED');
+  stop();
 });
 test('R22 pending inactive registration remains eligible for its waiting screen',async()=>{
   const callback=vi.fn();const stop=AuthService.subscribe(callback);await mocks.authCallback({uid:'a'});

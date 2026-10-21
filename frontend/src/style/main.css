@@ -15,6 +15,15 @@
   --color-sysu-text: #f0f0f2;
   --color-sysu-text2: #acb3be;
   --color-sysu-text3: #7e8693;
+  --map-popup-surface: linear-gradient(168deg, rgba(17, 20, 28, 0.98), rgba(10, 12, 18, 0.99));
+  --map-popup-border: rgba(255, 255, 255, 0.07);
+  --map-popup-divider: rgba(255, 255, 255, 0.05);
+  --map-popup-text: #f1f5f9;
+  --map-popup-secondary: #cacfd8;
+  --map-popup-muted: #94a3b8;
+  --map-popup-icon-bg: rgba(255, 255, 255, 0.04);
+  --map-popup-icon-border: rgba(255, 255, 255, 0.07);
+  --map-popup-icon-color: rgba(255, 255, 255, 0.5);
   --font-display: "Syne", sans-serif;
   --font-body: "DM Sans", sans-serif;
 
@@ -41,7 +50,7 @@
   --color-db-border: #cdd2d9;
   --color-db-text: #1a1d23;
   --color-db-text2: #4a5568;
-  --color-db-text3: #8896a7;
+  --color-db-text3: #586574;
   --color-db-item-hover: #e2e6ec;
   --color-db-item-active: #d5dce6;
   --color-sysu-panel: #ffffff;
@@ -50,10 +59,55 @@
   --color-sysu-border-light: rgba(0,0,0,0.07);
   --color-sysu-text: #1a1d23;
   --color-sysu-text2: #4a5568;
-  --color-sysu-text3: #8896a7;
+  --color-sysu-text3: #586574;
+  --color-sysu-dark: #f0f2f5;
   --color-sysu-gold: #d4870e;
   --color-sysu-gold-soft: rgba(200,130,30,0.12);
+  --map-popup-surface: #ffffff;
+  --map-popup-border: #cdd2d9;
+  --map-popup-divider: #cdd2d9;
+  --map-popup-text: #1a1d23;
+  --map-popup-secondary: #4a5568;
+  --map-popup-muted: #586574;
+  --map-popup-icon-bg: #f0f2f5;
+  --map-popup-icon-border: #cdd2d9;
+  --map-popup-icon-color: #586574;
 }
+
+[data-theme="light"] .text-db-text3,
+[data-theme="light"] .text-sysu-text3 {
+  opacity: 1;
+}
+
+[data-theme="light"] input::placeholder,
+[data-theme="light"] textarea::placeholder {
+  color: #586574;
+  opacity: 1;
+}
+
+[data-theme="light"] .text-green-400,
+[data-theme="light"] .text-green-500,
+[data-theme="light"] .text-emerald-400 { color: #166534; }
+[data-theme="light"] .text-blue-400,
+[data-theme="light"] .text-blue-500,
+[data-theme="light"] .text-sky-400 { color: #1e40af; }
+[data-theme="light"] .text-amber-400,
+[data-theme="light"] .text-yellow-400 { color: #92400e; }
+[data-theme="light"] .text-red-400,
+[data-theme="light"] .text-red-500 { color: #991b1b; }
+[data-theme="light"] .text-orange-400 { color: #9a3412; }
+[data-theme="light"] .text-purple-400 { color: #6b21a8; }
+[data-theme="light"] .text-indigo-400 { color: #3730a3; }
+[data-theme="light"] .text-pink-400 { color: #9d174d; }
+[data-theme="light"] .text-cyan-400 { color: #155e75; }
+[data-theme="light"] .text-sysu-gold { color: #854d0e; }
+[data-theme="light"] .text-gray-300,
+[data-theme="light"] .text-gray-400,
+[data-theme="light"] .text-gray-500,
+[data-theme="light"] .text-gray-100,
+[data-theme="light"] .text-gray-200,
+[data-theme="light"] .text-slate-200 { color: #374151; }
+[data-theme="light"] #usersContent [data-action="delete-user"] { color: #991b1b; }
 
 /* Light scrollbar */
 [data-theme="light"] ::-webkit-scrollbar-track {
@@ -96,6 +150,10 @@ body {
   filter: invert(100%) grayscale(100%) brightness(90%) contrast(85%) hue-rotate(180deg);
 }
 
+[data-theme="light"] .leaflet-tile-pane {
+  filter: none;
+}
+
 #warehouseBaseMap .leaflet-control-attribution {
   margin: 0 0 7px 7px;
   padding: 2px 5px;
@@ -109,6 +167,16 @@ body {
 
 #warehouseBaseMap .leaflet-control-attribution a {
   color: #fbbf24;
+}
+
+[data-theme="light"] #warehouseBaseMap .leaflet-control-attribution {
+  border-color: #cdd2d9;
+  background: rgba(255, 255, 255, 0.94);
+  color: #374151;
+}
+
+[data-theme="light"] #warehouseBaseMap .leaflet-control-attribution a {
+  color: #1e40af;
 }
 
 /* Allow text selection in inputs */
@@ -325,6 +393,19 @@ a {
 #toast.show {
   opacity: 1 !important;
   transform: translate(-50%, 0) !important;
+}
+#toast.toast-error {
+  border-color: #dc2626;
+  color: #b91c1c;
+  box-shadow: 0 8px 24px rgba(127, 29, 29, 0.2);
+}
+#toast.toast-error > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+[data-theme="dark"] #toast.toast-error {
+  color: #fecaca;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(220, 38, 38, 0.14);
 }
 
 /* POD Zoom Controls */

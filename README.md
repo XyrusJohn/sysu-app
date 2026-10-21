@@ -14,6 +14,10 @@ The web application combines a React dashboard with an Express API. The API inte
 
 See the [frontend guide](docs/frontend-guide.md) and [backend API guide](docs/backend-api-guide.md) for the reviewed implementation scope.
 
+## Container deployment
+
+The root Docker image packages the API and Socket.IO backend. See the [container deployment guide](docs/container-deployment.md) for Docker Compose, runtime configuration, and hosting limitations.
+
 ## Technologies
 
 - Frontend: React 19, Vite, Firebase, Leaflet, and Tailwind CSS.
@@ -39,7 +43,7 @@ The frontend and backend provide `dev` scripts in their respective package manif
 
 Configured checks include:
 
-- Frontend: `npm --prefix frontend test`, `npm --prefix frontend run build`.
+- Frontend: `npm --prefix frontend test`, `npm --prefix frontend run build` (requires `VITE_RELEASE_TARGET=production`); emulator E2E artifacts use `npm --prefix frontend run build:e2e` and must not be deployed.
 - Backend: `npm --prefix backend test`.
 - Repository lint: `npm run lint`.
 

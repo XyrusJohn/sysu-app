@@ -57,7 +57,7 @@ test('Browser real GPS socket moves both Leaflet maps without rewinding or losin
   const response=await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=synthetic',
     {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:'e2e-driver@example.invalid',password,returnSecureToken:true})});
   expect(response.status).toBe(200);
-  const driver=io('http://127.0.0.1:18080',{autoConnect:false,reconnection:false,transports:['websocket'],auth:{token:(await response.json()).idToken}});
+  const driver=io(`http://127.0.0.1:${process.env.SYSU_E2E_BACKEND_PORT||'8080'}`,{autoConnect:false,reconnection:false,transports:['websocket'],auth:{token:(await response.json()).idToken}});
   const connected=new Promise((resolve,reject)=>{driver.once('connect',resolve);driver.once('connect_error',reject);});
   driver.connect();
   try {
@@ -101,15 +101,17 @@ test('Browser registered kiosk card appears after registration and disappears af
   await expect(page.locator('#cnt-4W')).toHaveText('0');
 });
 
-test('Browser legacy super-admin without status can see registered kiosk driver cards',async({page})=>{
+test('Browser legacy super-admin without active status cannot read registered kiosk driver cards',async({page})=>{
   await db.collection('users').doc('e2e-staff').update({role:'super_admin',status:admin.firestore.FieldValue.delete()});
   await db.collection('queue').doc('e2e-queue').update({registrationComplete:true});
   await login(page);
+  const denied=page.waitForResponse(r=>r.url().endsWith('/api/qr/queue-cards'));
   await page.goto('/qr-generator.html');
+  expect((await denied).status()).toBe(403);
   await expect(page.locator('#queue-access')).toHaveText('Staff queue view');
-  await expect(page.locator('#body-4W')).toContainText('Synthetic Driver',{timeout:25000});
-  await expect(page.locator('#body-4W')).toContainText('TEST');
-  await expect(page.locator('#cnt-4W')).toHaveText('1');
+  await expect(page.locator('#body-4W')).toContainText('Queue unavailable');
+  await expect(page.locator('#body-4W')).not.toContainText('Synthetic Driver');
+  await expect(page.locator('#cnt-4W')).toHaveText('—');
 });
 
 test('Browser deliveries use stored OBDs, show POD evidence and update without SAP membership',async({page})=>{

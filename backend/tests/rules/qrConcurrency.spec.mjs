@@ -39,6 +39,27 @@ test('R11: token replay from concurrent drivers admits only one', async () => {
   assert.deepEqual(responses.map(r=>r.status).sort(), [200,410]);
   assert.equal((await db.collection('queue').get()).size,1);
 });
+test('R11: emulator transaction lock timeout retries the atomic token claim', async () => {
+  const original = db.runTransaction.bind(db);
+  let injected = false;
+  db.runTransaction = callback => {
+    if (!injected) {
+      injected = true;
+      const error = new Error('3 INVALID_ARGUMENT: Transaction is invalid or closed.');
+      error.code = 3;
+      return Promise.reject(error);
+    }
+    return original(callback);
+  };
+  try {
+    assert.equal((await scan('token-a')).status, 200);
+  } finally {
+    db.runTransaction = original;
+  }
+  assert.equal(injected, true);
+  assert.equal((await db.collection('queue').get()).size,1);
+  assert.equal((await db.collection('qr_tokens').doc('token-a').get()).data().used,true);
+});
 test('R11: completed queue entry permits a new admission', async () => {
   await db.collection('queue').doc('old').set({driverId:'driver-a',status:'completed'});
   assert.equal((await scan('token-a')).status,200);

@@ -39,19 +39,39 @@ export const SAPService = {
     },
 
     async fetchDispatchDetails(dispatchKeys) {
-        const token = await AuthService.getToken();
-        const response = await fetch(`${API_CONFIG.BASE_URL}/api/sap/dispatch-details`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`,
-            },
-            body: JSON.stringify({dispatchKeys}),
+        const timeoutSignal = AbortSignal.timeout(30_000);
+        let rejectOnTimeout;
+        const timeoutPromise = new Promise((_, reject) => {
+            rejectOnTimeout = () => reject(timeoutSignal.reason || new Error("Dispatch details request timed out"));
+            timeoutSignal.addEventListener("abort", rejectOnTimeout, {once: true});
         });
-        if (!response.ok) throw new Error(`Dispatch details fetch failed: HTTP ${response.status}`);
-        const json = await response.json();
-        if (json.success === false) throw new Error("Dispatch details are unavailable");
-        return json.data || {};
+        try {
+            const token = await Promise.race([AuthService.getToken(), timeoutPromise]);
+            if (timeoutSignal.aborted) throw timeoutSignal.reason;
+            const response = await fetch(`${API_CONFIG.BASE_URL}/api/sap/dispatch-details`, {
+                method: "POST",
+                signal: timeoutSignal,
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`,
+                },
+                body: JSON.stringify({dispatchKeys}),
+            });
+            const json = await response.json().catch(() => ({}));
+            if (!response.ok || json.success === false) {
+                const error = new Error("Dispatch details are unavailable");
+                error.requestId = json.requestId || response.headers.get("X-Request-ID") || null;
+                error.status = response.status;
+                throw error;
+            }
+            return {
+                data: json.data || {},
+                warnings: Array.isArray(json.warnings) ? json.warnings : [],
+                requestId: json.requestId || null,
+            };
+        } finally {
+            timeoutSignal.removeEventListener("abort", rejectOnTimeout);
+        }
     },
 
     subscribeToAssignments(callback, onError) {

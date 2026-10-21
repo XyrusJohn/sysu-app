@@ -521,7 +521,7 @@ test('two open assigned sessions for one UID cannot produce an ambiguous Assigne
   expect(dashboard._getAvailableDrivers('auv')).toHaveLength(0);
 });
 beforeEach(() => {
-  document.body.innerHTML = '<table><tbody id="sapBody"></tbody><tbody id="sapDtlOBDLines"></tbody></table><input id="sapSearch"><span id="sapStatAll"></span><span id="sapStatDel"></span><span id="sapStatTransit"></span><span id="sapResultCount"></span><div id="sapDispatchDetail" class="hidden"><span id="sapDtlPlanDate"></span><span id="sapDtlActualDate"></span><span id="sapDtlTotalAmount"></span><span id="sapDtlTotalVolume"></span><span id="sapDtlTotalWeight"></span><span id="sapDtlTotalQty"></span></div>';
+  document.body.innerHTML = '<table><tbody id="sapBody"></tbody><tbody id="sapDtlOBDLines"></tbody></table><input id="sapSearch"><span id="sapStatAll"></span><span id="sapStatDel"></span><span id="sapStatTransit"></span><span id="sapResultCount"></span><div id="sapDispatchDetail" class="hidden"><div id="sapDtlDataWarning" role="alert" hidden><span></span><button data-action="sap-detail-retry"></button></div><span id="sapDtlPlanDate"></span><span id="sapDtlActualDate"></span><span id="sapDtlTotalAmount"></span><span id="sapDtlTotalVolume"></span><span id="sapDtlTotalWeight"></span><span id="sapDtlTotalQty"></span></div>';
   dashboard = new Dashboard();
   dashboard.state.sapLoading = false;
   dashboard.state.driversLoading = false;
@@ -650,6 +650,57 @@ test('detail shows each OBD outcome beside its preview and refreshes after POD o
   dashboard.closeSapDispatchModal();
   dashboard._refreshOpenDispatchDetail();
   expect(document.getElementById('sapDispatchDetail').classList.contains('hidden')).toBe(true);
+});
+test('SAP detail enrichment failure is disclosed and can retry without losing saved POD rows', async () => {
+  dashboard._rebuildShipmentGroups();
+  SAPService.fetchDispatchDetails.mockRejectedValueOnce(new Error('temporary outage'));
+
+  dashboard.openSapDispatchDetail(dispatch);
+  await dashboard._loadSapDispatchDetails([dispatch]);
+
+  expect(document.getElementById('sapDtlDataWarning').hidden).toBe(false);
+  expect(document.getElementById('sapDtlOBDLines').textContent).toContain('6801001522');
+  expect(document.getElementById('sapDtlOBDLines').textContent).toContain('Delivered');
+
+  SAPService.fetchDispatchDetails.mockResolvedValue({
+    [dispatch]: [{SAPDispatchNumber: dispatch, OBDNumber: '6801001522', ShipToPartyName: 'Enriched Customer'}],
+  });
+  document.querySelector('[data-action="sap-detail-retry"]').click();
+  await vi.waitFor(() => {
+    expect(document.getElementById('sapDtlDataWarning').hidden).toBe(true);
+    expect(document.getElementById('sapDtlOBDLines').textContent).toContain('Enriched Customer');
+  });
+});
+test('SAP detail mismatches are disclosed while preserving saved shipment rows', async () => {
+  dashboard._rebuildShipmentGroups();
+  SAPService.fetchDispatchDetails.mockResolvedValue({
+    data: {[dispatch]: []},
+    warnings: [{dispatchKey: dispatch, code: 'SAP_DETAIL_MISMATCH', expectedCount: 2, receivedCount: 1, missingCount: 1}],
+  });
+  dashboard.openSapDispatchDetail(dispatch);
+  await dashboard._loadSapDispatchDetails([dispatch]);
+  expect(document.getElementById('sapDtlDataWarning').hidden).toBe(false);
+  expect(document.getElementById('sapDtlDataWarning').textContent).toContain('1 of 2 expected detail rows');
+  expect(document.getElementById('sapDtlOBDLines').textContent).toContain('6801001522');
+});
+test('SAP detail retry indicator stops when SAP responds with the same mismatch', async () => {
+  dashboard._rebuildShipmentGroups();
+  const mismatchResponse = {
+    data: {[dispatch]: []},
+    warnings: [{dispatchKey: dispatch, code: 'SAP_DETAIL_MISMATCH', expectedCount: 4, receivedCount: 0, missingCount: 4}],
+  };
+  SAPService.fetchDispatchDetails.mockResolvedValue(mismatchResponse);
+  dashboard.openSapDispatchDetail(dispatch);
+  await dashboard._loadSapDispatchDetails([dispatch]);
+
+  SAPService.fetchDispatchDetails.mockResolvedValue(mismatchResponse);
+  const retryButton = document.querySelector('[data-action="sap-detail-retry"]');
+  retryButton.click();
+  await vi.waitFor(() => {
+    expect(retryButton.disabled).toBe(false);
+    expect(retryButton.textContent).toBe('Retry details');
+  });
+  expect(document.getElementById('sapDtlDataWarning').textContent).toContain('0 of 4 expected detail rows');
 });
 test('only fresh SAP shipments appear in For Assignment, with no duplicate assigned rows', async () => {
   SAPService.fetchShipments.mockResolvedValue([

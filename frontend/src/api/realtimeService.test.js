@@ -100,6 +100,16 @@ test("profile subscription acknowledgement failures reach the subscriber error h
     expect(error).toHaveBeenCalledWith(new Error("Subscription unavailable"));
 });
 
+test("server-revoked profile socket fails closed while transient disconnect can reconnect", () => {
+    const error = vi.fn();
+    const stop = subscribeRealtime("profile", {}, vi.fn(), error);
+    sockets.profile.fire("disconnect", "transport close");
+    expect(error).not.toHaveBeenCalled();
+    sockets.profile.fire("disconnect", "io server disconnect");
+    expect(error).toHaveBeenCalledWith(new Error("Profile authorization ended"));
+    stop();
+});
+
 test("collection snapshots retain Firestore-style iteration and timestamp access", () => {
     const snapshot = asCollectionSnapshot([{id: "q1", entryTime: {$timestamp: 1000}}]);
     expect(snapshot.size).toBe(1);
