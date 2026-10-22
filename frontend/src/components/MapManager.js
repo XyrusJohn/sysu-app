@@ -123,6 +123,21 @@ export const initLeafletMap = (containerId = _defaultId) => {
     return e.map;
 };
 
+export const disposeLeafletMap = (containerId) => {
+    const entry = _reg[containerId];
+    if (!entry) return;
+    Object.values(entry.markers).forEach(marker => marker.remove());
+    entry.map?.remove();
+    if (containerId === _defaultId) {
+        Object.keys(entry.markers).forEach(key => delete entry.markers[key]);
+        entry.map = null;
+        entry.tileLayer = null;
+        window.map = null;
+    } else {
+        delete _reg[containerId];
+    }
+};
+
 // ── CSS ───────────────────────────────────────────────────────────────────────
 
 let _cssDone = false;
