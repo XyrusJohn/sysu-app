@@ -31,11 +31,11 @@
         ></div>
     </div>
     <div class="flex flex-col items-center gap-3">
-        <h2 class="text-white text-lg font-black tracking-[0.2em] uppercase">
+        <h2 class="text-db-text text-lg font-black tracking-[0.2em] uppercase">
             SYSU APPLICATION
         </h2>
         <div
-                class="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10"
+                class="flex items-center gap-2 px-3 py-1 bg-db-panel/60 rounded-full border border-db-border"
         >
             <div
                     class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"
@@ -159,6 +159,11 @@
                 class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 backdrop-blur-md border border-db-border text-db-text text-[11.5px] font-semibold tracking-[0.005em] px-2.5 py-[5px] rounded-md whitespace-nowrap pointer-events-none opacity-0 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 z-[900] shadow-[0_6px_20px_rgba(0,0,0,0.55),0_0_0_0.5px_rgba(255,255,255,0.04)]"
         >Drivers</span
         >
+    </button>
+
+    <button type="button" class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-db-text3 flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-db-item-hover hover:text-db-text2 group" id="rDriverAction" aria-label="Driver Action">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] stroke-[1.7]"><path d="M3 12h4l3-8 4 16 3-8h4"/><circle cx="12" cy="12" r="10"/></svg>
+        <span class="docs-rail-tooltip absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 -translate-x-1 bg-db-panel/95 border border-db-border text-db-text text-[11px] px-2.5 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 z-[900]">Driver Action</span>
     </button>
 
     <button
@@ -293,7 +298,7 @@
     <div class="flex-1"></div>
 
     <button
-            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-[#f04444] flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-[#f0444415] group"
+            class="docs-rail-btn relative w-[34px] h-[34px] rounded-lg border-none bg-transparent text-sysu-red flex items-center justify-center cursor-pointer transition-all duration-200 ease-out mb-0.5 hover:bg-sysu-red/10 group"
             id="logoutBtn"
     >
         <span class="docs-rail-icon relative flex items-center justify-center transition-transform duration-200 ease-out group-hover:scale-[1.06]">
@@ -396,6 +401,9 @@
                 </svg>
                 <span>Fleet Manager</span>
             </button>
+            <button type="button" id="lDriverAction" class="flex items-center gap-2.5 p-2 rounded-md w-full border-none bg-transparent text-db-text2 font-medium text-[13px] cursor-pointer transition-all text-left whitespace-nowrap hover:bg-db-item-hover hover:text-db-text">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-4 h-4 shrink-0 opacity-70"><path d="M3 12h4l3-8 4 16 3-8h4"/><circle cx="12" cy="12" r="10"/></svg><span>Driver Action</span>
+            </button>
         </div>
 
         <div class="h-[1px] bg-db-border mx-3 my-2"></div>
@@ -497,7 +505,7 @@
                     id="liveScansHeader"
             >
                 <div class="flex items-center gap-3">
-              <span class="text-[15px] font-black text-white tracking-tight"
+              <span class="text-[15px] font-black text-db-text tracking-tight"
               id="liveScansTitle">Live Scans</span
               >
                     <div
@@ -518,7 +526,7 @@
                 </div>
                 <div class="flex gap-1" id="shipmentTabs">
                     <button
-                            class="px-3 py-1 text-[10px] font-black rounded bg-db-panel/80 text-white border border-db-border cursor-pointer transition-all active"
+                            class="px-3 py-1 text-[10px] font-black rounded bg-db-panel/80 text-db-text border border-db-border cursor-pointer transition-all active"
                             data-tab="all"
                     >
                         All
@@ -733,9 +741,11 @@
                     </svg>
                     Refresh
                 </button>
-                <div class="flex items-center gap-1.5 font-bold" id="sapConnBadge">
+                <div class="relative flex items-center gap-1.5 font-bold" id="sapConnBadge" aria-live="polite">
                     <div class="w-1.5 h-1.5 rounded-full bg-green-500 pulse-dot"></div>
-                    <span class="text-[11px] text-green-500">Connected</span>
+                    <span id="sapConnStatus" class="text-[11px] text-green-500">Connected</span>
+                    <button id="sapConnHelpButton" type="button" class="hidden h-5 w-5 rounded-full border border-red-500/40 text-[11px] font-bold text-red-400 hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400" aria-label="SAP connection help" aria-expanded="false" aria-controls="sapConnHelpText">i</button>
+                    <div id="sapConnHelpText" class="hidden absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border border-red-500/30 bg-db-panel p-3 text-xs font-medium leading-relaxed text-db-text shadow-xl" role="status">Error connecting to SAP, please check your internet connection.</div>
                 </div>
             </div>
             <div class="text-db-text3 font-medium italic" id="sapResultCount">
@@ -769,7 +779,7 @@
             <button
                     onclick="window.dashboard.filterSap('all')"
                     id="sapTabAll"
-                    class="px-4 py-1.5 rounded-md bg-db-item-active text-white text-[11px] font-bold border border-db-border cursor-pointer transition-all active"
+                    class="px-4 py-1.5 rounded-md bg-db-item-active text-db-text text-[11px] font-bold border border-db-border cursor-pointer transition-all active"
             >
                 All
             </button>
@@ -863,37 +873,37 @@
                             #
                         </th>
                         <th
-                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                    class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-db-text transition-colors"
                                 onclick="window.dashboard.sortSap('SAPDispatchNumber')"
                         >
                             Shipment #
                         </th>
                         <th
-                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                    class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-db-text transition-colors"
                                 onclick="window.dashboard.sortSap('TruckType')"
                         >
                             Truck Type
                         </th>
                         <th
-                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                    class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-db-text transition-colors"
                                 onclick="window.dashboard.sortSap('Route')"
                         >
                             Route
                         </th>
                         <th
-                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                    class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-db-text transition-colors"
                                 onclick="window.dashboard.sortSap('PlanningDate')"
                         >
                             Planned Date
                         </th>
                         <th
-                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                    class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-db-text transition-colors"
                                 onclick="window.dashboard.sortSap('PlanningDate')"
                         >
                             Planned Delivery Date
                         </th>
                         <th
-                                class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-white transition-colors"
+                    class="px-6 py-3 text-[10px] font-bold text-db-text3 uppercase tracking-wider cursor-pointer hover:text-db-text transition-colors"
                                 onclick="window.dashboard.sortSap('PgiStatus')"
                         >
                             Status
@@ -922,10 +932,10 @@
     <!-- Fleet Manager Content -->
     <div
             id="fleetContent"
-            class="flex-1 w-full flex flex-col hidden bg-[#0d0f12]"
+            class="flex-1 w-full flex flex-col hidden bg-db-bg"
     >
         <!-- Top Bar -->
-        <div class="px-7 py-0 h-[56px] flex items-center justify-between bg-[#13161b] border-b border-[rgba(255,255,255,0.07)] shrink-0">
+        <div class="px-7 py-0 h-[56px] flex items-center justify-between bg-db-panel border-b border-db-border shrink-0">
             <div class="flex items-center gap-5">
                 <span class="text-[13px] font-bold text-db-text uppercase tracking-widest">Fleet Manager</span>
                 <div class="flex items-center gap-2 bg-green-500/10 border border-green-500/20 rounded-full px-3 py-1 text-[10px] font-bold text-green-400 uppercase tracking-widest">
@@ -936,11 +946,11 @@
 
             <div class="flex items-center gap-5">
                 <div class="flex gap-3">
-                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                    <div class="bg-db-panel border border-db-border rounded-xl px-4 py-2 flex items-center gap-3">
                         <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">In queue</span>
                         <span id="fleetStatTotal" class="text-[13px] font-bold text-blue-400 font-mono">0</span>
                     </div>
-                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                    <div class="bg-db-panel border border-db-border rounded-xl px-4 py-2 flex items-center gap-3">
                         <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">Truck types</span>
                         <span id="fleetStatTypes" class="text-[13px] font-bold text-db-text font-mono">0</span>
                     </div>
@@ -948,7 +958,7 @@
             </div>
 
             <div class="flex items-center gap-2">
-                <div class="flex items-center gap-2 bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-3 py-2 w-52 transition-all focus-within:border-[rgba(255,255,255,0.12)]">
+                <div class="flex items-center gap-2 bg-db-panel border border-db-border rounded-xl px-3 py-2 w-52 transition-all focus-within:border-sysu-red/50">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-db-text3 shrink-0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                     <input type="text" id="fleetSearch" oninput="window.dashboard.renderFleet()" placeholder="Search driver, plate..." class="bg-transparent border-none outline-none text-[11px] text-db-text font-medium w-full placeholder:text-db-text3/50" />
                 </div>
@@ -964,10 +974,10 @@
     <!-- ══════════ CONFIRMED ASSIGNMENTS / ORDERS ══════════ -->
     <div
             id="ordersContent"
-            class="flex-1 w-full flex flex-col hidden bg-[#0d0f12]"
+            class="flex-1 w-full flex flex-col hidden bg-db-bg"
     >
         <!-- Top Bar -->
-        <div class="px-7 py-0 h-[56px] flex items-center justify-between bg-[#13161b] border-b border-[rgba(255,255,255,0.07)] shrink-0">
+        <div class="px-7 py-0 h-[56px] flex items-center justify-between bg-db-panel border-b border-db-border shrink-0">
             <div class="flex items-center gap-5">
                 <span class="text-[13px] font-bold text-db-text uppercase tracking-widest">Confirmed Assignments</span>
                 <div class="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-full px-3 py-1 text-[10px] font-bold text-blue-400 uppercase tracking-widest">
@@ -979,11 +989,11 @@
             <div class="flex items-center gap-5">
                 <!-- Stats chips -->
                 <div class="flex gap-3">
-                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                    <div class="bg-db-panel border border-db-border rounded-xl px-4 py-2 flex items-center gap-3">
                         <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">Total</span>
                         <span id="ordersStatTotal" class="text-[13px] font-bold text-db-text font-mono">0</span>
                     </div>
-                    <div class="bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-4 py-2 flex items-center gap-3">
+                    <div class="bg-db-panel border border-db-border rounded-xl px-4 py-2 flex items-center gap-3">
                         <span class="text-[10px] font-semibold text-db-text3 uppercase tracking-wider">Today</span>
                         <span id="ordersStatToday" class="text-[13px] font-bold text-blue-400 font-mono">0</span>
                     </div>
@@ -994,7 +1004,7 @@
             </div>
 
             <div class="flex items-center gap-2">
-                <div class="flex items-center gap-2 bg-[#1a1e25] border border-[rgba(255,255,255,0.07)] rounded-xl px-3 py-2 w-52 transition-all focus-within:border-[rgba(255,255,255,0.12)]">
+                <div class="flex items-center gap-2 bg-db-panel border border-db-border rounded-xl px-3 py-2 w-52 transition-all focus-within:border-sysu-red/50">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-db-text3 shrink-0">
                         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
@@ -1025,7 +1035,7 @@
     <!-- ══════════ DRIVER LIVE TRACKING ══════════ -->
     <div
             id="trackingContent"
-            class="flex-1 w-full flex overflow-hidden hidden bg-[#0d0f12]"
+            class="flex-1 w-full flex overflow-hidden hidden bg-db-bg"
     >
         <!-- Map (flex-grow, fills remaining space) -->
         <div class="flex-1 relative overflow-hidden" id="trackingMapWrap">
@@ -1061,7 +1071,7 @@
         <!-- Driver List Sidebar (fixed 280px wide) -->
         <div class="w-[280px] shrink-0 flex flex-col bg-db-panel border-l border-db-border overflow-hidden">
             <!-- Sidebar header -->
-            <div class="h-[56px] flex items-center justify-between px-4 border-b border-db-border shrink-0 bg-[#13161b]">
+            <div class="h-[56px] flex items-center justify-between px-4 border-b border-db-border shrink-0 bg-db-panel">
                 <div class="flex items-center gap-2">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-db-text3">
                         <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
@@ -1076,6 +1086,8 @@
             </div>
         </div>
     </div>
+
+    <div id="driverActionContent" class="flex-1 w-full min-h-0 hidden bg-db-bg overflow-hidden"></div>
 
     <!-- ─── Admin Override Approval Flow: Documents Tab + Override Modals ─── -->
     <section id="docsContent" class="hidden w-full flex-1 flex flex-col bg-db-bg overflow-hidden">
@@ -1100,10 +1112,47 @@
             <button id="docsGuardsTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="guards">Guards</button>
             <button id="docsTruckCompaniesTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="truck-companies">Truck Companies</button>
             <button id="docsWarehouseTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="warehouse">Warehouse Base</button>
+            <button id="docsSystemErrorsTabBtn" class="docs-tab-btn px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-t-lg transition-all border-b-2 border-transparent text-db-text3 hover:text-db-text2 hidden" data-tab="system-errors">System Logs</button>
         </div>
 
         <div id="docsListContainer" class="flex-1 overflow-y-auto p-6">
             <div role="status" aria-label="Loading requests" aria-busy="true" class="space-y-3 animate-pulse"><div class="h-20 rounded-lg bg-db-item-hover"></div><div class="h-20 rounded-lg bg-db-item-hover"></div><div class="h-20 rounded-lg bg-db-item-hover"></div></div>
+        </div>
+    </section>
+
+    <section id="settingsContent" class="hidden w-full flex-1 min-h-0 overflow-y-auto bg-db-bg" aria-labelledby="settingsHeading">
+        <div class="mx-auto w-full max-w-4xl p-4 sm:p-8">
+            <header class="mb-6 border-b border-db-border pb-5">
+                <p class="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-sysu-red">Preferences</p>
+                <h1 id="settingsHeading" class="text-xl font-bold tracking-tight text-db-text sm:text-2xl">Settings</h1>
+                <p class="mt-1 text-sm text-db-text2">Personalize how SYSU Dispatch looks on this device.</p>
+            </header>
+
+            <section class="rounded-xl border border-db-border bg-db-panel p-4 sm:p-6" aria-labelledby="appearanceHeading">
+                <div class="mb-5 flex items-start gap-3">
+                    <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-db-border bg-db-bg text-db-text2" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path></svg>
+                    </div>
+                    <div>
+                        <h2 id="appearanceHeading" class="text-sm font-bold text-db-text">Appearance</h2>
+                        <p class="mt-1 text-xs leading-relaxed text-db-text3">Choose a theme. Your preference is saved in this browser and also controls the map theme.</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2" role="group" aria-label="Color theme">
+                    <button type="button" data-theme-choice="dark" aria-pressed="true" class="flex min-h-24 items-center gap-3 rounded-lg border border-db-border bg-db-bg p-4 text-left transition-colors hover:border-db-text3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sysu-red">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-900 text-slate-200" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"></path></svg>
+                        </span>
+                        <span><span class="block text-sm font-semibold text-db-text">Dark</span><span class="mt-1 block text-xs text-db-text3">Low-glare workspace</span></span>
+                    </button>
+                    <button type="button" data-theme-choice="light" aria-pressed="false" class="flex min-h-24 items-center gap-3 rounded-lg border border-db-border bg-db-bg p-4 text-left transition-colors hover:border-db-text3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sysu-red">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-amber-200 bg-amber-50 text-amber-600" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="h-5 w-5"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path></svg>
+                        </span>
+                        <span><span class="block text-sm font-semibold text-db-text">Light</span><span class="mt-1 block text-xs text-db-text3">Bright, high-contrast workspace</span></span>
+                    </button>
+                </div>
+            </section>
         </div>
     </section>
 
@@ -1253,7 +1302,10 @@
 
 <div
         id="toast"
-        class="fixed bottom-4.5 left-1/2 -translate-x-1/2 translate-y-[60px] bg-db-panel border border-db-border rounded-lg px-4 py-2 text-[12.5px] text-db-text z-[9999] opacity-0 transition-all shadow-[0_8px_24px_rgba(0,0,0,0.6)] whitespace-nowrap"
+        class="fixed bottom-4 left-1/2 -translate-x-1/2 translate-y-[60px] max-w-[calc(100vw-2rem)] bg-db-panel border border-db-border rounded-lg px-4 py-2.5 text-[12.5px] text-db-text z-[9999] opacity-0 transition-all shadow-[0_8px_24px_rgba(0,0,0,0.6)] whitespace-normal"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
 ></div>
 
 <!-- Driver Modal -->
@@ -1514,6 +1566,10 @@
                 <div class="text-[10px] font-bold text-sysu-red uppercase tracking-widest mb-3">Outbound Line Items (All
                     OBDs)
                 </div>
+                <div id="sapDtlDataWarning" role="alert" hidden class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-db-text2">
+                    <span>Some SAP shipment details could not be loaded. Saved assignment and POD data remain available.</span>
+                    <button type="button" data-action="sap-detail-retry" class="font-bold text-sysu-red hover:underline">Retry details</button>
+                </div>
                 <div class="w-full min-w-0 overflow-x-hidden">
                     <table id="sapDtlOBDTable" class="sap-obd-table w-full min-w-0 text-left border-collapse text-sm table-fixed">
                         <colgroup>
@@ -1532,18 +1588,18 @@
                         </colgroup>
                         <thead>
                         <tr class="border-b border-db-border">
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">OBD Number</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Amount</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Volume (m³)</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Weight (kg)</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Quantity</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Ship-To</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap cursor-pointer hover:text-white transition-colors" onclick="window.dashboard.sortObdLines('ShipToPartyName')">Customer Name</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap cursor-pointer hover:text-white transition-colors" onclick="window.dashboard.sortObdLines('Address')">Delivery Address</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Latitude</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Longitude</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 pr-4 text-center whitespace-nowrap w-[80px]">POD Preview</th>
-                            <th class="text-[10px] font-bold text-white uppercase tracking-wider pb-2 px-3 text-center whitespace-nowrap">Delivery Status</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">OBD Number</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Amount</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Volume (m³)</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Weight (kg)</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Quantity</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Ship-To</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap cursor-pointer hover:text-db-text transition-colors" onclick="window.dashboard.sortObdLines('ShipToPartyName')">Customer Name</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap cursor-pointer hover:text-db-text transition-colors" onclick="window.dashboard.sortObdLines('Address')">Delivery Address</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Latitude</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-3 text-center whitespace-nowrap">Longitude</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 pr-4 text-center whitespace-nowrap w-[80px]">POD Preview</th>
+                            <th class="text-[10px] font-bold text-db-text3 uppercase tracking-wider pb-2 px-3 text-center whitespace-nowrap">Delivery Status</th>
                         </tr>
                         </thead>
                         <tbody id="sapDtlOBDLines">
@@ -1964,17 +2020,17 @@
 </div>
     <!-- POD Preview Modal -->
     <div id="podPreviewModal" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-[9000]">
-      <div class="bg-white dark:bg-gray-800 rounded-lg p-4 sm:p-3 max-w-4xl sm:max-w-3xl md:max-w-2xl w-full shadow-lg">
+      <div class="bg-db-panel text-db-text border border-db-border rounded-lg p-4 sm:p-3 max-w-4xl sm:max-w-3xl md:max-w-2xl w-full shadow-lg">
         <div class="flex justify-between items-center mb-2">
-          <h2 id="podPreviewTitle" class="text-lg font-bold text-gray-800 dark:text-gray-200">POD Preview</h2>
-          <button onclick="window.dashboard.closePodPreview()" class="text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white">&times;</button>
+          <h2 id="podPreviewTitle" class="text-lg font-bold text-db-text">POD Preview</h2>
+          <button onclick="window.dashboard.closePodPreview()" class="text-db-text2 hover:text-db-text">&times;</button>
         </div>
         <div id="podPreviewSingleContent">
           <div class="flex-1 flex items-center justify-center">
             <img id="podPreviewImg" src="" alt="POD image" class="max-h-[80vh] sm:max-h-[70vh] md:max-h-[60vh] w-auto rounded cursor-zoom-in"/>
           </div>
-          <div class="text-sm text-gray-600 dark:text-gray-300">Captured at: <span id="podTimestamp">&mdash;</span></div>
-          <div class="text-sm text-gray-600 dark:text-gray-300">Verified at: <span id="podVerifiedTimestamp">&mdash;</span></div>
+          <div class="text-sm text-db-text2">Captured at: <span id="podTimestamp">&mdash;</span></div>
+          <div class="text-sm text-db-text2">Verified at: <span id="podVerifiedTimestamp">&mdash;</span></div>
           <div id="podPreviewSignature" class="mt-4"></div>
         </div>
         <div id="podPreviewGallery" hidden class="w-full"></div>

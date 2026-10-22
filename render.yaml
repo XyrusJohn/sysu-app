@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: sysu-app-staging-api
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: staging
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FIREBASE_PROJECT_ID
+        value: sysu-stage
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://sysu-stage.web.app
+      - key: SAP_URL
+        sync: false
+      - key: TRUST_PROXY
+        value: "1"

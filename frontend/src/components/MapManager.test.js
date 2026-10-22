@@ -1,5 +1,5 @@
 import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
-import {clearMarkers, initLeafletMap, markers, seedMarker, updateMarker} from './MapManager.js';
+import {clearMarkers, disposeLeafletMap, initLeafletMap, markers, seedMarker, updateMarker} from './MapManager.js';
 
 describe('Real Leaflet tracking markers', () => {
     let map;
@@ -31,6 +31,25 @@ describe('Real Leaflet tracking markers', () => {
         map.setZoom(11);
     });
 
+    it('reuses the overview map configuration and can safely recreate a secondary map', () => {
+        const secondary = document.createElement('div');
+        secondary.id = 'driverActionMap';
+        document.body.appendChild(secondary);
+        Object.defineProperties(secondary, {
+            clientWidth: {configurable:true, value:1200},
+            clientHeight: {configurable:true, value:700},
+        });
+        secondary.getBoundingClientRect = () => ({width:1200,height:700,left:0,top:0,right:1200,bottom:700});
+        const first = initLeafletMap('driverActionMap');
+        expect(first.options.maxBounds.getSouthWest().lat).toBe(4.3);
+        expect(first.options.maxBounds.getNorthEast().lng).toBe(127.5);
+        disposeLeafletMap('driverActionMap');
+        const second = initLeafletMap('driverActionMap');
+        expect(second).not.toBe(first);
+        disposeLeafletMap('driverActionMap');
+        secondary.remove();
+    });
+
     it('moves an existing marker without rebuilding its icon', () => {
         updateMarker(fix);
         const marker = markers[fix.driverId];
@@ -50,6 +69,13 @@ describe('Real Leaflet tracking markers', () => {
         element.innerHTML = markers[fix.driverId].getPopup().getContent();
         expect(element.querySelector('img,script')).toBeNull();
         expect(element.textContent).toContain('<script>x</script>');
+    });
+    it('uses theme tokens and light-theme-safe status colors in map popups', () => {
+        updateMarker({...fix, status: 'online', shipmentId: 'SHIPMENT-1'});
+        const popup = markers[fix.driverId].getPopup().getContent();
+        expect(popup).toContain('var(--map-popup-surface');
+        expect(popup).toContain('class="flm-status-chip"');
+        expect(popup).toContain('--status-color-light:#166534');
     });
     it('shows a generic map icon label only while the trip is in transit', () => {
         updateMarker({...fix, tripStatus: 'loading'});

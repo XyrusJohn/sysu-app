@@ -25,6 +25,7 @@ dist-ssr
 
 .env
 .env.*
+!.env.staging.example
 .env.local
 .env.production
 *service-account*.json

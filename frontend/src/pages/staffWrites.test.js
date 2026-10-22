@@ -10,7 +10,7 @@ test('R14 saving a driver uses the authenticated server and never writes another
   const direct=vi.fn(async()=>{throw new Error('Direct SDK staff writes denied');});
   const save=vi.fn(async()=>({success:true}));
   const alert=vi.fn();
-  const context={state:{editDrvId:'driver-a',queue:[{id:'other',driverId:'driver-b',registrationComplete:false}]},closeDrvModal:vi.fn(),_renderAll:vi.fn()};
+  const context={state:{editDrvId:'driver-a',queue:[{id:'other',driverId:'driver-b',registrationComplete:false}]},closeDrvModal:vi.fn(),_renderAll:vi.fn(),_showToast:vi.fn(),_showErrorToast:vi.fn(),_notifyFailure:vi.fn()};
   await method('saveDriver','',{StaffDriverService:{save},setDoc:direct,updateDoc:direct,doc:()=>({}),db:{},document,alert,console,getDocs:direct,query:()=>({}),collection:()=>({}),where:()=>({})}).call(context);
   expect(save).toHaveBeenCalledWith('driver-a',expect.objectContaining({name:'Synthetic Synthetic'}));
   expect(direct).not.toHaveBeenCalled();
