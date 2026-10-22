@@ -20,7 +20,16 @@ The Firebase Web App values are public client configuration. Keep them in the ig
 
 ## Staging service requirements
 
-- Deploy the SYSU App API from the `staging` branch as its own Render web service. Set `FIREBASE_PROJECT_ID=sysu-stage`, use a service-account secret created for that project, allow only the staging dashboard origin in `ALLOWED_ORIGINS`, and use a staging-safe SAP endpoint. Set `PORT` to the port configured for the service and verify `TRUST_PROXY` for Render's proxy.
+- The `sysu-stage` project's default Firestore database has been created in `nam5` (US multi-region), using the location selected by the project owner. Firestore does not allow changing a database's region after creation. The Cloud Firestore API is enabled, and the repository's reviewed rules and composite indexes have been deployed from `frontend`:
+
+  ```powershell
+  firebase deploy --config firebase.staging.json --only firestore --project=sysu-stage
+  ```
+
+  Firestore automatically maintains single-field indexes, so only required composite indexes are kept in `firestore.indexes.json`. No production records were copied.
+- Configure Firebase Authentication in `sysu-stage` with the providers used by the web app and add `sysu-stage.web.app` to authorized domains. Use synthetic staging accounts and seed the required active `users/{uid}` role documents in the staging database; never copy production accounts or records to make staging work.
+
+- Create/sync the root `render.yaml` Blueprint from the `staging` branch to create the separate `sysu-app-staging-api` Render web service in Singapore. Its `/health/ready` check requires working staging Firestore credentials before Render marks the deployment ready. Supply a service-account JSON from `sysu-stage` through the secret prompt and a staging-safe SAP URL; never use production credentials or a production SAP endpoint. The Blueprint restricts CORS to `https://sysu-stage.web.app`, sets `FIREBASE_PROJECT_ID=sysu-stage`, and configures one trusted Render proxy hop. Render injects the service's `PORT`.
 - Set `VITE_API_URL` and `VITE_SOCKET_URL` to that staging API's HTTPS origin.
 - Set `VITE_DRIVER_TRACKING_URL` to a staging SYSU Go API. The release config deliberately rejects the production Railway tracking endpoint in staging. Without a staging SYSU Go service, Driver Action history and driver tracking are not a complete staging test.
 - Initialize Firebase Auth, Firestore, and Storage as needed in `sysu-stage`; configure the required Auth providers and deploy reviewed Firestore rules/indexes to the staging project before exercising data flows.

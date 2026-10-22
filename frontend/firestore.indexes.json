@@ -79,13 +79,6 @@
       ]
     },
     {
-      "collectionGroup": "sap_assignments",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {"fieldPath": "assignedAt", "order": "DESCENDING"}
-      ]
-    },
-    {
       "collectionGroup": "drivers",
       "queryScope": "COLLECTION",
       "fields": [
@@ -115,13 +108,6 @@
       "fields": [
         {"fieldPath": "status", "order": "ASCENDING"},
         {"fieldPath": "joinedAt", "order": "ASCENDING"}
-      ]
-    },
-    {
-      "collectionGroup": "incidents",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {"fieldPath": "createdAt", "order": "DESCENDING"}
       ]
     }
   ]
