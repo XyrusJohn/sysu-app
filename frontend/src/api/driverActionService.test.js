@@ -55,4 +55,17 @@ describe('DriverActionService socket contract', () => {
         const response = await DriverActionService.getEvents('driver-1','session-1');
         expect(eventsNewestFirst(response.items).map(item => item.sequence)).toEqual([2,1]);
     });
+
+    it('plots only in-transit route samples while preserving other action locations', async () => {
+        const {driverActionCoordinates, driverActionRouteCoordinates} = await import('./driverActionService.js');
+        const events = [
+            {eventType:'app_open', lat:14.6, lng:121.0},
+            {eventType:'route_point', sequence:4, lat:14.7, lng:121.1},
+            {eventType:'pod_captured', lat:14.8, lng:121.2},
+            {eventType:'route_point', sequence:8, lat:14.9, lng:121.3},
+            {eventType:'route_point', lat:null, lng:null},
+        ];
+        expect(events.map(driverActionCoordinates).filter(Boolean)).toHaveLength(4);
+        expect(driverActionRouteCoordinates([...events].reverse())).toEqual([[14.7,121.1],[14.9,121.3]]);
+    });
 });

@@ -85,3 +85,11 @@ export const eventsNewestFirst = (rows) => [...(rows || [])].sort((a, b) => {
     if (Number.isSafeInteger(a?.sequence) && Number.isSafeInteger(b?.sequence)) return b.sequence - a.sequence;
     return driverActionTimestamp(b?.occurredAtMs) - driverActionTimestamp(a?.occurredAtMs);
 });
+
+export const driverActionRouteCoordinates = (events) => [...(events || [])]
+    .filter(item => item?.eventType === 'route_point')
+    .sort((a, b) => Number.isSafeInteger(a.sequence) && Number.isSafeInteger(b.sequence)
+        ? a.sequence - b.sequence
+        : driverActionTimestamp(a.occurredAtMs) - driverActionTimestamp(b.occurredAtMs))
+    .map(driverActionCoordinates)
+    .filter(Boolean);

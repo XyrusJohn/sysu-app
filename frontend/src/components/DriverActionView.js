@@ -1,5 +1,5 @@
 import L from 'leaflet';
-import { DriverActionService, driverActionCoordinates, driverActionTimestamp, eventsNewestFirst, newestFirst } from '../api/driverActionService.js';
+import { DriverActionService, driverActionCoordinates, driverActionRouteCoordinates, driverActionTimestamp, eventsNewestFirst, newestFirst } from '../api/driverActionService.js';
 import { validLocation } from './locationState.js';
 import { disposeLeafletMap, initLeafletMap } from './MapManager.js';
 
@@ -54,7 +54,7 @@ export class DriverActionView {
               </div><div id="driverActionDirectory" class="flex-1 overflow-y-auto p-2"></div>
             </aside>
             <section class="relative min-w-0 flex-1 overflow-hidden"><div id="driverActionMap" class="absolute inset-0"></div>
-              <div class="absolute top-4 left-4 z-[500] rounded-lg border border-db-border bg-db-panel/90 px-3 py-2 text-xs text-db-text shadow-lg">Select a driver to view action sessions</div>
+              <div class="absolute top-4 left-4 z-[500] max-w-[min(28rem,calc(100%-2rem))] rounded-lg border border-db-border bg-db-panel/90 px-3 py-2 text-xs text-db-text shadow-lg">Select a driver to view action sessions. Locations are device-reported; the route line uses in-transit samples only.</div>
               <aside id="driverActionDrawer" class="absolute inset-y-0 right-0 z-[600] flex w-[390px] max-w-[92vw] translate-x-full flex-col border-l border-db-border bg-db-panel/95 shadow-2xl backdrop-blur transition-transform duration-200" aria-label="Driver action details" aria-hidden="true"></aside>
             </section>
           </div>`;
@@ -193,7 +193,7 @@ export class DriverActionView {
     _drawRoute(events = []) {
         this._clearRoute();
         const locatedEvents = [...events].reverse().filter(item => driverActionCoordinates(item));
-        const points = locatedEvents.map(driverActionCoordinates);
+        const points = driverActionRouteCoordinates(events);
         locatedEvents.forEach(item => {
             const [lat, lng] = driverActionCoordinates(item);
             L.circleMarker([lat, lng], {radius:5, color:'#fff', weight:2, fillColor:'#dc2626', fillOpacity:1})
