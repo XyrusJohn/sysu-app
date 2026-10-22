@@ -1,5 +1,10 @@
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const LIVE_HOSTS = new Set(['sysu-app.onrender.com', 'sysu-go.onrender.com']);
+const PRODUCTION_ENDPOINTS = Object.freeze({
+    VITE_API_URL: 'sysu-app.onrender.com',
+    VITE_SOCKET_URL: 'sysu-app.onrender.com',
+    VITE_DRIVER_TRACKING_URL: 'sysu-go.onrender.com',
+});
 
 /** Keep an emulator-backed test artifact from being mistaken for a public release build. */
 export function assertProductionBuildTarget(command, mode, env) {
@@ -36,6 +41,9 @@ export function resolveReleaseConfig(env) {
         try {url = new URL(value);} catch {throw new Error(`${name} must be a valid URL`);}
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
             || url.pathname !== '/' || url.search || url.hash) throw new Error(`${name} must be a service origin`);
+        if (target === 'production' && url.hostname !== PRODUCTION_ENDPOINTS[name]) {
+            throw new Error(`${name} must use its approved production endpoint`);
+        }
         if (target === 'local' && !LOCAL_HOSTS.has(url.hostname)) throw new Error('Local endpoints must use loopback hosts');
         if (target !== 'production' && LIVE_HOSTS.has(url.hostname)) throw new Error('Non-production configuration cannot target live production endpoints');
         const localTestEndpoint = workstation && LOCAL_HOSTS.has(url.hostname);

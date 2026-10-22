@@ -90,3 +90,18 @@ test('Render production endpoints resolve and cannot be used by staging', async 
       [name]: env[name]})).toThrow(/Non-production/);
   }
 });
+
+test('production endpoints reject the retired Railway services', async () => {
+  const {resolveReleaseConfig} = await import('./releaseConfig.js');
+  const env = {VITE_RELEASE_TARGET: 'production', VITE_FIREBASE_PROJECT_ID: 'sysu-web-5a25d',
+    VITE_API_URL: 'https://sysu-app.onrender.com', VITE_SOCKET_URL: 'https://sysu-app.onrender.com',
+    VITE_DRIVER_TRACKING_URL: 'https://sysu-go.onrender.com'};
+  const retired = {
+    VITE_API_URL: 'https://sysu-app-production.up.railway.app',
+    VITE_SOCKET_URL: 'https://sysu-app-production.up.railway.app',
+    VITE_DRIVER_TRACKING_URL: 'https://sysu-go-production.up.railway.app',
+  };
+  for (const [name, value] of Object.entries(retired)) {
+    expect(() => resolveReleaseConfig({...env, [name]: value})).toThrow(/approved production endpoint/);
+  }
+});
