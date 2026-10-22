@@ -94,6 +94,9 @@ export const EVENTS = {
     REJECT_ROLE_REQUEST: "reject_role_request",
     USER_ROLE_CHANGED: "user_role_changed",
     POD_UPDATED: "pod_updated",
+    DRIVER_ACTIONS_GET_SESSIONS: "driver_actions:get_sessions",
+    DRIVER_ACTIONS_GET_EVENTS: "driver_actions:get_events",
+    DRIVER_ACTIONS_UPDATED: "driver_actions:updated",
 };
 
 // ── Driver-Location Socket ─────────────────────────────────────────────────

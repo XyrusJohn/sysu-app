@@ -41,3 +41,7 @@ Aligned HTTP, socket, QR and staff transaction account checks with explicit acti
 ## 2026-10-15 — Documentation navigation refresh
 
 Replaced the outdated long-form root overview with a concise setup and documentation map, corrected the testing-setup pointer, and preserved the former Claude QR plan in the archive. Verified 26 Markdown files have resolvable relative links. The R06 dependency-install workflow and dated production/test evidence remain open for their existing owners. No application code changed; no tests or build were run for this documentation-only update.
+
+## 2026-10-21 -- SAP and assignment empty/error feedback
+
+SAP outages now remain distinct from confirmed empty shipment results: failed refreshes preserve the last successful shipment snapshot, show a retryable alert, and no longer produce a false success notice. SAP status filters/searches render explicit empty messages; Assign flows distinguish unavailable/loading data from genuine no-match results. Dispatch Detail now shows a retryable warning if SAP-only field enrichment fails while preserving saved assignment/POD rows. Frontend tests passed 197/197, Vite production build passed, targeted ESLint had 0 errors and 11 existing warnings, and git diff --check passed. Local only; no deployment, commit, or push.

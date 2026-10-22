@@ -31,6 +31,7 @@ import { subscribeRealtime, asCollectionSnapshot } from "../api/realtimeService.
 import { db, auth } from "../api/firebase.js";
 import { updateProfile } from "firebase/auth";
 import L from "leaflet";
+import { DriverActionView } from "../components/DriverActionView.js";
 import {
     collection,
     query,
@@ -136,6 +137,7 @@ export class Dashboard {
         this._sapDispatchDetailsFetchedAt = new Map();
         this._sapDispatchDetailsRetryAfter = new Map();
         this._podPreviewEscapeListener = null;
+        this._driverActionView = null;
         this._globalEscapeListener = null;
         this._sapObdPreviewGroups = [];
         this._bindMethods();
@@ -264,6 +266,12 @@ export class Dashboard {
         if (usersBtn) {
             usersBtn.style.display = isAdmin ? "flex" : "none";
         }
+
+        const canSeeDriverAction = ["fleet_manager", "admin", "super_admin"].includes(role);
+        ["rDriverAction", "lDriverAction"].forEach(id => {
+            const button = document.getElementById(id);
+            if (button) button.style.display = canSeeDriverAction ? "flex" : "none";
+        });
 
         const exportBtn = document.getElementById("tbarExportArea");
         if (exportBtn) {
@@ -1288,6 +1296,7 @@ export class Dashboard {
             "Settings",
             "Users",
             "SAP",
+            "DriverAction",
         ].forEach((view) => {
             const rBtn = document.getElementById(`r${view}`);
             const lBtn = document.getElementById(`l${view}`);
@@ -3070,6 +3079,11 @@ export class Dashboard {
             this._renderFleetTree();
             this._renderFleetOperations();
             this._renderSapTable();
+            if (this.state.activeView === "driveraction" && this._driverActionView) {
+                this._driverActionView.drivers = this.state.drivers;
+                this._driverActionView.liveTracking = this.state.liveTracking;
+                this._driverActionView._renderDirectory();
+            }
             const view = this.state.activeView;
             if (view === "drivers" || view === "fleet" || view === "") this.renderFleet();
             if (view === "orders") this.renderOrders();
@@ -4227,6 +4241,7 @@ export class Dashboard {
         if (
             this.state.activeView === viewId &&
             viewId !== "users" &&
+            viewId !== "driveraction" &&
             viewId !== "sap"
         ) {
             if (sidePanel) {
@@ -4248,8 +4263,13 @@ export class Dashboard {
         const trackingContent = document.getElementById("trackingContent");
         const docsContent = document.getElementById("docsContent");
         const settingsContent = document.getElementById("settingsContent");
+        const driverActionContent = document.getElementById("driverActionContent");
+        if (viewId !== "driveraction" && this._driverActionView) {
+            this._driverActionView.destroy();
+            this._driverActionView = null;
+        }
 
-        const views = [mainContent, usersContent, sapContent, fleetContent, ordersContent, trackingContent, docsContent, settingsContent];
+        const views = [mainContent, usersContent, sapContent, fleetContent, ordersContent, trackingContent, docsContent, settingsContent, driverActionContent];
         views.forEach((v) => {
             if (v) v.style.setProperty("display", "none", "important");
         });
@@ -4267,7 +4287,7 @@ export class Dashboard {
         };
 
         // Hide ALL content views first —" then caller shows what it needs
-        document.querySelectorAll("#mainContent, #fleetContent, #ordersContent, #usersContent, #sapContent, #trackingContent, #docsContent, #settingsContent")
+        document.querySelectorAll("#mainContent, #fleetContent, #ordersContent, #usersContent, #sapContent, #trackingContent, #docsContent, #settingsContent, #driverActionContent")
             .forEach((el) => el?.classList.add("hidden"));
 
         if (viewId === "users") {
@@ -4303,6 +4323,15 @@ export class Dashboard {
             showView(trackingContent);
             if (sidePanel) sidePanel.classList.remove("open");
             this._initTrackingView();
+        } else if (viewId === "driveraction") {
+            showView(driverActionContent);
+            if (sidePanel) sidePanel.classList.remove("open");
+            const canView = ["fleet_manager", "admin", "super_admin"].includes(this.state.user?.role);
+            if (canView && driverActionContent) {
+                this._driverActionView?.destroy();
+                this._driverActionView = new DriverActionView({container:driverActionContent, drivers:this.state.drivers, liveTracking:this.state.liveTracking, canView});
+                this._driverActionView.mount();
+            }
         } else if (viewId === "docs") {
             showView(docsContent);
             if (sidePanel) sidePanel.classList.remove("open");
