@@ -6,7 +6,7 @@
     "sysu-stage": {
       "hosting": {
         "staging": [
-          "sysu-app-staging"
+          "sysu-stage"
         ]
       }
     }

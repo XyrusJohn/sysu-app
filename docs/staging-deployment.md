@@ -9,12 +9,12 @@ The production deployment continues to use `frontend/firebase.json` and the defa
 From `frontend`, create the Hosting site if it does not already exist, then copy `.env.staging.example` to `.env.staging` and fill it with the `sysu-stage` Web App config and deployed staging API origins:
 
 ```powershell
-firebase hosting:sites:create sysu-app-staging --project sysu-stage
+firebase hosting:sites:create sysu-stage --project sysu-stage
 Copy-Item .env.staging.example .env.staging
 firebase deploy --config firebase.staging.json --only hosting:staging --project sysu-stage
 ```
 
-If the site already exists, skip the create command. The intended site URL is `https://sysu-app-staging.web.app`; add that domain to Firebase Authentication's authorized domains. The staging build uses Vite's `staging` mode and refuses the production Firebase project/auth domain/storage bucket.
+If the site already exists, skip the create command. The site URL is `https://sysu-stage.web.app`; add that domain to Firebase Authentication's authorized domains. The staging build uses Vite's `staging` mode and refuses the production Firebase project/auth domain/storage bucket.
 
 The Firebase Web App values are public client configuration. Keep them in the ignored `.env.staging` file or the static site's build environment, not in committed environment files. Never put Firebase Admin credentials in the frontend.
 
