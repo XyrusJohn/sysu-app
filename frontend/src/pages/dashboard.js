@@ -1491,7 +1491,7 @@ export class Dashboard {
     }
 
     // â"€â"€ Live Scans: driver-location socket → Overview Live Scans table â"€â"€
-    // Connects directly to sysu-go-production to receive driver_moving events
+    // Connects to the configured SYSU Go tracking service to receive driver_moving events
     // and joins them with sap_assignments Firestore docs for shipment/plate data.
     async _setupDriverLocationSocket() {
         if (this._driverLocationSocket) return;

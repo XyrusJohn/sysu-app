@@ -7,7 +7,7 @@
  *  - The main `socket` from api/socket.js carries vendor / assignment events
  *    (update_admin_map, vendor_status_update) from the sysu-app backend.
  *  - `driverSocket` (obtained via getDriverSocket()) connects to the
- *    driver-app server (VITE_DRIVER_TRACKING_URL, default sysu-go-production)
+ *    SYSU Go tracking service (VITE_DRIVER_TRACKING_URL)
  *    and receives update_admin_map + update_status events from LocationServices.
  *
  *  Both feed the same MapManager marker layer (via updateMarker()).
