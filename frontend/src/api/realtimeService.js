@@ -77,6 +77,13 @@ for (const target of [socket, getProfileSocket()]) {
         });
         target.on("disconnect", (reason) => {
             console.warn("[realtime] profile socket disconnected", {reason});
+            if (reason === "io server disconnect") {
+                for (const subscription of subscriptions.values()) {
+                    if (subscription.topic === "profile") {
+                        applyError({id: subscription.id, message: "Profile authorization ended"});
+                    }
+                }
+            }
         });
     }
 }

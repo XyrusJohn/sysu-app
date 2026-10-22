@@ -20,12 +20,19 @@ const userRoutes = require("./routes/userRoute.js");
 const qrRoutes = require("./routes/qrRoute.js");
 const driverRoutes = require("./routes/driverRoute.js");
 const adminRoutes = require("./routes/adminRoute.js");
+const systemDiagnosticsRoutes = require("./routes/systemDiagnosticsRoute.js");
 const { startCleanupScheduler } = require("./utils/qrTokenCleanup");
 const { startCleanupScheduler: startQueueCleanup } = require("./utils/queueCleanup");
 const { startCleanupScheduler: startIncidentCleanup } = require("./utils/incidentCleanup");
 
 const app = express();
 app.use(helmet({contentSecurityPolicy: false}));
+app.use((req, res, next) => {
+    req.requestId = require('node:crypto').randomUUID();
+    res.setHeader('X-Request-ID', req.requestId);
+    next();
+});
+app.use(require('./middleware/systemErrorResponseLogger').systemErrorResponseLogger);
 // Health probes bypass office/API traffic quotas and never disclose credentials.
 app.use('/health', require('./routes/healthRoute')({
     probe: () => admin.firestore().doc('_health/readiness').get(),
@@ -85,6 +92,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/qr", qrRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/system-errors", systemDiagnosticsRoutes);
 
 app.use(errorHandler);
 
@@ -187,6 +195,7 @@ io.on("connection", async (socket) => {
     socket.join(`user:${socket.data.uid}`);
     if (['fleet_manager', 'admin', 'super_admin'].includes(socket.data.role)) socket.join('dispatchers');
     if (['admin', 'super_admin'].includes(socket.data.role)) socket.join('role-reviewers');
+    if (['admin', 'super_admin'].includes(socket.data.role)) socket.join('ops-admins');
     const expiryTimer = setTimeout(() => socket.disconnect(true), Math.max(0, socket.data.expiresAt - Date.now()));
     expiryTimer.unref?.();
     const stopProfile = admin.firestore().collection('users').doc(socket.data.uid).onSnapshot(snapshot => {

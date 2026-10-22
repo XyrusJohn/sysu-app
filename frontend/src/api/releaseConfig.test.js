@@ -17,6 +17,12 @@ test('explicit workstation testing supports existing Firebase with localhost bac
     VITE_SOCKET_URL:'http://localhost:8080',VITE_DRIVER_TRACKING_URL:'https://sysu-go-production.up.railway.app'}).BASE_URL)
     .toBe('http://localhost:8080');
 });
+test('R32 production builds refuse emulator targets while E2E build mode permits them', async () => {
+  const {assertProductionBuildTarget}=await import('./releaseConfig.js');
+  expect(()=>assertProductionBuildTarget('build','production',{VITE_RELEASE_TARGET:'local'})).toThrow(/build:e2e/);
+  expect(()=>assertProductionBuildTarget('build','production',{VITE_RELEASE_TARGET:'production'})).not.toThrow();
+  expect(()=>assertProductionBuildTarget('build','e2e',{VITE_RELEASE_TARGET:'local'})).not.toThrow();
+});
 test('workstation opt-in cannot allow localhost in a release build', async () => {
   const {resolveReleaseConfig}=await import('./releaseConfig.js');
   expect(()=>resolveReleaseConfig({VITE_RELEASE_TARGET:'production',VITE_FIREBASE_PROJECT_ID:'sysu-web-5a25d',

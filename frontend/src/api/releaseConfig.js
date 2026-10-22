@@ -1,6 +1,13 @@
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const LIVE_HOSTS = new Set(['sysu-app-production.up.railway.app', 'sysu-go-production.up.railway.app']);
 
+/** Keep an emulator-backed test artifact from being mistaken for a public release build. */
+export function assertProductionBuildTarget(command, mode, env) {
+    if (command === 'build' && mode === 'production' && env.VITE_RELEASE_TARGET !== 'production') {
+        throw new Error('Production frontend builds require VITE_RELEASE_TARGET=production; use npm run build:e2e for emulator tests');
+    }
+}
+
 /** Shared browser/build validation; endpoints never default to a live service. */
 export function resolveReleaseConfig(env) {
     const target = env.VITE_RELEASE_TARGET;

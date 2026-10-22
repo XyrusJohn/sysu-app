@@ -25,7 +25,8 @@ service cloud.firestore {
         && data.get('fn', '') is string && data.get('fn', '').size() <= 50
         && data.get('mi', '') is string && data.get('mi', '').size() <= 8
         && data.get('ln', '') is string && data.get('ln', '').size() <= 50
-        && data.get('phone', '') is string && data.get('phone', '').size() <= 30;
+        && data.get('phone', '') is string && data.get('phone', '').size() <= 30
+        && data.get('truckingCompany', '') is string && data.get('truckingCompany', '').size() <= 100;
     }
 
     function requirements(data) {
@@ -74,14 +75,14 @@ service cloud.firestore {
       allow get: if request.auth != null && (request.auth.uid == userId || staff());
       allow list: if staff();
       allow create: if request.auth != null && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['uid', 'name', 'fn', 'mi', 'ln', 'email', 'phone', 'position', 'role', 'status', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'fn', 'mi', 'ln', 'email', 'phone', 'truckingCompany', 'position', 'role', 'status', 'createdAt'])
         && request.resource.data.role == 'pending'
         && request.resource.data.status == 'inactive'
         && request.resource.data.get('uid', userId) == userId
         && request.resource.data.get('email', '') is string && request.resource.data.get('email', '').size() <= 254
         && basicProfile(request.resource.data);
       allow update: if request.auth != null && request.auth.uid == userId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'fn', 'mi', 'ln', 'displayName', 'photoURL', 'phone'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'fn', 'mi', 'ln', 'displayName', 'photoURL', 'phone', 'truckingCompany'])
         && basicProfile(request.resource.data)
         && request.resource.data.get('displayName', '') is string
         && request.resource.data.get('displayName', '').size() <= 100
@@ -253,6 +254,11 @@ service cloud.firestore {
     match /truck_company/{id} {
       allow read: if request.auth != null;
       allow write: if false;
+    }
+
+    // Diagnostic events are written and read through role-checked backend APIs only.
+    match /system_error_logs/{id} {
+      allow read, write: if false;
     }
 
     // ─── Default: Deny all ────────────────────────────────────────────────────

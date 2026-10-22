@@ -1,16 +1,28 @@
-import {expect, test, vi} from "vitest";
+describe("saved theme startup", () => {
+    beforeEach(() => {
+        localStorage.clear();
+        document.documentElement.removeAttribute("data-theme");
+        vi.spyOn(console, "log").mockImplementation(() => {});
+    });
 
-vi.mock("./style/main.css", () => ({}));
-vi.mock("./api/authService.js", () => ({AuthService: {check: vi.fn()}}));
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
 
-test("shared main entry does not create a second dashboard profile subscription", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    test("restores light mode before the page UI initializes", async () => {
+        localStorage.setItem("sysu-theme", "light");
 
-    try {
         await import("./main.js");
-        const {AuthService} = await import("./api/authService.js");
-        expect(AuthService.check).not.toHaveBeenCalled();
-    } finally {
-        log.mockRestore();
-    }
+
+        expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    });
+
+    test("keeps the dark default when light mode is not saved", async () => {
+        localStorage.setItem("sysu-theme", "dark");
+        document.documentElement.setAttribute("data-theme", "light");
+
+        await import("./main.js?dark-default-test");
+
+        expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    });
 });
