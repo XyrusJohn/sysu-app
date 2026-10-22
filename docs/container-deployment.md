@@ -23,4 +23,15 @@ docker run --rm --env-file .env -p 8080:8080 sysu-app-api:local
 
 Set the matching container `PORT` when publishing a different internal port. Do not bake `.env`, service-account files, or keys into an image. This image is platform-neutral but still depends on reachable Firebase and SAP services and correctly configured origins, credentials, and proxy settings. Horizontal replicas require an explicit Socket.IO scaling strategy (sticky sessions and a shared adapter) before enabling them.
 
-Railway continues to use its separate `railway.json`; the same image can run on another OCI-compatible host. A plain LAMP installation without a container runtime cannot run this image directly.
+The production API is hosted on Render at `https://sysu-app.onrender.com`; use the root Dockerfile and `/health/live` health check. The same image can run on another OCI-compatible host. A plain LAMP installation without a container runtime cannot run this image directly.
+
+
+## Render production connections
+
+- SYSU App API and Socket.IO: `https://sysu-app.onrender.com`.
+- SYSU Go API and Socket.IO: `https://sysu-go.onrender.com`.
+- Dashboard hosting remains `https://sysu-web-5a25d.web.app`; include this origin in `ALLOWED_ORIGINS` on both services.
+- Build the web frontend with `VITE_API_URL` and `VITE_SOCKET_URL` pointing to SYSU App and `VITE_DRIVER_TRACKING_URL` pointing to SYSU Go. Rebuild and redeploy Firebase Hosting after endpoint changes.
+- Rebuild and install the Android APK after changing its `API_BASE_URL` and `SOCKET_URL`; server environment variables cannot change an installed APK's destinations.
+- SYSU Go requires `SYSU_ENV=production`, `FIREBASE_PROJECT_ID=sysu-web-5a25d`, and a valid replacement service-account credential supplied securely by the owner. Production must not have Firebase emulator variables set.
+- Backend deployment does not publish the web frontend or distribute an updated Android APK. Health checks only prove process availability; verify authenticated cross-app behavior separately.

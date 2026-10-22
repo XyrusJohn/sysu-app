@@ -14,7 +14,7 @@ test('explicit workstation testing supports existing Firebase with localhost bac
   const {resolveReleaseConfig}=await import('./releaseConfig.js');
   expect(resolveReleaseConfig({VITE_RELEASE_TARGET:'production',VITE_FIREBASE_PROJECT_ID:'sysu-web-5a25d',
     DEV:true,VITE_USE_LOCAL_BACKEND:'true',VITE_API_URL:'http://localhost:8080',
-    VITE_SOCKET_URL:'http://localhost:8080',VITE_DRIVER_TRACKING_URL:'https://sysu-go-production.up.railway.app'}).BASE_URL)
+    VITE_SOCKET_URL:'http://localhost:8080',VITE_DRIVER_TRACKING_URL:'https://sysu-go.onrender.com'}).BASE_URL)
     .toBe('http://localhost:8080');
 });
 test('R32 production builds refuse emulator targets while E2E build mode permits them', async () => {
@@ -27,7 +27,7 @@ test('workstation opt-in cannot allow localhost in a release build', async () =>
   const {resolveReleaseConfig}=await import('./releaseConfig.js');
   expect(()=>resolveReleaseConfig({VITE_RELEASE_TARGET:'production',VITE_FIREBASE_PROJECT_ID:'sysu-web-5a25d',
     DEV:false,VITE_USE_LOCAL_BACKEND:'true',VITE_API_URL:'http://localhost:8080',
-    VITE_SOCKET_URL:'http://localhost:8080',VITE_DRIVER_TRACKING_URL:'https://sysu-go-production.up.railway.app'}))
+    VITE_SOCKET_URL:'http://localhost:8080',VITE_DRIVER_TRACKING_URL:'https://sysu-go.onrender.com'}))
     .toThrow(/HTTPS/);
 });
 test('R32 missing endpoints fail before any silent production fallback', async () => {
@@ -35,7 +35,7 @@ test('R32 missing endpoints fail before any silent production fallback', async (
   await expect(import('./config.js')).rejects.toThrow(/VITE_API_URL/);
 });
 test('R32 local mode cannot target a live production API', async () => {
-  vi.stubEnv('VITE_API_URL', 'https://sysu-app-production.up.railway.app');
+  vi.stubEnv('VITE_API_URL', 'https://sysu-app.onrender.com');
   await expect(import('./config.js')).rejects.toThrow(/local|production/i);
 });
 test('R32 local mode cannot initialize the production Firebase project', async () => {
@@ -73,4 +73,20 @@ test('R32 local SDK clients connect to both explicit emulators', async () => {
   await import('./firebase.js');
   expect(connectAuthEmulator).toHaveBeenCalledWith(expect.anything(), 'http://127.0.0.1:9099', {disableWarnings: true});
   expect(connectFirestoreEmulator).toHaveBeenCalledWith(expect.anything(), '127.0.0.1', 8085);
+});
+
+
+test('Render production endpoints resolve and cannot be used by staging', async () => {
+  const {resolveReleaseConfig} = await import('./releaseConfig.js');
+  const env = {VITE_RELEASE_TARGET: 'production', VITE_FIREBASE_PROJECT_ID: 'sysu-web-5a25d',
+    VITE_API_URL: 'https://sysu-app.onrender.com', VITE_SOCKET_URL: 'https://sysu-app.onrender.com',
+    VITE_DRIVER_TRACKING_URL: 'https://sysu-go.onrender.com'};
+  expect(resolveReleaseConfig(env)).toEqual({BASE_URL: env.VITE_API_URL,
+    SOCKET_URL: env.VITE_SOCKET_URL, DRIVER_TRACKING_URL: env.VITE_DRIVER_TRACKING_URL});
+  for (const name of ['VITE_API_URL', 'VITE_SOCKET_URL', 'VITE_DRIVER_TRACKING_URL']) {
+    expect(() => resolveReleaseConfig({...env, VITE_RELEASE_TARGET: 'staging',
+      VITE_FIREBASE_PROJECT_ID: 'sysu-staging', VITE_API_URL: 'https://api.example.test',
+      VITE_SOCKET_URL: 'https://api.example.test', VITE_DRIVER_TRACKING_URL: 'https://go.example.test',
+      [name]: env[name]})).toThrow(/Non-production/);
+  }
 });

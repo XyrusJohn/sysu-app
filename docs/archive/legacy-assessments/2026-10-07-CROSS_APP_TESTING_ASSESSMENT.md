@@ -67,8 +67,8 @@ This assessment is retained for audit history. It was superseded by the current 
 
 ### 4. Dual Socket Connection Architecture
 - `dashboard.js` connects to two separate Socket.IO servers:
-  1. Main socket -> `sysu-app-production.up.railway.app` (Handles role requests, admin config, vendor updates).
-  2. Driver socket -> `sysu-go-production.up.railway.app` (Handles driver GPS tracking, `update_admin_map`).
+  1. Main socket -> `sysu-app.onrender.com` (Handles role requests, admin config, vendor updates).
+  2. Driver socket -> `sysu-go.onrender.com` (Handles driver GPS tracking, `update_admin_map`).
 - **Risk**: If one server restarts or fails, partial UI desynchronization occurs (e.g. GPS moves but trip status doesn't change, or vice versa).
 
 ### 5. `driverId` Data Inconsistency (Firebase UID vs Queue Doc ID)

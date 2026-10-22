@@ -26,8 +26,8 @@ test('Android Studio operational build uses the existing production Firebase app
 });
 test('operational build routes Auth and services to production regardless of DEBUG',()=>{
   assert.equal(configString('APPLICATION_ID'),packageName);
-  assert.equal(configString('API_BASE_URL'),'https://sysu-go-production.up.railway.app');
-  assert.equal(configString('SOCKET_URL'),'https://sysu-go-production.up.railway.app');
+  assert.equal(configString('API_BASE_URL'),'https://sysu-go.onrender.com');
+  assert.equal(configString('SOCKET_URL'),'https://sysu-go.onrender.com');
   assert.equal(configString('FRONTEND_URL'),'https://sysu-web-5a25d.web.app');
   assert.match(build,/USE_FIREBASE_EMULATORS = false;/);
 });

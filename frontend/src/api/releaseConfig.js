@@ -1,5 +1,5 @@
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-const LIVE_HOSTS = new Set(['sysu-app-production.up.railway.app', 'sysu-go-production.up.railway.app']);
+const LIVE_HOSTS = new Set(['sysu-app.onrender.com', 'sysu-go.onrender.com']);
 
 /** Keep an emulator-backed test artifact from being mistaken for a public release build. */
 export function assertProductionBuildTarget(command, mode, env) {

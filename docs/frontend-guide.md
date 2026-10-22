@@ -156,7 +156,7 @@ export const AuthService = {
 
 ```js
 // src/api/sapService.js
-const PROD_API = "https://sysu-web-production.up.railway.app/api/sap/shipments";
+const PROD_API = "https://sysu-go.onrender.com/api/sap/shipments";
 const DEV_API  = "http://localhost:3000/api/sap/shipments";
 const SAP_API_URL = import.meta.env.PROD ? PROD_API : DEV_API;
 
@@ -195,7 +195,7 @@ export const SAPService = {
 // src/api/socket.js
 import { io } from "socket.io-client";
 
-const PROD_URL = "https://sysu-web-production.up.railway.app";
+const PROD_URL = "https://sysu-go.onrender.com";
 const SOCKET_URL = import.meta.env.PROD ? PROD_URL : "http://localhost:3000";
 
 export const socket = io(SOCKET_URL, {
