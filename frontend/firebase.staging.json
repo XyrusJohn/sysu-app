@@ -3,7 +3,7 @@
     {
       "target": "staging",
       "public": "dist",
-      "predeploy": ["npm run build -- --mode staging --env-file .env.staging"],
+      "predeploy": ["npm run build -- --mode staging"],
       "ignore": ["firebase.json", "firebase.staging.json", "**/.*", "**/node_modules/**"],
       "headers": [
         {

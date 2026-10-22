@@ -4,7 +4,7 @@ The `staging` branch is for pre-release testing. Its Firebase Hosting site and F
 
 ## Firebase Hosting
 
-The production deployment continues to use `frontend/firebase.json` and the default `sysu-web-5a25d` project. Staging uses `frontend/firebase.staging.json`, the `staging` Hosting target in `frontend/.firebaserc`, and an explicit project argument. The staging predeploy build loads `.env.staging` explicitly so its Firebase and API settings are present in the generated bundle.
+The production deployment continues to use `frontend/firebase.json` and the default `sysu-web-5a25d` project. Staging uses `frontend/firebase.staging.json`, the `staging` Hosting target in `frontend/.firebaserc`, and an explicit project argument. Vite's staging mode automatically loads `.env.staging` so its Firebase and API settings are present in the generated bundle.
 
 From `frontend`, create the Hosting site if it does not already exist, then copy `.env.staging.example` to `.env.staging` and fill it with the `sysu-stage` Web App config and deployed staging API origins:
 
