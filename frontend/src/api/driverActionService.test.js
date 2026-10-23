@@ -1,4 +1,4 @@
-import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 const mocks = vi.hoisted(() => ({socket:{connected:true, emit:vi.fn(), on:vi.fn(), off:vi.fn(), once:vi.fn()}, connect:vi.fn()}));
 vi.mock('./socket.js', () => ({
@@ -9,8 +9,10 @@ vi.mock('./socket.js', () => ({
 
 describe('DriverActionService socket contract', () => {
     beforeEach(() => { vi.clearAllMocks(); mocks.socket.connected = true; });
+    afterEach(() => { vi.restoreAllMocks(); });
 
     it('requests newest-first sessions and unwraps the socket acknowledgement', async () => {
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
         mocks.socket.emit.mockImplementation((_event, payload, ack) => {
             expect(payload).toEqual({driverId:'driver-1', limit:30});
             ack({success:true, data:{sessions:[{sessionId:'older', startedAtMs:10},{sessionId:'newer', startedAtMs:30}]}});
@@ -19,6 +21,8 @@ describe('DriverActionService socket contract', () => {
         const result = await DriverActionService.getSessions('driver-1');
         expect(mocks.socket.emit).toHaveBeenCalledWith('driver_actions:get_sessions', expect.anything(), expect.any(Function));
         expect(result.items.map(item => item.sessionId)).toEqual(['newer','older']);
+        expect(log).toHaveBeenCalledWith('[driver-action] acknowledgement_received', expect.objectContaining({event:'driver_actions:get_sessions',success:true,itemCount:2}));
+        expect(log.mock.calls.flat().join(' ')).not.toContain('driver-1');
         expect(driverActionCoordinates({lat:null,lng:null})).toBeNull();
         expect(driverActionCoordinates({lat:0,lng:0})).toEqual([0,0]);
     });
@@ -56,6 +60,15 @@ describe('DriverActionService socket contract', () => {
         expect(eventsNewestFirst(response.items).map(item => item.sequence)).toEqual([2,1]);
     });
 
+    it('reports a safe diagnostic code when the backend read fails', async () => {
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        mocks.socket.emit.mockImplementation((_event, _payload, ack) => ack({success:false,errorCode:'DRIVER_ACTION_SESSIONS_READ_FAILED',message:'Activity history is temporarily unavailable'}));
+        const {DriverActionService} = await import('./driverActionService.js');
+        await expect(DriverActionService.getSessions('driver-1')).rejects.toMatchObject({code:'DRIVER_ACTION_SESSIONS_READ_FAILED'});
+        expect(log).toHaveBeenCalledWith('[driver-action] acknowledgement_received', expect.objectContaining({event:'driver_actions:get_sessions',success:false,errorCode:'DRIVER_ACTION_SESSIONS_READ_FAILED',errorMessage:'Activity history is temporarily unavailable'}));
+        expect(log.mock.calls.flat().join(' ')).not.toContain('driver-1');
+    });
+
     it('plots only in-transit route samples while preserving other action locations', async () => {
         const {driverActionCoordinates, driverActionRouteCoordinates} = await import('./driverActionService.js');
         const events = [
@@ -67,5 +80,21 @@ describe('DriverActionService socket contract', () => {
         ];
         expect(events.map(driverActionCoordinates).filter(Boolean)).toHaveLength(4);
         expect(driverActionRouteCoordinates([...events].reverse())).toEqual([[14.7,121.1],[14.9,121.3]]);
+    });
+
+    it('calculates fallback action durations without treating route samples as lifecycle steps', async () => {
+        const {driverActionDurations} = await import('./driverActionService.js');
+        const events = [
+            {eventId:'open', eventType:'app_open', sequence:1, occurredAtMs:1000},
+            {eventId:'scan-open', eventType:'qr_scan_opened', sequence:2, occurredAtMs:2000},
+            {eventId:'route', eventType:'route_point', sequence:3, occurredAtMs:5000},
+            {eventId:'scan', eventType:'qr_scan', sequence:4, occurredAtMs:10000, durationMs:8000, metadata:{durationBasis:'since_previous_action'}},
+            {eventId:'completed', eventType:'session_completed', sequence:5, occurredAtMs:12000, durationMs:11000, metadata:{durationBasis:'session_total'}},
+        ];
+        const durations = driverActionDurations(events);
+        expect(durations.get('scan-open')).toEqual({durationMs:8000,basis:'until_next_action'});
+        expect(durations.get('scan')).toEqual({durationMs:8000,basis:'since_previous_action'});
+        expect(durations.get('completed')).toEqual({durationMs:11000,basis:'session_total'});
+        expect(durations.has('route')).toBe(false);
     });
 });

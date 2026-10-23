@@ -1,8 +1,16 @@
 import { connectDriverSocket, EVENTS, getDriverSocket } from './socket.js';
 
 const unwrap = (response) => {
-    if (response?.success === false) throw new Error(response.message || 'Driver action data is unavailable.');
+    if (response?.success === false) {
+        const error = new Error(response.message || 'Driver action data is unavailable.');
+        error.code = response.errorCode || 'DRIVER_ACTION_REQUEST_FAILED';
+        throw error;
+    }
     return response?.data ?? response;
+};
+
+const diagnostic = (level, stage, event, details = {}) => {
+    console[level]?.(`[driver-action] ${stage}`, {event, ...details});
 };
 
 const waitForConnection = (target) => {
@@ -16,9 +24,9 @@ const waitForConnection = (target) => {
             target.off?.('disconnect', onDisconnect);
         };
         const onConnect = () => { cleanup(); resolve(); };
-        const onError = () => { cleanup(); reject(new Error('Driver action service could not connect.')); };
-        const onDisconnect = () => { cleanup(); reject(new Error('Driver action service disconnected.')); };
-        const timer = setTimeout(() => { cleanup(); reject(new Error('Driver action service connection timed out.')); }, 12000);
+        const onError = () => { cleanup(); const error = new Error('Driver action service could not connect.'); error.code = 'SOCKET_CONNECT_FAILED'; reject(error); };
+        const onDisconnect = () => { cleanup(); const error = new Error('Driver action service disconnected.'); error.code = 'SOCKET_DISCONNECTED'; reject(error); };
+        const timer = setTimeout(() => { cleanup(); const error = new Error('Driver action service connection timed out.'); error.code = 'SOCKET_CONNECT_TIMEOUT'; reject(error); }, 12000);
         target.once('connect', onConnect);
         target.once('connect_error', onError);
         target.once('disconnect', onDisconnect);
@@ -26,16 +34,36 @@ const waitForConnection = (target) => {
 };
 
 const request = async (event, payload) => {
-    await connectDriverSocket();
-    const target = getDriverSocket();
-    await waitForConnection(target);
-    return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Driver action request timed out.')), 12000);
-        target.emit(event, payload, (response) => {
-            clearTimeout(timeout);
-            try { resolve(unwrap(response)); } catch (error) { reject(error); }
+    diagnostic('info', 'request_started', event);
+    try {
+        await connectDriverSocket();
+        const target = getDriverSocket();
+        await waitForConnection(target);
+        return await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                const error = new Error('Driver action request timed out.');
+                error.code = 'SOCKET_ACK_TIMEOUT';
+                diagnostic('error', 'request_failed', event, {errorCode: error.code});
+                reject(error);
+            }, 12000);
+            target.emit(event, payload, (response) => {
+                clearTimeout(timeout);
+                const rows = response?.items || response?.sessions || response?.events || response?.data?.items || response?.data?.sessions || response?.data?.events;
+                diagnostic(response?.success === false ? 'error' : 'info', 'acknowledgement_received', event, {
+                    success: response?.success !== false,
+                    errorCode: response?.errorCode || null,
+                    errorMessage: response?.success === false && typeof response?.message === 'string'
+                        ? response.message.slice(0, 160)
+                        : null,
+                    itemCount: Array.isArray(rows) ? rows.length : null,
+                });
+                try { resolve(unwrap(response)); } catch (error) { reject(error); }
+            });
         });
-    });
+    } catch (error) {
+        diagnostic('error', 'request_failed', event, {errorCode: error?.code || error?.name || 'UNKNOWN'});
+        throw error;
+    }
 };
 
 const rowsFrom = (value) => Array.isArray(value) ? value : (value?.items || value?.sessions || value?.events || []);
@@ -93,3 +121,30 @@ export const driverActionRouteCoordinates = (events) => [...(events || [])]
         : driverActionTimestamp(a.occurredAtMs) - driverActionTimestamp(b.occurredAtMs))
     .map(driverActionCoordinates)
     .filter(Boolean);
+
+export const driverActionDurations = (events) => {
+    const chronological = [...(events || [])].sort((a, b) => {
+        if (Number.isSafeInteger(a?.sequence) && Number.isSafeInteger(b?.sequence)) return a.sequence - b.sequence;
+        return driverActionTimestamp(a?.occurredAtMs) - driverActionTimestamp(b?.occurredAtMs);
+    });
+    const result = new Map();
+    let previousAction = null;
+    chronological.forEach((item, index) => {
+        if (item?.eventType === 'route_point') return;
+        const key = item?.eventId || item?.id || item?.sequence || `${item?.eventType}:${index}`;
+        const explicit = Number(item?.durationMs);
+        if (previousAction) {
+            const previousKey = previousAction?.eventId || previousAction?.id || previousAction?.sequence;
+            const start = driverActionTimestamp(previousAction?.occurredAtMs);
+            const end = driverActionTimestamp(item?.occurredAtMs);
+            if (previousKey != null && !result.has(String(previousKey)) && end >= start) {
+                result.set(String(previousKey), {durationMs: end - start, basis: 'until_next_action'});
+            }
+        }
+        if (item?.durationMs != null && Number.isFinite(explicit) && explicit >= 0) {
+            result.set(String(key), {durationMs: explicit, basis: item?.metadata?.durationBasis || 'recorded'});
+        }
+        previousAction = item;
+    });
+    return result;
+};
