@@ -24,7 +24,6 @@ const currentTokenAuth = async (callback) => {
 export const socket = io(API_CONFIG.SOCKET_URL, {
     autoConnect: false, // Don't connect until we have a token
     reconnection: true,
-    transports: ["websocket"],
     auth: currentTokenAuth,
 });
 
@@ -114,7 +113,6 @@ export const getDriverSocket = () => {
         autoConnect: false,
         reconnection: true,
         reconnectionDelayMax: 10000,
-        transports: ["websocket"],
         auth: currentTokenAuth,
     });
 
@@ -126,7 +124,6 @@ export const getProfileSocket = () => {
     _profileSocket = io(`${API_CONFIG.SOCKET_URL}/profile`, {
         autoConnect: false,
         reconnection: true,
-        transports: ["websocket"],
         auth: currentTokenAuth,
     });
     return _profileSocket;

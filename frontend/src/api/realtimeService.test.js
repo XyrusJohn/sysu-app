@@ -75,6 +75,18 @@ test("subscriptions restore on reconnect and unsubscribe from the owning socket"
     expect(sockets.main.emitted.at(-1)).toEqual({event: "realtime:unsubscribe", payload: {id: request.id}});
 });
 
+test("initial connection failures reach the subscriber once while reconnecting", () => {
+    const error = vi.fn();
+    const stop = subscribeRealtime("queue", {}, vi.fn(), error);
+
+    sockets.main.fire("connect_error", new Error("offline"));
+    sockets.main.fire("connect_error", new Error("offline again"));
+
+    expect(error).toHaveBeenCalledOnce();
+    expect(error.mock.calls[0][0].message).toContain("Check your internet connection");
+    stop();
+});
+
 test("profile subscriptions use their isolated namespace and preserve document existence", () => {
     const receive = vi.fn();
     const stop = subscribeRealtime("profile", {}, receive);
@@ -98,6 +110,28 @@ test("profile subscription acknowledgement failures reach the subscriber error h
     subscription.acknowledge({success: false, message: "Subscription unavailable"});
 
     expect(error).toHaveBeenCalledWith(new Error("Subscription unavailable"));
+});
+
+test("subscriptions report a bounded initial snapshot timeout and stop the deadline after data arrives", () => {
+    vi.useFakeTimers();
+    const error = vi.fn();
+    const receive = vi.fn();
+    const stop = subscribeRealtime("queue", {}, receive, error);
+
+    vi.advanceTimersByTime(20_000);
+    expect(error).toHaveBeenCalledOnce();
+
+    sockets.main.connected = true;
+    const nextError = vi.fn();
+    const stopNext = subscribeRealtime("assignments", {}, vi.fn(), nextError);
+    const request = sockets.main.emitted.at(-1)?.payload;
+    sockets.main.fire("realtime:state", {id: request?.id, topic: "assignments", data: []});
+    vi.advanceTimersByTime(20_000);
+    expect(nextError).not.toHaveBeenCalled();
+
+    stop();
+    stopNext();
+    vi.useRealTimers();
 });
 
 test("server-revoked profile socket fails closed while transient disconnect can reconnect", () => {

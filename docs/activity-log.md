@@ -45,3 +45,7 @@ Replaced the outdated long-form root overview with a concise setup and documenta
 ## 2026-10-21 -- SAP and assignment empty/error feedback
 
 SAP outages now remain distinct from confirmed empty shipment results: failed refreshes preserve the last successful shipment snapshot, show a retryable alert, and no longer produce a false success notice. SAP status filters/searches render explicit empty messages; Assign flows distinguish unavailable/loading data from genuine no-match results. Dispatch Detail now shows a retryable warning if SAP-only field enrichment fails while preserving saved assignment/POD rows. Frontend tests passed 197/197, Vite production build passed, targeted ESLint had 0 errors and 11 existing warnings, and git diff --check passed. Local only; no deployment, commit, or push.
+
+## 2026-10-23 -- network fallback and bounded realtime
+
+Socket.IO clients now negotiate their default polling fallback instead of requiring WebSocket-only transport. Realtime subscriptions report initial snapshot timeouts and transient connection errors while retaining last received data. SAP shipment and assignment requests have a 30-second deadline; failed SAP refreshes preserve the last successful snapshot with a retryable SAP-view notice. Targeted frontend tests passed 14/14 and the E2E-mode Vite build passed. Full frontend suite: 224 passed, 2 unrelated existing `releaseConfig` workstation expectations failed against the current production-endpoint validation. No production endpoint was exercised.

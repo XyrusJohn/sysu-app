@@ -24,7 +24,7 @@ export const useSapStore = () => {
             setError(null);
         } catch (err) {
             console.error("SAP Fetch Error:", err);
-            setError(err.message);
+            setError(err.message || 'SAP shipments are temporarily unavailable.');
         } finally {
             setLoading(false);
         }

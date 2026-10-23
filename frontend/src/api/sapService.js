@@ -13,28 +13,38 @@ export const SAPService = {
     },
 
     async fetchShipments() {
+        const timeoutSignal = AbortSignal.timeout(30_000);
+        let rejectOnTimeout;
+        const timeoutPromise = new Promise((_, reject) => {
+            rejectOnTimeout = () => reject(timeoutSignal.reason || new Error("SAP request timed out"));
+            timeoutSignal.addEventListener("abort", rejectOnTimeout, {once: true});
+        });
         try {
-            const token = await AuthService.getToken();
+            const token = await Promise.race([AuthService.getToken(), timeoutPromise]);
+            if (timeoutSignal.aborted) throw timeoutSignal.reason;
             const response = await fetch(SAP_API_URL, {
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                },
+                signal: timeoutSignal,
+                headers: {"Authorization": `Bearer ${token}`},
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             const json = await response.json();
-            this.state.lastError = null;
             const sapData = json.data || json;
-            this.state.shipments =
+            const shipments =
                 sapData && sapData.d && sapData.d.results
                     ? sapData.d.results
                     : sapData.results || sapData;
+            if (!Array.isArray(shipments)) throw new Error("SAP returned an invalid shipment response");
+            this.state.shipments = shipments;
+            this.state.lastError = null;
             this.state.lastUpdated = new Date();
             return this.state.shipments;
         } catch (error) {
             console.error("Shipment fetch error:", error);
             this.state.lastError = error.message;
-            return [];
+            throw error;
+        } finally {
+            timeoutSignal.removeEventListener("abort", rejectOnTimeout);
         }
     },
 

@@ -7,14 +7,6 @@
 import {API_CONFIG} from "./config.js";
 import {AuthService} from "./authService.js";
 
-async function authHeaders() {
-    const token = await AuthService.getToken();
-    return {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-    };
-}
-
 async function handle(res) {
     let body;
     try {
@@ -32,6 +24,36 @@ async function handle(res) {
     return body && Object.prototype.hasOwnProperty.call(body, "data") ? body.data : body;
 }
 
+async function request(url, options = {}) {
+    const timeoutSignal = AbortSignal.timeout(30_000);
+    let rejectOnTimeout;
+    const timeoutPromise = new Promise((_, reject) => {
+        rejectOnTimeout = () => reject(timeoutSignal.reason || new Error("Request timed out"));
+        timeoutSignal.addEventListener("abort", rejectOnTimeout, {once: true});
+    });
+    try {
+        const token = await Promise.race([AuthService.getToken(), timeoutPromise]);
+        if (timeoutSignal.aborted) throw timeoutSignal.reason;
+        const response = await fetch(url, {
+            ...options,
+            signal: timeoutSignal,
+            headers: {
+                "Content-Type": "application/json",
+                ...(options.headers || {}),
+                Authorization: `Bearer ${token}`,
+            },
+        });
+        return await handle(response);
+    } catch (error) {
+        if (timeoutSignal.aborted) {
+            throw new Error("Request timed out. Check the latest system status before retrying.");
+        }
+        throw error;
+    } finally {
+        timeoutSignal.removeEventListener("abort", rejectOnTimeout);
+    }
+}
+
 export const SAPAssignmentService = {
     /**
      * Ask the server which driver is earliest in the queue for a dispatch.
@@ -40,11 +62,7 @@ export const SAPAssignmentService = {
     async peekEarliest(dispatchKey, truckType) {
         const params = new URLSearchParams({dispatchKey});
         if (truckType) params.set("truckType", truckType);
-        const res = await fetch(
-            `${API_CONFIG.BASE_URL}/api/sap/peek?${params.toString()}`,
-            {method: "GET", headers: await authHeaders()}
-        );
-        return handle(res);
+        return request(`${API_CONFIG.BASE_URL}/api/sap/peek?${params.toString()}`, {method: "GET"});
     },
 
     /**
@@ -74,12 +92,10 @@ export const SAPAssignmentService = {
             driverSnapshot: driverSnapshot || null,
             overrideTokenId: overrideTokenId || null,
         };
-        const res = await fetch(`${API_CONFIG.BASE_URL}/api/sap/assign`, {
+        return request(`${API_CONFIG.BASE_URL}/api/sap/assign`, {
             method: "POST",
-            headers: await authHeaders(),
             body: JSON.stringify(body),
         });
-        return handle(res);
     },
 
     /**
@@ -87,36 +103,30 @@ export const SAPAssignmentService = {
      * @returns {Promise<{requestId: string}>}
      */
     async requestOverride({dispatchKey, requestedDriverId, reason}) {
-        const res = await fetch(`${API_CONFIG.BASE_URL}/api/sap/overrides/request`, {
+        return request(`${API_CONFIG.BASE_URL}/api/sap/overrides/request`, {
             method: "POST",
-            headers: await authHeaders(),
             body: JSON.stringify({dispatchKey, requestedDriverId, reason}),
         });
-        return handle(res);
     },
 
     /**
      * Admin approves or denies a pending override request.
      */
     async decideOverride({requestId, decision, reason}) {
-        const res = await fetch(`${API_CONFIG.BASE_URL}/api/sap/overrides/decide`, {
+        return request(`${API_CONFIG.BASE_URL}/api/sap/overrides/decide`, {
             method: "POST",
-            headers: await authHeaders(),
             body: JSON.stringify({requestId, decision, reason}),
         });
-        return handle(res);
     },
 
     /**
      * Dispatcher cancels their own pending override request.
      */
     async revokeOverride(requestId) {
-        const res = await fetch(`${API_CONFIG.BASE_URL}/api/sap/overrides/revoke`, {
+        return request(`${API_CONFIG.BASE_URL}/api/sap/overrides/revoke`, {
             method: "POST",
-            headers: await authHeaders(),
             body: JSON.stringify({requestId}),
         });
-        return handle(res);
     },
 
     /**
@@ -125,36 +135,30 @@ export const SAPAssignmentService = {
      * cancelRequests doc; admin approves or denies from the unified queue.
      */
     async requestCancel({dispatchKey, reason}) {
-        const res = await fetch(`${API_CONFIG.BASE_URL}/api/sap/cancel/request`, {
+        return request(`${API_CONFIG.BASE_URL}/api/sap/cancel/request`, {
             method: "POST",
-            headers: await authHeaders(),
             body: JSON.stringify({dispatchKey, reason}),
         });
-        return handle(res);
     },
 
     /**
      * Admin approves or denies a pending cancel request.
      */
     async decideCancel({requestId, decision, reason}) {
-        const res = await fetch(`${API_CONFIG.BASE_URL}/api/sap/cancel/decide`, {
+        return request(`${API_CONFIG.BASE_URL}/api/sap/cancel/decide`, {
             method: "POST",
-            headers: await authHeaders(),
             body: JSON.stringify({requestId, decision, reason}),
         });
-        return handle(res);
     },
 
     /**
      * Dispatcher revokes their own pending cancel request.
      */
     async revokeCancel(requestId) {
-        const res = await fetch(`${API_CONFIG.BASE_URL}/api/sap/cancel/revoke`, {
+        return request(`${API_CONFIG.BASE_URL}/api/sap/cancel/revoke`, {
             method: "POST",
-            headers: await authHeaders(),
             body: JSON.stringify({requestId}),
         });
-        return handle(res);
     },
 
     /**
@@ -175,10 +179,6 @@ export const SAPAssignmentService = {
      * }>>}
      */
     async fetchActiveLocations() {
-        const res = await fetch(
-            `${API_CONFIG.BASE_URL}/api/sap/locations`,
-            {method: "GET", headers: await authHeaders()},
-        );
-        return handle(res);
+        return request(`${API_CONFIG.BASE_URL}/api/sap/locations`, {method: "GET"});
     },
 };

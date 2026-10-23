@@ -132,6 +132,7 @@ const SAPView = () => {
         shipments,
         assignments,
         loading,
+        error,
         refreshShipments,
         assignDriver,
         // We'll lift sorting/filtering to local state or a specialized hook if it grows
@@ -160,7 +161,7 @@ const SAPView = () => {
     const delivered = Object.values(assignments).filter(a => a.tripStatus?.toLowerCase() === 'completed').length;
     const transit = shipments.filter(s => (s.PgiStatus || s.CheckStatus || "").toUpperCase() === 'IN TRANSIT').length;
 
-    if (loading) {
+    if (loading && shipments.length === 0 && !error) {
         return <div className="flex items-center justify-center h-full text-db-text3 italic">Loading SAP shipments...</div>;
     }
 
@@ -181,6 +182,14 @@ const SAPView = () => {
                     </button>
                 </div>
             </div>
+
+            {error && (
+                <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-db-text2">
+                    <span>SAP shipments could not be refreshed. {shipments.length ? 'Showing the last successfully loaded data.' : 'No shipment data is available yet.'} Check your connection and retry.</span>
+                    <button onClick={refreshShipments} className="shrink-0 font-semibold text-db-text underline">Retry</button>
+                </div>
+            )}
+            {loading && shipments.length > 0 && <p role="status" className="mb-2 text-xs text-db-text3">Refreshing SAP shipment data…</p>}
 
             <SapStatsBar total={total} delivered={delivered} transit={transit} />
 
